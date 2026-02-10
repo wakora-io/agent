@@ -11,6 +11,7 @@ const defaultDir = "/etc/wakora"
 type Config struct {
 	Endpoint string            `json:"endpoint"`
 	ServerID string            `json:"serverId"`
+	Key      string            `json:"key"`
 	Secrets  map[string]string `json:"-"`
 	dir      string
 }
@@ -25,6 +26,9 @@ func Load(dir string) (*Config, error) {
 	}
 	if v := os.Getenv("WAKORA_ENDPOINT"); v != "" {
 		c.Endpoint = v
+	}
+	if v := os.Getenv("WAKORA_KEY"); v != "" {
+		c.Key = v
 	}
 	return c, nil
 }

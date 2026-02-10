@@ -17,6 +17,7 @@ import (
 func main() {
 	configDir := flag.String("config", "/etc/wakora", "config directory")
 	endpoint := flag.String("endpoint", "", "gateway endpoint")
+	key := flag.String("key", "", "per-server key")
 	test := flag.Bool("test", false, "dry run: collect and print, do not connect")
 	interval := flag.Duration("interval", time.Minute, "collection interval")
 	flag.Parse()
@@ -28,8 +29,12 @@ func main() {
 	if *endpoint != "" {
 		cfg.Endpoint = *endpoint
 	}
+	if *key != "" {
+		cfg.Key = *key
+	}
 
-	a := agent.New(cfg, &transport.Client{Endpoint: cfg.Endpoint}, buffer.New(cfg.RingPath(), 64<<20))
+	client := &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(cfg.Key)}
+	a := agent.New(cfg, client, buffer.New(cfg.RingPath(), 64<<20))
 
 	if *test {
 		a.DryRun()
