@@ -1,0 +1,8 @@
+/agent
+/bin/
+*.exe
+*.test
+*.out
+*.log
+/vendor/
+.env
