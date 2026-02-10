@@ -30,6 +30,11 @@ func Load(dir string) (*Config, error) {
 	if v := os.Getenv("WAKORA_KEY"); v != "" {
 		c.Key = v
 	}
+	if c.ServerID == "" {
+		if h, err := os.Hostname(); err == nil {
+			c.ServerID = h
+		}
+	}
 	return c, nil
 }
 
