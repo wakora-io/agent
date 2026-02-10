@@ -9,11 +9,12 @@ import (
 const defaultDir = "/etc/wakora"
 
 type Config struct {
-	Endpoint string            `json:"endpoint"`
-	ServerID string            `json:"serverId"`
-	Key      string            `json:"key"`
-	Secrets  map[string]string `json:"-"`
-	dir      string
+	Endpoint  string            `json:"endpoint"`
+	ServerID  string            `json:"serverId"`
+	Key       string            `json:"key"`
+	UpdateURL string            `json:"updateUrl"`
+	Secrets   map[string]string `json:"-"`
+	dir       string
 }
 
 func Load(dir string) (*Config, error) {
@@ -29,6 +30,9 @@ func Load(dir string) (*Config, error) {
 	}
 	if v := os.Getenv("WAKORA_KEY"); v != "" {
 		c.Key = v
+	}
+	if v := os.Getenv("WAKORA_UPDATE_URL"); v != "" {
+		c.UpdateURL = v
 	}
 	if c.ServerID == "" {
 		if h, err := os.Hostname(); err == nil {
