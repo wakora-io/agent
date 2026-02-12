@@ -29,6 +29,7 @@ func (a *Agent) collect() protocol.MetricsBatch {
 	h := metrics.Collect()
 	return protocol.MetricsBatch{
 		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
 		Timestamp: h.Timestamp,
 		Points: []protocol.MetricPoint{
 			{Name: "load1", Value: h.Load1},
@@ -41,6 +42,7 @@ func (a *Agent) collect() protocol.MetricsBatch {
 
 func (a *Agent) Run(ctx context.Context, interval time.Duration) error {
 	return a.client.Run(ctx, func(conn transport.Conn) error {
+		a.drainSpool(conn)
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -61,6 +63,16 @@ func (a *Agent) Run(ctx context.Context, interval time.Duration) error {
 				}
 			}
 		}
+	})
+}
+
+func (a *Agent) drainSpool(conn transport.Conn) {
+	_ = a.ring.Drain(func(line []byte) error {
+		var m protocol.Message
+		if err := json.Unmarshal(line, &m); err != nil {
+			return nil
+		}
+		return conn.Send(m)
 	})
 }
 

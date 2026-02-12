@@ -27,6 +27,7 @@ type MetricPoint struct {
 
 type MetricsBatch struct {
 	ServerID  string        `json:"serverId"`
+	Hostname  string        `json:"hostname,omitempty"`
 	Timestamp int64         `json:"ts"`
 	Points    []MetricPoint `json:"points"`
 }
