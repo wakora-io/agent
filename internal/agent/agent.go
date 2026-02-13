@@ -38,6 +38,7 @@ type Agent struct {
 	lastRun      map[string]time.Time
 	serviceFacts map[string]map[string]string
 	probeFacts   map[string][]protocol.Fact
+	tailers      map[string]*defs.Tailer
 
 	lastSignal string
 }
@@ -52,6 +53,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		lastRun:      map[string]time.Time{},
 		serviceFacts: map[string]map[string]string{},
 		probeFacts:   map[string][]protocol.Fact{},
+		tailers:      map[string]*defs.Tailer{},
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -317,6 +319,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 	factsChanged := false
 	for _, d := range due {
 		for _, p := range d.Probes {
+			if p.Type == "logtail" {
+				if err := a.runLogtail(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
 			o := defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			for _, check := range append([]protocol.CheckResult{o.Check}, o.Extra...) {
 				check.ServerID = a.cfg.ServerID
@@ -382,6 +390,72 @@ func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
 
 func (a *Agent) resolveSecret(name string) (secret.Cred, bool) {
 	return secret.GetCred(a.cfg.Dir(), name)
+}
+
+func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe) error {
+	path := p.Path
+	if path == "" && p.PathFrom != "" {
+		a.mu.Lock()
+		if facts := a.serviceFacts[service]; facts != nil {
+			path = facts[p.PathFrom]
+		}
+		a.mu.Unlock()
+	}
+	check := protocol.CheckResult{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		CheckID:   service + "/" + p.Name,
+		Kind:      "logtail",
+		Target:    path,
+		Timestamp: time.Now().Unix(),
+	}
+	if path == "" {
+		check.Status = "fail"
+		check.Error = "log path unknown (not discovered yet)"
+		return a.sendCheck(conn, check)
+	}
+
+	key := service + "/" + p.Name
+	t := a.tailers[key]
+	if t == nil {
+		t = defs.NewTailer(path)
+		a.tailers[key] = t
+	}
+	pts, err := t.Sample(p.Counters, time.Now())
+	if err != nil {
+		check.Status = "fail"
+		check.Error = err.Error()
+		return a.sendCheck(conn, check)
+	}
+	check.Status = "ok"
+	if err := a.sendCheck(conn, check); err != nil {
+		return err
+	}
+	if len(pts) > 0 {
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Timestamp: time.Now().Unix(),
+			Points:    pts,
+		})
+		if err == nil {
+			if err := conn.Send(msg); err != nil {
+				return err
+			}
+			return a.observePoints(conn, pts)
+		}
+	}
+	return nil
+}
+
+func (a *Agent) sendCheck(conn transport.Conn, check protocol.CheckResult) error {
+	a.seq++
+	msg, err := protocol.Encode(protocol.TypeCheck, a.seq, check)
+	if err != nil {
+		return nil
+	}
+	return conn.Send(msg)
 }
 
 func (a *Agent) mergeServiceFacts(service string, facts map[string]string) bool {

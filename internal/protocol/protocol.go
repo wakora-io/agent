@@ -85,6 +85,11 @@ type KVMetric struct {
 	Key  string `json:"key"`
 }
 
+type Counter struct {
+	Name  string `json:"name"`
+	Regex string `json:"regex,omitempty"`
+}
+
 type Probe struct {
 	Name         string      `json:"name"`
 	Type         string      `json:"type"`
@@ -102,6 +107,9 @@ type Probe struct {
 	Socket       bool        `json:"socket,omitempty"`
 	Query        string      `json:"query,omitempty"`
 	KVMetrics    []KVMetric  `json:"kvMetrics,omitempty"`
+	Path         string      `json:"path,omitempty"`
+	PathFrom     string      `json:"pathFrom,omitempty"`
+	Counters     []Counter   `json:"counters,omitempty"`
 }
 
 type Definition struct {
