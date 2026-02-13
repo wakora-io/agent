@@ -26,11 +26,12 @@ type Agent struct {
 	key          atomic.Value
 	seq          uint64
 
-	mu      sync.Mutex
-	facts   []discovery.Fact
-	defs    []protocol.Definition
-	active  []protocol.Definition
-	lastRun map[string]time.Time
+	mu           sync.Mutex
+	facts        []discovery.Fact
+	defs         []protocol.Definition
+	active       []protocol.Definition
+	lastRun      map[string]time.Time
+	serviceFacts map[string]map[string]string
 
 	lastSignal string
 }
@@ -42,6 +43,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		publisherKey: publisherKey,
 		metrics:      metrics.NewCollector(),
 		lastRun:      map[string]time.Time{},
+		serviceFacts: map[string]map[string]string{},
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -186,6 +188,13 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	for i, f := range facts {
 		pf[i] = protocol.Fact{Kind: f.Kind, Key: f.Key, Payload: f.Payload}
 	}
+	a.mu.Lock()
+	for svc, kv := range a.serviceFacts {
+		if payload, err := json.Marshal(kv); err == nil {
+			pf = append(pf, protocol.Fact{Kind: "service", Key: svc, Payload: string(payload)})
+		}
+	}
+	a.mu.Unlock()
 	a.seq++
 	msg, err := protocol.Encode(protocol.TypeDiscovery, a.seq, protocol.DiscoverySnapshot{
 		ServerID:  a.cfg.ServerID,
@@ -210,14 +219,21 @@ func (a *Agent) refreshActive() {
 		prev[d.Service] = true
 	}
 	var active []protocol.Definition
+	activeSet := map[string]bool{}
 	for _, d := range a.defs {
 		if defs.Matches(d, a.facts) {
 			active = append(active, d)
+			activeSet[d.Service] = true
 			if !prev[d.Service] {
 				log.Printf("service matched: %s, %d probe(s) activated", d.Service, len(d.Probes))
 			}
 		} else if prev[d.Service] {
 			log.Printf("service unmatched: %s, probes deactivated", d.Service)
+		}
+	}
+	for svc := range a.serviceFacts {
+		if !activeSet[svc] {
+			delete(a.serviceFacts, svc)
 		}
 	}
 	a.active = active
@@ -239,28 +255,27 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 	}
 	a.mu.Unlock()
 
+	factsChanged := false
 	for _, d := range due {
 		for _, p := range d.Probes {
-			res := defs.RunProbe(d.Service, p)
-			res.ServerID = a.cfg.ServerID
-			res.Hostname = a.cfg.Hostname
+			o := defs.RunProbe(d.Service, p)
+			o.Check.ServerID = a.cfg.ServerID
+			o.Check.Hostname = a.cfg.Hostname
 			a.seq++
-			msg, err := protocol.Encode(protocol.TypeCheck, a.seq, res)
+			msg, err := protocol.Encode(protocol.TypeCheck, a.seq, o.Check)
 			if err != nil {
 				continue
 			}
 			if err := conn.Send(msg); err != nil {
 				return err
 			}
-			if res.Status == "ok" {
+			if len(o.Metrics) > 0 {
 				a.seq++
 				mmsg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
 					ServerID:  a.cfg.ServerID,
 					Hostname:  a.cfg.Hostname,
-					Timestamp: res.Timestamp,
-					Points: []protocol.MetricPoint{
-						{Name: "svc." + d.Service + "." + p.Name + ".latency_ms", Value: res.LatencyMs},
-					},
+					Timestamp: o.Check.Timestamp,
+					Points:    o.Metrics,
 				})
 				if err == nil {
 					if err := conn.Send(mmsg); err != nil {
@@ -268,9 +283,33 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					}
 				}
 			}
+			if len(o.Facts) > 0 && a.mergeServiceFacts(d.Service, o.Facts) {
+				factsChanged = true
+			}
 		}
 	}
+	if factsChanged {
+		return a.sendDiscovery(conn)
+	}
 	return nil
+}
+
+func (a *Agent) mergeServiceFacts(service string, facts map[string]string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	cur := a.serviceFacts[service]
+	if cur == nil {
+		cur = map[string]string{}
+		a.serviceFacts[service] = cur
+	}
+	changed := false
+	for k, v := range facts {
+		if cur[k] != v {
+			cur[k] = v
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {

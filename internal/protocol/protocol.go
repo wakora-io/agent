@@ -74,13 +74,22 @@ type Match struct {
 	Unit    string `json:"unit,omitempty"`
 }
 
+type ParseRule struct {
+	Name  string `json:"name"`
+	Regex string `json:"regex"`
+}
+
 type Probe struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	URL          string `json:"url,omitempty"`
-	Address      string `json:"address,omitempty"`
-	ExpectStatus int    `json:"expectStatus,omitempty"`
-	TimeoutSec   int    `json:"timeoutSec,omitempty"`
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	URL          string      `json:"url,omitempty"`
+	Address      string      `json:"address,omitempty"`
+	ExpectStatus int         `json:"expectStatus,omitempty"`
+	TimeoutSec   int         `json:"timeoutSec,omitempty"`
+	Command      string      `json:"command,omitempty"`
+	Args         []string    `json:"args,omitempty"`
+	Metrics      []ParseRule `json:"metrics,omitempty"`
+	Facts        []ParseRule `json:"facts,omitempty"`
 }
 
 type Definition struct {
