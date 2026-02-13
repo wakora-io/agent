@@ -2,7 +2,11 @@ package discovery
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +36,50 @@ func CountByKind(facts []Fact) map[string]int {
 		out[f.Kind]++
 	}
 	return out
+}
+
+func ChangeSignal() string {
+	h := sha256.New()
+	if fi, err := os.Stat("/var/lib/dpkg/status"); err == nil {
+		fmt.Fprintf(h, "dpkg:%d:%d;", fi.ModTime().UnixNano(), fi.Size())
+	}
+	for _, k := range listenKeys() {
+		io.WriteString(h, k+";")
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func listenKeys() []string {
+	seen := map[string]bool{}
+	for _, src := range portSources {
+		data, err := os.ReadFile(src.path)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines[1:] {
+			f := strings.Fields(line)
+			if len(f) < 4 || f[3] != src.state {
+				continue
+			}
+			local := f[1]
+			colon := strings.LastIndexByte(local, ':')
+			if colon < 0 {
+				continue
+			}
+			port, err := strconv.ParseUint(local[colon+1:], 16, 16)
+			if err != nil || port == 0 {
+				continue
+			}
+			seen[strconv.FormatUint(port, 10)+"/"+src.proto] = true
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 type procInfo struct {
@@ -81,20 +129,21 @@ type portInfo struct {
 	Process string `json:"process,omitempty"`
 }
 
+var portSources = []struct {
+	path  string
+	proto string
+	state string
+}{
+	{"/proc/net/tcp", "tcp", "0A"},
+	{"/proc/net/tcp6", "tcp", "0A"},
+	{"/proc/net/udp", "udp", "07"},
+	{"/proc/net/udp6", "udp", "07"},
+}
+
 func ports() []Fact {
 	inodePid := socketInodes()
 	agg := map[string]*portInfo{}
-	sources := []struct {
-		path  string
-		proto string
-		state string
-	}{
-		{"/proc/net/tcp", "tcp", "0A"},
-		{"/proc/net/tcp6", "tcp", "0A"},
-		{"/proc/net/udp", "udp", "07"},
-		{"/proc/net/udp6", "udp", "07"},
-	}
-	for _, src := range sources {
+	for _, src := range portSources {
 		data, err := os.ReadFile(src.path)
 		if err != nil {
 			continue

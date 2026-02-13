@@ -25,11 +25,13 @@ type Agent struct {
 	key          atomic.Value
 	seq          uint64
 
-	mu       sync.Mutex
-	facts    []discovery.Fact
-	defs     []protocol.Definition
-	active   []protocol.Definition
-	lastRun  map[string]time.Time
+	mu      sync.Mutex
+	facts   []discovery.Fact
+	defs    []protocol.Definition
+	active  []protocol.Definition
+	lastRun map[string]time.Time
+
+	lastSignal string
 }
 
 func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
@@ -58,7 +60,7 @@ func (a *Agent) collect() protocol.MetricsBatch {
 	}
 }
 
-func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery time.Duration) error {
+func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery, discoveryCheck time.Duration) error {
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.drainSpool(conn)
 		if err := a.sendHeartbeat(conn); err != nil {
@@ -91,6 +93,8 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		defer hb.Stop()
 		dt := time.NewTicker(discoveryEvery)
 		defer dt.Stop()
+		dc := time.NewTicker(discoveryCheck)
+		defer dc.Stop()
 		pt := time.NewTicker(15 * time.Second)
 		defer pt.Stop()
 		for {
@@ -118,6 +122,13 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			case <-dt.C:
 				if err := a.sendDiscovery(conn); err != nil {
 					return err
+				}
+			case <-dc.C:
+				if s := discovery.ChangeSignal(); s != a.lastSignal {
+					log.Print("host change detected, refreshing discovery")
+					if err := a.sendDiscovery(conn); err != nil {
+						return err
+					}
 				}
 			case <-pt.C:
 				if err := a.runDueProbes(conn); err != nil {
@@ -159,6 +170,7 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 
 func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	facts := discovery.Collect()
+	a.lastSignal = discovery.ChangeSignal()
 	a.mu.Lock()
 	a.facts = facts
 	a.mu.Unlock()

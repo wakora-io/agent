@@ -50,7 +50,8 @@ func main() {
 	test := flag.Bool("test", false, "dry run: collect and print, do not connect")
 	interval := flag.Duration("interval", time.Minute, "collection interval")
 	heartbeat := flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
-	discoveryEvery := flag.Duration("discovery-interval", 30*time.Minute, "discovery snapshot interval")
+	discoveryEvery := flag.Duration("discovery-interval", 30*time.Minute, "full discovery resync interval")
+	discoveryCheck := flag.Duration("discovery-check", 30*time.Second, "cheap change-detection interval (dpkg + listening ports)")
 	flag.Parse()
 
 	if *showVersion {
@@ -136,7 +137,7 @@ func main() {
 		go autoUpdate(ctx, relURL, httpc, *updateEvery)
 	}
 
-	if err := a.Run(ctx, client, *interval, *heartbeat, *discoveryEvery); err != nil && ctx.Err() == nil {
+	if err := a.Run(ctx, client, *interval, *heartbeat, *discoveryEvery, *discoveryCheck); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
 }
