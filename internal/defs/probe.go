@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"wakora.io/agent/internal/protocol"
+	"wakora.io/agent/internal/secret"
 )
 
 type Outcome struct {
@@ -29,6 +30,10 @@ var execAllowlist = map[string]bool{
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {
+	return RunProbeWithSecrets(service, p, func(string) (secret.Cred, bool) { return secret.Cred{}, false })
+}
+
+func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver) Outcome {
 	timeout := time.Duration(p.TimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 5 * time.Second
@@ -74,6 +79,8 @@ func RunProbe(service string, p protocol.Probe) Outcome {
 		runExec(&o, p, timeout)
 	case "vhosts":
 		runVhosts(&o, service, p, timeout)
+	case "sql":
+		runSQL(&o, service, p, timeout, resolve)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type

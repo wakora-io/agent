@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 
 	"wakora.io/agent/internal/agent"
 	"wakora.io/agent/internal/bootstrap"
@@ -58,6 +61,11 @@ func main() {
 
 	if *showVersion {
 		fmt.Println(buildinfo.Version)
+		return
+	}
+
+	if args := flag.Args(); len(args) > 0 && args[0] == "secret" {
+		runSecret(*configDir, args[1:])
 		return
 	}
 
@@ -148,6 +156,71 @@ func main() {
 	if err := a.Run(ctx, client, *interval, *heartbeat, *discoveryEvery, *discoveryCheck); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
+}
+
+func runSecret(dir string, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: wakora secret <set NAME [--user U] | list | rm NAME>")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 {
+			log.Fatal("usage: wakora secret set NAME [--user U]")
+		}
+		name := args[1]
+		user := ""
+		for i := 2; i < len(args)-1; i++ {
+			if args[i] == "--user" {
+				user = args[i+1]
+			}
+		}
+		if user == "" {
+			fmt.Fprint(os.Stderr, "user: ")
+			user = readLine()
+		}
+		pass := readSecret("password: ")
+		if err := secret.SetCred(dir, name, secret.Cred{User: user, Pass: pass}); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "secret %q stored (encrypted, stays on this host)\n", name)
+	case "list":
+		for _, n := range secret.ListCreds(dir) {
+			fmt.Println(n)
+		}
+	case "rm":
+		if len(args) < 2 {
+			log.Fatal("usage: wakora secret rm NAME")
+		}
+		removed, err := secret.RemoveCred(dir, args[1])
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !removed {
+			log.Fatalf("no secret named %q", args[1])
+		}
+		fmt.Fprintf(os.Stderr, "secret %q removed\n", args[1])
+	default:
+		log.Fatalf("unknown secret command %q", args[0])
+	}
+}
+
+func readLine() string {
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Scan()
+	return strings.TrimSpace(sc.Text())
+}
+
+func readSecret(prompt string) string {
+	fmt.Fprint(os.Stderr, prompt)
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err == nil {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	return readLine()
 }
 
 func parseOverride(v string) (svc, key, val string, err error) {

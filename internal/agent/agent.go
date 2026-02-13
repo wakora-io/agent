@@ -18,6 +18,7 @@ import (
 	"wakora.io/agent/internal/discovery"
 	"wakora.io/agent/internal/metrics"
 	"wakora.io/agent/internal/protocol"
+	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
 )
 
@@ -316,7 +317,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 	factsChanged := false
 	for _, d := range due {
 		for _, p := range d.Probes {
-			o := defs.RunProbe(d.Service, p)
+			o := defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			for _, check := range append([]protocol.CheckResult{o.Check}, o.Extra...) {
 				check.ServerID = a.cfg.ServerID
 				check.Hostname = a.cfg.Hostname
@@ -377,6 +378,10 @@ func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
 	oldRaw, _ := json.Marshal(a.probeFacts[key])
 	a.probeFacts[key] = facts
 	return !bytes.Equal(newRaw, oldRaw)
+}
+
+func (a *Agent) resolveSecret(name string) (secret.Cred, bool) {
+	return secret.GetCred(a.cfg.Dir(), name)
 }
 
 func (a *Agent) mergeServiceFacts(service string, facts map[string]string) bool {

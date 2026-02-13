@@ -80,6 +80,11 @@ type ParseRule struct {
 	Regex string `json:"regex"`
 }
 
+type KVMetric struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
 type Probe struct {
 	Name         string      `json:"name"`
 	Type         string      `json:"type"`
@@ -91,6 +96,10 @@ type Probe struct {
 	Args         []string    `json:"args,omitempty"`
 	Metrics      []ParseRule `json:"metrics,omitempty"`
 	Facts        []ParseRule `json:"facts,omitempty"`
+	Driver       string      `json:"driver,omitempty"`
+	Secret       string      `json:"secret,omitempty"`
+	Query        string      `json:"query,omitempty"`
+	KVMetrics    []KVMetric  `json:"kvMetrics,omitempty"`
 }
 
 type Definition struct {

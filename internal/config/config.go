@@ -45,6 +45,10 @@ func (c *Config) RingPath() string {
 	return filepath.Join(c.dir, "buffer.jsonl")
 }
 
+func (c *Config) Dir() string {
+	return c.dir
+}
+
 type identity struct {
 	uuid string
 	key  string
