@@ -41,15 +41,15 @@ func (a *Agent) collect() protocol.MetricsBatch {
 		Hostname:  a.cfg.Hostname,
 		Timestamp: h.Timestamp,
 		Points: []protocol.MetricPoint{
-			{Name: "load1", Value: h.Load1},
-			{Name: "mem_total_kb", Value: float64(h.MemTotalKB)},
-			{Name: "mem_free_kb", Value: float64(h.MemFreeKB)},
-			{Name: "uptime_sec", Value: h.UptimeSec},
+			{Name: "host.load1", Value: h.Load1},
+			{Name: "host.mem.total_kb", Value: float64(h.MemTotalKB)},
+			{Name: "host.mem.free_kb", Value: float64(h.MemFreeKB)},
+			{Name: "host.uptime_sec", Value: h.UptimeSec},
 		},
 	}
 }
 
-func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery time.Duration) error {
+func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery time.Duration) error {
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.drainSpool(conn)
 		if err := a.sendHeartbeat(conn); err != nil {
@@ -58,8 +58,12 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		if err := a.sendMetrics(conn); err != nil {
 			return err
 		}
+		if err := a.sendDiscovery(conn); err != nil {
+			return err
+		}
 
 		kick := make(chan struct{}, 1)
+		dkick := make(chan struct{}, 1)
 		readErr := make(chan error, 1)
 		go func() {
 			for {
@@ -68,7 +72,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					readErr <- err
 					return
 				}
-				a.handleDownstream(m, kick)
+				a.handleDownstream(m, kick, dkick)
 			}
 		}()
 
@@ -76,6 +80,8 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		defer mt.Stop()
 		hb := time.NewTicker(heartbeatEvery)
 		defer hb.Stop()
+		dt := time.NewTicker(discoveryEvery)
+		defer dt.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -86,12 +92,20 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				if err := a.sendMetrics(conn); err != nil {
 					return err
 				}
+			case <-dkick:
+				if err := a.sendDiscovery(conn); err != nil {
+					return err
+				}
 			case <-hb.C:
 				if err := a.sendHeartbeat(conn); err != nil {
 					return err
 				}
 			case <-mt.C:
 				if err := a.sendMetrics(conn); err != nil {
+					return err
+				}
+			case <-dt.C:
+				if err := a.sendDiscovery(conn); err != nil {
 					return err
 				}
 			}
@@ -128,7 +142,26 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 	return conn.Send(msg)
 }
 
-func (a *Agent) handleDownstream(m protocol.Message, kick chan struct{}) {
+func (a *Agent) sendDiscovery(conn transport.Conn) error {
+	facts := discovery.Collect()
+	pf := make([]protocol.Fact, len(facts))
+	for i, f := range facts {
+		pf[i] = protocol.Fact{Kind: f.Kind, Key: f.Key, Payload: f.Payload}
+	}
+	a.seq++
+	msg, err := protocol.Encode(protocol.TypeDiscovery, a.seq, protocol.DiscoverySnapshot{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		Timestamp: time.Now().Unix(),
+		Facts:     pf,
+	})
+	if err != nil {
+		return nil
+	}
+	return conn.Send(msg)
+}
+
+func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {
 	switch m.Type {
 	case protocol.TypeCommand:
 		var c protocol.Command
@@ -139,6 +172,11 @@ func (a *Agent) handleDownstream(m protocol.Message, kick chan struct{}) {
 		case "collectNow":
 			select {
 			case kick <- struct{}{}:
+			default:
+			}
+		case "discoverNow":
+			select {
+			case dkick <- struct{}{}:
 			default:
 			}
 		case "rotateKey":
@@ -170,6 +208,8 @@ func (a *Agent) DryRun() {
 	for _, p := range b.Points {
 		log.Printf("metric %s=%v", p.Name, p.Value)
 	}
-	f := discovery.Enumerate()
-	log.Printf("discovery: %d processes", len(f.Processes))
+	facts := discovery.Collect()
+	for kind, n := range discovery.CountByKind(facts) {
+		log.Printf("discovery: %s=%d", kind, n)
+	}
 }

@@ -44,6 +44,19 @@ type Command struct {
 	Key    string `json:"key,omitempty"`
 }
 
+type Fact struct {
+	Kind    string `json:"kind"`
+	Key     string `json:"key"`
+	Payload string `json:"payload,omitempty"`
+}
+
+type DiscoverySnapshot struct {
+	ServerID  string `json:"serverId"`
+	Hostname  string `json:"hostname,omitempty"`
+	Timestamp int64  `json:"ts"`
+	Facts     []Fact `json:"facts"`
+}
+
 func Encode(t MessageType, seq uint64, v any) (Message, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {

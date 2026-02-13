@@ -60,6 +60,7 @@ func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.SetReadLimit(1 << 20)
 	return &wsConn{c: c}, nil
 }
 

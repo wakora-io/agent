@@ -1,34 +1,257 @@
 package discovery
 
 import (
+	"bufio"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
 
-type Facts struct {
-	Processes []string
+type Fact struct {
+	Kind    string
+	Key     string
+	Payload string
 }
 
-func Enumerate() Facts {
-	var f Facts
+func Collect() []Fact {
+	var facts []Fact
+	facts = append(facts, processes()...)
+	facts = append(facts, ports()...)
+	facts = append(facts, packages()...)
+	facts = append(facts, units()...)
+	return facts
+}
+
+func CountByKind(facts []Fact) map[string]int {
+	out := map[string]int{}
+	for _, f := range facts {
+		out[f.Kind]++
+	}
+	return out
+}
+
+type procInfo struct {
+	Count   int    `json:"count"`
+	Pid     int    `json:"pid"`
+	Cmdline string `json:"cmdline,omitempty"`
+	Exe     string `json:"exe,omitempty"`
+}
+
+func processes() []Fact {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return f
+		return nil
 	}
+	agg := map[string]*procInfo{}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := strconv.Atoi(e.Name()); err != nil {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
 			continue
 		}
 		comm, err := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
 		if err != nil {
 			continue
 		}
-		f.Processes = append(f.Processes, strings.TrimSpace(string(comm)))
+		name := strings.TrimSpace(string(comm))
+		if name == "" {
+			continue
+		}
+		if p := agg[name]; p != nil {
+			p.Count++
+			continue
+		}
+		cmdRaw, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		cmd := strings.TrimSpace(strings.ReplaceAll(string(cmdRaw), "\x00", " "))
+		if len(cmd) > 300 {
+			cmd = cmd[:300]
+		}
+		exe, _ := os.Readlink(filepath.Join("/proc", e.Name(), "exe"))
+		agg[name] = &procInfo{Count: 1, Pid: pid, Cmdline: cmd, Exe: exe}
 	}
-	return f
+	return sortedFacts("process", agg)
+}
+
+type portInfo struct {
+	Addr    string `json:"addr,omitempty"`
+	Pid     int    `json:"pid,omitempty"`
+	Process string `json:"process,omitempty"`
+}
+
+func ports() []Fact {
+	inodePid := socketInodes()
+	agg := map[string]*portInfo{}
+	sources := []struct {
+		path  string
+		proto string
+		state string
+	}{
+		{"/proc/net/tcp", "tcp", "0A"},
+		{"/proc/net/tcp6", "tcp", "0A"},
+		{"/proc/net/udp", "udp", "07"},
+		{"/proc/net/udp6", "udp", "07"},
+	}
+	for _, src := range sources {
+		data, err := os.ReadFile(src.path)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines[1:] {
+			f := strings.Fields(line)
+			if len(f) < 10 || f[3] != src.state {
+				continue
+			}
+			local := f[1]
+			colon := strings.LastIndexByte(local, ':')
+			if colon < 0 {
+				continue
+			}
+			port, err := strconv.ParseUint(local[colon+1:], 16, 16)
+			if err != nil || port == 0 {
+				continue
+			}
+			key := strconv.FormatUint(port, 10) + "/" + src.proto
+			if agg[key] != nil {
+				continue
+			}
+			info := &portInfo{Addr: decodeAddr(local[:colon])}
+			if inode := f[9]; inode != "0" {
+				if pid, ok := inodePid[inode]; ok {
+					info.Pid = pid
+					if comm, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "comm")); err == nil {
+						info.Process = strings.TrimSpace(string(comm))
+					}
+				}
+			}
+			agg[key] = info
+		}
+	}
+	return sortedFacts("port", agg)
+}
+
+func decodeAddr(hexAddr string) string {
+	if len(hexAddr) == 8 {
+		b, err := strconv.ParseUint(hexAddr, 16, 32)
+		if err != nil {
+			return ""
+		}
+		return strconv.FormatUint(b&0xff, 10) + "." +
+			strconv.FormatUint(b>>8&0xff, 10) + "." +
+			strconv.FormatUint(b>>16&0xff, 10) + "." +
+			strconv.FormatUint(b>>24&0xff, 10)
+	}
+	if strings.Trim(hexAddr, "0") == "" {
+		return "::"
+	}
+	return "ipv6"
+}
+
+func socketInodes() map[string]int {
+	out := map[string]int{}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		fds, err := os.ReadDir(filepath.Join("/proc", e.Name(), "fd"))
+		if err != nil {
+			continue
+		}
+		for _, fd := range fds {
+			link, err := os.Readlink(filepath.Join("/proc", e.Name(), "fd", fd.Name()))
+			if err != nil || !strings.HasPrefix(link, "socket:[") {
+				continue
+			}
+			inode := strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")
+			if _, seen := out[inode]; !seen {
+				out[inode] = pid
+			}
+		}
+	}
+	return out
+}
+
+type packageInfo struct {
+	Version string `json:"version,omitempty"`
+}
+
+func packages() []Fact {
+	f, err := os.Open("/var/lib/dpkg/status")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	agg := map[string]*packageInfo{}
+	var name, version string
+	installed := false
+	commit := func() {
+		if name != "" && installed {
+			agg[name] = &packageInfo{Version: version}
+		}
+		name, version, installed = "", "", false
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		switch {
+		case line == "":
+			commit()
+		case strings.HasPrefix(line, "Package: "):
+			name = line[9:]
+		case strings.HasPrefix(line, "Version: "):
+			version = line[9:]
+		case strings.HasPrefix(line, "Status: "):
+			installed = strings.HasSuffix(line, " installed")
+		}
+	}
+	commit()
+	return sortedFacts("package", agg)
+}
+
+type unitInfo struct {
+	Load   string `json:"load,omitempty"`
+	Active string `json:"active,omitempty"`
+	Sub    string `json:"sub,omitempty"`
+}
+
+func units() []Fact {
+	out, err := exec.Command("systemctl", "list-units", "--type=service", "--all", "--plain", "--no-legend", "--no-pager").Output()
+	if err != nil {
+		return nil
+	}
+	agg := map[string]*unitInfo{}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || !strings.HasSuffix(f[0], ".service") {
+			continue
+		}
+		agg[f[0]] = &unitInfo{Load: f[1], Active: f[2], Sub: f[3]}
+	}
+	return sortedFacts("unit", agg)
+}
+
+func sortedFacts[T any](kind string, agg map[string]*T) []Fact {
+	keys := make([]string, 0, len(agg))
+	for k := range agg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	facts := make([]Fact, 0, len(keys))
+	for _, k := range keys {
+		payload, err := json.Marshal(agg[k])
+		if err != nil {
+			continue
+		}
+		facts = append(facts, Fact{Kind: kind, Key: k, Payload: string(payload)})
+	}
+	return facts
 }
