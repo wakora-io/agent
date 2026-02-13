@@ -41,6 +41,7 @@ type Heartbeat struct {
 
 type Command struct {
 	Action string `json:"action"`
+	Key    string `json:"key,omitempty"`
 }
 
 func Encode(t MessageType, seq uint64, v any) (Message, error) {

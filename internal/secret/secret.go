@@ -17,6 +17,10 @@ func machineKey() []byte {
 	return sum[:]
 }
 
+func MachineID() string {
+	return machineID()
+}
+
 func machineID() string {
 	for _, p := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
 		if b, err := os.ReadFile(p); err == nil {

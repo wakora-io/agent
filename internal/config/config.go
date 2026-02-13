@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,30 +69,27 @@ func loadIdentity(dir string) (identity, error) {
 	return id, nil
 }
 
-func SetKey(dir, key string) (string, error) {
+func SaveIdentity(dir, serverID, key string) error {
 	if dir == "" {
 		dir = defaultDir
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	id, _ := loadIdentity(dir)
-	if id.uuid == "" {
-		u, err := newUUID()
-		if err != nil {
-			return "", err
-		}
-		id.uuid = u
+		return err
 	}
 	enc, err := secret.Encrypt(key)
 	if err != nil {
-		return "", err
+		return err
 	}
 	path := filepath.Join(dir, "identity")
-	if err := writeINI(path, map[string]map[string]string{"": {"uuid": id.uuid, "key": enc}}); err != nil {
-		return "", err
+	return writeINI(path, map[string]map[string]string{"": {"uuid": serverID, "key": enc}})
+}
+
+func (c *Config) SaveKey(key string) error {
+	if err := SaveIdentity(c.dir, c.ServerID, key); err != nil {
+		return err
 	}
-	return id.uuid, nil
+	c.Key = key
+	return nil
 }
 
 func WriteOverride(dir, service, key, value string) error {
@@ -117,13 +112,3 @@ func WriteOverride(dir, service, key, value string) error {
 	return writeINI(path, sections)
 }
 
-func newUUID() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	s := hex.EncodeToString(b)
-	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:], nil
-}

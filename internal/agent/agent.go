@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"wakora.io/agent/internal/buffer"
@@ -16,14 +17,21 @@ import (
 )
 
 type Agent struct {
-	cfg    *config.Config
-	client *transport.Client
-	ring   *buffer.Ring
-	seq    uint64
+	cfg  *config.Config
+	ring *buffer.Ring
+	key  atomic.Value
+	seq  uint64
 }
 
-func New(cfg *config.Config, client *transport.Client, ring *buffer.Ring) *Agent {
-	return &Agent{cfg: cfg, client: client, ring: ring}
+func New(cfg *config.Config, ring *buffer.Ring) *Agent {
+	a := &Agent{cfg: cfg, ring: ring}
+	a.key.Store(cfg.Key)
+	return a
+}
+
+func (a *Agent) Key() string {
+	v, _ := a.key.Load().(string)
+	return v
 }
 
 func (a *Agent) collect() protocol.MetricsBatch {
@@ -41,8 +49,8 @@ func (a *Agent) collect() protocol.MetricsBatch {
 	}
 }
 
-func (a *Agent) Run(ctx context.Context, interval, heartbeatEvery time.Duration) error {
-	return a.client.Run(ctx, func(conn transport.Conn) error {
+func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery time.Duration) error {
+	return client.Run(ctx, func(conn transport.Conn) error {
 		a.drainSpool(conn)
 		if err := a.sendHeartbeat(conn); err != nil {
 			return err
@@ -127,11 +135,22 @@ func (a *Agent) handleDownstream(m protocol.Message, kick chan struct{}) {
 		if err := json.Unmarshal(m.Payload, &c); err != nil {
 			return
 		}
-		if c.Action == "collectNow" {
+		switch c.Action {
+		case "collectNow":
 			select {
 			case kick <- struct{}{}:
 			default:
 			}
+		case "rotateKey":
+			if c.Key == "" {
+				return
+			}
+			if err := a.cfg.SaveKey(c.Key); err != nil {
+				log.Printf("key rotation failed: %v", err)
+				return
+			}
+			a.key.Store(c.Key)
+			log.Print("per-server key rotated")
 		}
 	}
 }

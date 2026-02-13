@@ -17,12 +17,12 @@ import (
 )
 
 type wsDialer struct {
-	key    string
+	keyFn  func() string
 	client *http.Client
 }
 
-func NewWSDialer(key, certPin string) Dialer {
-	return &wsDialer{key: key, client: PinnedClient(certPin)}
+func NewWSDialer(keyFn func() string, certPin string) Dialer {
+	return &wsDialer{keyFn: keyFn, client: PinnedClient(certPin)}
 }
 
 func PinnedClient(pin string) *http.Client {
@@ -55,7 +55,7 @@ func PinnedClient(pin string) *http.Client {
 func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
 	c, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{
 		HTTPClient: d.client,
-		HTTPHeader: http.Header{"X-Wakora-Key": {d.key}},
+		HTTPHeader: http.Header{"X-Wakora-Key": {d.keyFn()}},
 	})
 	if err != nil {
 		return nil, err

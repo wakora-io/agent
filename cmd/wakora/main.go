@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"wakora.io/agent/internal/agent"
+	"wakora.io/agent/internal/bootstrap"
 	"wakora.io/agent/internal/buffer"
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
+	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
 	"wakora.io/agent/internal/update"
 )
@@ -27,7 +29,7 @@ func main() {
 	configDir := flag.String("config", "/etc/wakora", "config directory")
 	endpoint := flag.String("endpoint", "", "override built-in gateway endpoint (dev)")
 	certPin := flag.String("cert-pin", "", "override built-in gateway certificate pin (dev)")
-	key := flag.String("key", "", "store per-server key into identity and exit")
+	key := flag.String("key", "", "team key: register this host and exit")
 	overrides := map[string]map[string]string{}
 	flag.Func("set", "service location override svc.key=value (repeatable), writes wakora.conf and exits", func(v string) error {
 		svc, k, val, err := parseOverride(v)
@@ -54,13 +56,33 @@ func main() {
 		return
 	}
 
+	cfg, err := config.Load(*configDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *endpoint != "" {
+		cfg.Endpoint = *endpoint
+	}
+	pin := buildinfo.CertPin
+	if *certPin != "" {
+		pin = *certPin
+	}
+	httpc := transport.PinnedClient(pin)
+
 	if *key != "" || len(overrides) > 0 {
 		if *key != "" {
-			uuid, err := config.SetKey(*configDir, *key)
+			regURL := deriveURL(cfg.Endpoint, "/register")
+			if regURL == "" {
+				log.Fatal("register: no endpoint built in; use --endpoint (dev)")
+			}
+			serverID, serverKey, err := bootstrap.Register(httpc, regURL, *key, secret.MachineID(), cfg.Hostname)
 			if err != nil {
 				log.Fatal(err)
 			}
-			log.Printf("identity stored, server uuid %s", uuid)
+			if err := config.SaveIdentity(*configDir, serverID, serverKey); err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("registered, server uuid %s", serverID)
 		}
 		for svc, kv := range overrides {
 			for k, v := range kv {
@@ -75,30 +97,17 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(*configDir)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if *endpoint != "" {
-		cfg.Endpoint = *endpoint
-	}
-	pin := buildinfo.CertPin
-	if *certPin != "" {
-		pin = *certPin
-	}
-
 	relURL := *updateURL
 	if relURL == "" {
-		relURL = releaseURL(cfg.Endpoint)
+		relURL = deriveURL(cfg.Endpoint, "/release")
 	}
-	httpc := transport.PinnedClient(pin)
 
 	if *doUpd {
 		runUpdateOnce(relURL, httpc)
 		return
 	}
 
-	a := agent.New(cfg, &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(cfg.Key, pin)}, buffer.New(cfg.RingPath(), 64<<20))
+	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20))
 
 	if *test {
 		a.DryRun()
@@ -109,8 +118,10 @@ func main() {
 		log.Fatal("no gateway endpoint built into this binary; use --endpoint (dev)")
 	}
 	if cfg.Key == "" {
-		log.Fatal("no identity; run: wakora --key <KEY>")
+		log.Fatal("no identity; register with: wakora --key <TEAMKEY>")
 	}
+
+	client := &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(a.Key, pin)}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -119,7 +130,7 @@ func main() {
 		go autoUpdate(ctx, relURL, httpc, *updateEvery)
 	}
 
-	if err := a.Run(ctx, *interval, *heartbeat); err != nil && ctx.Err() == nil {
+	if err := a.Run(ctx, client, *interval, *heartbeat); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
 }
@@ -138,7 +149,7 @@ func parseOverride(v string) (svc, key, val string, err error) {
 	return left[:dot], left[dot+1:], val, nil
 }
 
-func releaseURL(endpoint string) string {
+func deriveURL(endpoint, path string) string {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {
 		return ""
@@ -147,7 +158,7 @@ func releaseURL(endpoint string) string {
 	if u.Scheme == "wss" || u.Scheme == "https" {
 		scheme = "https"
 	}
-	return scheme + "://" + u.Host + "/release"
+	return scheme + "://" + u.Host + path
 }
 
 func runUpdateOnce(relURL string, httpc *http.Client) {
