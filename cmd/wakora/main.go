@@ -20,6 +20,7 @@ import (
 	"wakora.io/agent/internal/buffer"
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
+	"wakora.io/agent/internal/logfile"
 	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
 	"wakora.io/agent/internal/update"
@@ -52,6 +53,7 @@ func main() {
 	heartbeat := flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	discoveryEvery := flag.Duration("discovery-interval", 30*time.Minute, "full discovery resync interval")
 	discoveryCheck := flag.Duration("discovery-check", 30*time.Second, "cheap change-detection interval (dpkg + listening ports)")
+	logPath := flag.String("log-file", "/var/log/wakora/agent.log", "own log file (service mode), empty = stderr only")
 	flag.Parse()
 
 	if *showVersion {
@@ -126,6 +128,12 @@ func main() {
 	}
 	if cfg.Key == "" {
 		log.Fatal("no identity; register with: wakora --key <TEAMKEY>")
+	}
+
+	if *logPath != "" {
+		if err := logfile.Setup(*logPath); err != nil {
+			log.Printf("log file unavailable (%v), continuing with stderr", err)
+		}
 	}
 
 	client := &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(a.Key, pin)}
