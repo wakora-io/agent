@@ -81,6 +81,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runVhosts(&o, service, p, timeout)
 	case "sql":
 		runSQL(&o, service, p, timeout, resolve)
+	case "redis":
+		runRedis(&o, service, p, timeout, resolve)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type
