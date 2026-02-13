@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"wakora.io/agent/internal/protocol"
@@ -13,14 +14,18 @@ import (
 const maxTailRead = 8 << 20
 
 type Tailer struct {
-	path   string
-	offset int64
-	lastAt time.Time
-	res    map[string]*regexp.Regexp
+	paths   []string
+	offsets map[string]int64
+	lastAt  time.Time
+	res     map[string]*regexp.Regexp
 }
 
-func NewTailer(path string) *Tailer {
-	return &Tailer{path: path, res: map[string]*regexp.Regexp{}}
+func NewTailer(paths []string) *Tailer {
+	return &Tailer{paths: paths, offsets: map[string]int64{}, res: map[string]*regexp.Regexp{}}
+}
+
+func (t *Tailer) Key() string {
+	return strings.Join(t.paths, ",")
 }
 
 func (t *Tailer) compile(pattern string) *regexp.Regexp {
@@ -39,34 +44,55 @@ func (t *Tailer) compile(pattern string) *regexp.Regexp {
 }
 
 func (t *Tailer) Sample(counters []protocol.Counter, now time.Time) ([]protocol.MetricPoint, error) {
-	f, err := os.Open(t.path)
+	first := t.lastAt.IsZero()
+	counts := make([]int, len(counters))
+	var firstErr error
+	for _, path := range t.paths {
+		if err := t.sampleFile(path, counters, counts, first); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if first {
+		t.lastAt = now
+		return nil, firstErr
+	}
+	elapsed := now.Sub(t.lastAt).Seconds()
+	t.lastAt = now
+	if elapsed <= 0 {
+		return nil, firstErr
+	}
+	var pts []protocol.MetricPoint
+	for i, c := range counters {
+		pts = append(pts, protocol.MetricPoint{Name: c.Name, Value: float64(counts[i]) / elapsed})
+	}
+	return pts, firstErr
+}
+
+func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []int, first bool) error {
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	size := st.Size()
-
-	if t.lastAt.IsZero() {
-		t.offset = size
-		t.lastAt = now
-		return nil, nil
+	if first {
+		t.offsets[path] = size
+		return nil
 	}
-	if size < t.offset {
-		t.offset = 0
+	start := t.offsets[path]
+	if size < start {
+		start = 0
 	}
-	start := t.offset
 	if size-start > maxTailRead {
 		start = size - maxTailRead
 	}
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return nil, err
+		return err
 	}
-
-	counts := make([]int, len(counters))
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for sc.Scan() {
@@ -78,16 +104,6 @@ func (t *Tailer) Sample(counters []protocol.Counter, now time.Time) ([]protocol.
 			}
 		}
 	}
-	elapsed := now.Sub(t.lastAt).Seconds()
-	t.offset = size
-	t.lastAt = now
-	if elapsed <= 0 {
-		return nil, nil
-	}
-
-	var pts []protocol.MetricPoint
-	for i, c := range counters {
-		pts = append(pts, protocol.MetricPoint{Name: c.Name, Value: float64(counts[i]) / elapsed})
-	}
-	return pts, nil
+	t.offsets[path] = size
+	return nil
 }

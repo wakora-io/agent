@@ -142,7 +142,13 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 		}
 	}
 	for _, r := range p.Facts {
-		v, ok := extract(out, r.Regex)
+		var v string
+		var ok bool
+		if r.All {
+			v, ok = extractAll(out, r.Regex)
+		} else {
+			v, ok = extract(out, r.Regex)
+		}
 		if !ok {
 			continue
 		}
@@ -151,6 +157,30 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 		}
 		o.Facts[r.Name] = v
 	}
+}
+
+func extractAll(out []byte, pattern string) (string, bool) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", false
+	}
+	seen := map[string]bool{}
+	var vals []string
+	for _, m := range re.FindAllSubmatch(out, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		v := strings.TrimSpace(string(m[1]))
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		vals = append(vals, v)
+	}
+	if len(vals) == 0 {
+		return "", false
+	}
+	return strings.Join(vals, ","), true
 }
 
 func extract(out []byte, pattern string) (string, bool) {

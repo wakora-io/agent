@@ -393,11 +393,17 @@ func (a *Agent) resolveSecret(name string) (secret.Cred, bool) {
 }
 
 func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe) error {
-	path := p.Path
-	if path == "" && p.PathFrom != "" {
+	var paths []string
+	if p.Path != "" {
+		paths = []string{p.Path}
+	} else if p.PathFrom != "" {
 		a.mu.Lock()
 		if facts := a.serviceFacts[service]; facts != nil {
-			path = facts[p.PathFrom]
+			for _, v := range strings.Split(facts[p.PathFrom], ",") {
+				if v = strings.TrimSpace(v); v != "" {
+					paths = append(paths, v)
+				}
+			}
 		}
 		a.mu.Unlock()
 	}
@@ -406,10 +412,10 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 		Hostname:  a.cfg.Hostname,
 		CheckID:   service + "/" + p.Name,
 		Kind:      "logtail",
-		Target:    path,
+		Target:    strings.Join(paths, ","),
 		Timestamp: time.Now().Unix(),
 	}
-	if path == "" {
+	if len(paths) == 0 {
 		check.Status = "fail"
 		check.Error = "log path unknown (not discovered yet)"
 		return a.sendCheck(conn, check)
@@ -417,8 +423,8 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 
 	key := service + "/" + p.Name
 	t := a.tailers[key]
-	if t == nil {
-		t = defs.NewTailer(path)
+	if t == nil || t.Key() != strings.Join(paths, ",") {
+		t = defs.NewTailer(paths)
 		a.tailers[key] = t
 	}
 	pts, err := t.Sample(p.Counters, time.Now())

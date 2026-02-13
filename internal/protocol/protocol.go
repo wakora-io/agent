@@ -78,6 +78,7 @@ type Match struct {
 type ParseRule struct {
 	Name  string `json:"name"`
 	Regex string `json:"regex"`
+	All   bool   `json:"all,omitempty"`
 }
 
 type KVMetric struct {
