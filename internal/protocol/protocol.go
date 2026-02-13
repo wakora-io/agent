@@ -11,6 +11,7 @@ const (
 	TypeConfig    MessageType = "config"
 	TypeCommand   MessageType = "command"
 	TypeCheck     MessageType = "check"
+	TypeEvent     MessageType = "event"
 	TypeAck       MessageType = "ack"
 )
 
@@ -97,6 +98,14 @@ type Definition struct {
 	Match       Match   `json:"match"`
 	Probes      []Probe `json:"probes"`
 	IntervalSec int     `json:"intervalSec,omitempty"`
+}
+
+type AgentEvent struct {
+	ServerID  string `json:"serverId"`
+	Hostname  string `json:"hostname,omitempty"`
+	Kind      string `json:"kind"`
+	Detail    string `json:"detail,omitempty"`
+	Timestamp int64  `json:"ts"`
 }
 
 type CheckResult struct {

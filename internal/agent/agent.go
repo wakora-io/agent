@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"wakora.io/agent/internal/anomaly"
 	"wakora.io/agent/internal/buffer"
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
@@ -25,6 +26,7 @@ type Agent struct {
 	ring         *buffer.Ring
 	publisherKey string
 	metrics      *metrics.Collector
+	detector     *anomaly.Detector
 	key          atomic.Value
 	seq          uint64
 
@@ -45,6 +47,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		ring:         ring,
 		publisherKey: publisherKey,
 		metrics:      metrics.NewCollector(),
+		detector:     anomaly.New(),
 		lastRun:      map[string]time.Time{},
 		serviceFacts: map[string]map[string]string{},
 		probeFacts:   map[string][]protocol.Fact{},
@@ -152,8 +155,9 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 }
 
 func (a *Agent) sendMetrics(conn transport.Conn) error {
+	batch := a.collect()
 	a.seq++
-	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, a.collect())
+	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, batch)
 	if err != nil {
 		return nil
 	}
@@ -163,7 +167,48 @@ func (a *Agent) sendMetrics(conn transport.Conn) error {
 		}
 		return err
 	}
+	return a.observePoints(conn, batch.Points)
+}
+
+func (a *Agent) observePoints(conn transport.Conn, points []protocol.MetricPoint) error {
+	now := time.Now()
+	for _, p := range points {
+		an := a.detector.Observe(p.Name, p.Tags, p.Value, now)
+		if an == nil {
+			continue
+		}
+		log.Printf("anomaly: %s z=%.1f value=%.2f baseline=%.2f", an.Metric, an.Z, an.Value, an.Baseline)
+		detail, err := json.Marshal(map[string]any{
+			"metric":   an.Metric,
+			"tags":     an.Tags,
+			"value":    round2(an.Value),
+			"baseline": round2(an.Baseline),
+			"sigma":    round2(an.Sigma),
+			"z":        round2(an.Z),
+		})
+		if err != nil {
+			continue
+		}
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Kind:      "anomaly",
+			Detail:    string(detail),
+			Timestamp: now.Unix(),
+		})
+		if err != nil {
+			continue
+		}
+		if err := conn.Send(msg); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func round2(v float64) float64 {
+	return float64(int(v*100+0.5)) / 100
 }
 
 func (a *Agent) sendHeartbeat(conn transport.Conn) error {
@@ -296,6 +341,9 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					if err := conn.Send(mmsg); err != nil {
 						return err
 					}
+				}
+				if err := a.observePoints(conn, o.Metrics); err != nil {
+					return err
 				}
 			}
 			if len(o.Facts) > 0 && a.mergeServiceFacts(d.Service, o.Facts) {
