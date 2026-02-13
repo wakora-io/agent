@@ -10,6 +10,7 @@ const (
 	TypeDiscovery MessageType = "discovery"
 	TypeConfig    MessageType = "config"
 	TypeCommand   MessageType = "command"
+	TypeCheck     MessageType = "check"
 	TypeAck       MessageType = "ack"
 )
 
@@ -55,6 +56,50 @@ type DiscoverySnapshot struct {
 	Hostname  string `json:"hostname,omitempty"`
 	Timestamp int64  `json:"ts"`
 	Facts     []Fact `json:"facts"`
+}
+
+type SignedDefinition struct {
+	Def json.RawMessage `json:"def"`
+	Sig string          `json:"sig"`
+}
+
+type DefinitionSet struct {
+	Definitions []SignedDefinition `json:"definitions"`
+}
+
+type Match struct {
+	Process string `json:"process,omitempty"`
+	Port    string `json:"port,omitempty"`
+	Package string `json:"package,omitempty"`
+	Unit    string `json:"unit,omitempty"`
+}
+
+type Probe struct {
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	URL          string `json:"url,omitempty"`
+	Address      string `json:"address,omitempty"`
+	ExpectStatus int    `json:"expectStatus,omitempty"`
+	TimeoutSec   int    `json:"timeoutSec,omitempty"`
+}
+
+type Definition struct {
+	Service     string  `json:"service"`
+	Match       Match   `json:"match"`
+	Probes      []Probe `json:"probes"`
+	IntervalSec int     `json:"intervalSec,omitempty"`
+}
+
+type CheckResult struct {
+	ServerID  string  `json:"serverId"`
+	Hostname  string  `json:"hostname,omitempty"`
+	CheckID   string  `json:"checkId"`
+	Kind      string  `json:"kind"`
+	Target    string  `json:"target,omitempty"`
+	Status    string  `json:"status"`
+	LatencyMs float64 `json:"latencyMs"`
+	Error     string  `json:"error,omitempty"`
+	Timestamp int64   `json:"ts"`
 }
 
 func Encode(t MessageType, seq uint64, v any) (Message, error) {

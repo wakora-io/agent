@@ -29,6 +29,7 @@ func main() {
 	configDir := flag.String("config", "/etc/wakora", "config directory")
 	endpoint := flag.String("endpoint", "", "override built-in gateway endpoint (dev)")
 	certPin := flag.String("cert-pin", "", "override built-in gateway certificate pin (dev)")
+	publisherKey := flag.String("publisher-key", "", "override built-in definitions publisher key (dev)")
 	key := flag.String("key", "", "team key: register this host and exit")
 	overrides := map[string]map[string]string{}
 	flag.Func("set", "service location override svc.key=value (repeatable), writes wakora.conf and exits", func(v string) error {
@@ -67,6 +68,10 @@ func main() {
 	pin := buildinfo.CertPin
 	if *certPin != "" {
 		pin = *certPin
+	}
+	pubKey := buildinfo.PublisherKey
+	if *publisherKey != "" {
+		pubKey = *publisherKey
 	}
 	httpc := transport.PinnedClient(pin)
 
@@ -108,7 +113,7 @@ func main() {
 		return
 	}
 
-	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20))
+	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20), pubKey)
 
 	if *test {
 		a.DryRun()

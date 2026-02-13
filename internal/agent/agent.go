@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"wakora.io/agent/internal/buffer"
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
+	"wakora.io/agent/internal/defs"
 	"wakora.io/agent/internal/discovery"
 	"wakora.io/agent/internal/metrics"
 	"wakora.io/agent/internal/protocol"
@@ -17,14 +19,21 @@ import (
 )
 
 type Agent struct {
-	cfg  *config.Config
-	ring *buffer.Ring
-	key  atomic.Value
-	seq  uint64
+	cfg          *config.Config
+	ring         *buffer.Ring
+	publisherKey string
+	key          atomic.Value
+	seq          uint64
+
+	mu       sync.Mutex
+	facts    []discovery.Fact
+	defs     []protocol.Definition
+	active   []protocol.Definition
+	lastRun  map[string]time.Time
 }
 
-func New(cfg *config.Config, ring *buffer.Ring) *Agent {
-	a := &Agent{cfg: cfg, ring: ring}
+func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
+	a := &Agent{cfg: cfg, ring: ring, publisherKey: publisherKey, lastRun: map[string]time.Time{}}
 	a.key.Store(cfg.Key)
 	return a
 }
@@ -82,6 +91,8 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		defer hb.Stop()
 		dt := time.NewTicker(discoveryEvery)
 		defer dt.Stop()
+		pt := time.NewTicker(15 * time.Second)
+		defer pt.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -106,6 +117,10 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				}
 			case <-dt.C:
 				if err := a.sendDiscovery(conn); err != nil {
+					return err
+				}
+			case <-pt.C:
+				if err := a.runDueProbes(conn); err != nil {
 					return err
 				}
 			}
@@ -144,6 +159,11 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 
 func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	facts := discovery.Collect()
+	a.mu.Lock()
+	a.facts = facts
+	a.mu.Unlock()
+	a.refreshActive()
+
 	pf := make([]protocol.Fact, len(facts))
 	for i, f := range facts {
 		pf[i] = protocol.Fact{Kind: f.Kind, Key: f.Key, Payload: f.Payload}
@@ -161,8 +181,93 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	return conn.Send(msg)
 }
 
+func (a *Agent) refreshActive() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.facts == nil {
+		return
+	}
+	prev := map[string]bool{}
+	for _, d := range a.active {
+		prev[d.Service] = true
+	}
+	var active []protocol.Definition
+	for _, d := range a.defs {
+		if defs.Matches(d, a.facts) {
+			active = append(active, d)
+			if !prev[d.Service] {
+				log.Printf("service matched: %s, %d probe(s) activated", d.Service, len(d.Probes))
+			}
+		} else if prev[d.Service] {
+			log.Printf("service unmatched: %s, probes deactivated", d.Service)
+		}
+	}
+	a.active = active
+}
+
+func (a *Agent) runDueProbes(conn transport.Conn) error {
+	a.mu.Lock()
+	var due []protocol.Definition
+	now := time.Now()
+	for _, d := range a.active {
+		interval := time.Duration(d.IntervalSec) * time.Second
+		if interval <= 0 {
+			interval = time.Minute
+		}
+		if now.Sub(a.lastRun[d.Service]) >= interval {
+			a.lastRun[d.Service] = now
+			due = append(due, d)
+		}
+	}
+	a.mu.Unlock()
+
+	for _, d := range due {
+		for _, p := range d.Probes {
+			res := defs.RunProbe(d.Service, p)
+			res.ServerID = a.cfg.ServerID
+			res.Hostname = a.cfg.Hostname
+			a.seq++
+			msg, err := protocol.Encode(protocol.TypeCheck, a.seq, res)
+			if err != nil {
+				continue
+			}
+			if err := conn.Send(msg); err != nil {
+				return err
+			}
+			if res.Status == "ok" {
+				a.seq++
+				mmsg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+					ServerID:  a.cfg.ServerID,
+					Hostname:  a.cfg.Hostname,
+					Timestamp: res.Timestamp,
+					Points: []protocol.MetricPoint{
+						{Name: "svc." + d.Service + "." + p.Name + ".latency_ms", Value: res.LatencyMs},
+					},
+				})
+				if err == nil {
+					if err := conn.Send(mmsg); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {
 	switch m.Type {
+	case protocol.TypeConfig:
+		var set protocol.DefinitionSet
+		if err := json.Unmarshal(m.Payload, &set); err != nil {
+			return
+		}
+		verified := defs.Verify(set, a.publisherKey)
+		a.mu.Lock()
+		a.defs = verified
+		a.mu.Unlock()
+		log.Printf("definitions received: %d verified of %d", len(verified), len(set.Definitions))
+		a.refreshActive()
 	case protocol.TypeCommand:
 		var c protocol.Command
 		if err := json.Unmarshal(m.Payload, &c); err != nil {

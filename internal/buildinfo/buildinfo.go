@@ -1,7 +1,8 @@
 package buildinfo
 
 var (
-	Version  = "dev"
-	Endpoint = ""
-	CertPin  = ""
+	Version      = "dev"
+	Endpoint     = ""
+	CertPin      = ""
+	PublisherKey = ""
 )
