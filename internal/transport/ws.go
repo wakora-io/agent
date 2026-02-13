@@ -43,17 +43,17 @@ func (w *wsConn) Send(m protocol.Message) error {
 }
 
 func (w *wsConn) Recv() (protocol.Message, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	_, data, err := w.c.Read(ctx)
-	if err != nil {
-		return protocol.Message{}, err
+	for {
+		_, data, err := w.c.Read(context.Background())
+		if err != nil {
+			return protocol.Message{}, err
+		}
+		var m protocol.Message
+		if err := json.Unmarshal(data, &m); err != nil {
+			continue
+		}
+		return m, nil
 	}
-	var m protocol.Message
-	if err := json.Unmarshal(data, &m); err != nil {
-		return protocol.Message{}, err
-	}
-	return m, nil
 }
 
 func (w *wsConn) Close() error {

@@ -44,6 +44,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	test := flag.Bool("test", false, "dry run: collect and print, do not connect")
 	interval := flag.Duration("interval", time.Minute, "collection interval")
+	heartbeat := flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	flag.Parse()
 
 	if *showVersion {
@@ -111,7 +112,7 @@ func main() {
 		go autoUpdate(ctx, relURL, *updateEvery)
 	}
 
-	if err := a.Run(ctx, *interval); err != nil && ctx.Err() == nil {
+	if err := a.Run(ctx, *interval, *heartbeat); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
 }

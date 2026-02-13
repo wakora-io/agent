@@ -32,6 +32,17 @@ type MetricsBatch struct {
 	Points    []MetricPoint `json:"points"`
 }
 
+type Heartbeat struct {
+	ServerID  string `json:"serverId"`
+	Hostname  string `json:"hostname,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Timestamp int64  `json:"ts"`
+}
+
+type Command struct {
+	Action string `json:"action"`
+}
+
 func Encode(t MessageType, seq uint64, v any) (Message, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
