@@ -2,6 +2,7 @@ package buffer
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"sync"
 )
@@ -42,6 +43,9 @@ func (r *Ring) trim() error {
 	}
 	if int64(len(data)) > r.maxSize {
 		data = data[int64(len(data))-r.maxSize:]
+		if i := bytes.IndexByte(data, '\n'); i >= 0 && i+1 < len(data) {
+			data = data[i+1:]
+		}
 	}
 	return os.WriteFile(r.path, data, 0o600)
 }
