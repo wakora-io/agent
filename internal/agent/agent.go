@@ -325,6 +325,11 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
+			if p.Type == "sql" && p.Address == "" && !p.Socket && p.PortProcess != "" {
+				if port := a.resolvePort(p.PortProcess); port != "" {
+					p.Address = "127.0.0.1:" + port
+				}
+			}
 			o := defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			for _, check := range append([]protocol.CheckResult{o.Check}, o.Extra...) {
 				check.ServerID = a.cfg.ServerID
@@ -390,6 +395,27 @@ func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
 
 func (a *Agent) resolveSecret(name string) (secret.Cred, bool) {
 	return secret.GetCred(a.cfg.Dir(), name)
+}
+
+func (a *Agent) resolvePort(process string) string {
+	a.mu.Lock()
+	facts := a.facts
+	a.mu.Unlock()
+	for _, f := range facts {
+		if f.Kind != "port" {
+			continue
+		}
+		var info struct {
+			Process string `json:"process"`
+		}
+		if json.Unmarshal([]byte(f.Payload), &info) != nil || info.Process != process {
+			continue
+		}
+		if i := strings.IndexByte(f.Key, '/'); i > 0 {
+			return f.Key[:i]
+		}
+	}
+	return ""
 }
 
 func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe) error {
