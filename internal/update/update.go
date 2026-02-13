@@ -18,10 +18,14 @@ type Updater struct {
 	client  *http.Client
 }
 
-func New(baseURL string) *Updater {
+func New(baseURL string, client *http.Client) *Updater {
+	c := &http.Client{Timeout: time.Minute}
+	if client != nil {
+		c.Transport = client.Transport
+	}
 	return &Updater{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  &http.Client{Timeout: time.Minute},
+		client:  c,
 	}
 }
 

@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"wakora.io/agent/internal/protocol"
@@ -41,6 +42,8 @@ func (c *Client) Run(ctx context.Context, onConn func(Conn) error) error {
 		if conn, err := c.Dialer.Dial(ctx, c.Endpoint); err == nil {
 			_ = onConn(conn)
 			conn.Close()
+		} else {
+			log.Printf("dial %s: %v", c.Endpoint, err)
 		}
 		select {
 		case <-ctx.Done():

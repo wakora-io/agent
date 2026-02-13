@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -25,6 +26,7 @@ import (
 func main() {
 	configDir := flag.String("config", "/etc/wakora", "config directory")
 	endpoint := flag.String("endpoint", "", "override built-in gateway endpoint (dev)")
+	certPin := flag.String("cert-pin", "", "override built-in gateway certificate pin (dev)")
 	key := flag.String("key", "", "store per-server key into identity and exit")
 	overrides := map[string]map[string]string{}
 	flag.Func("set", "service location override svc.key=value (repeatable), writes wakora.conf and exits", func(v string) error {
@@ -80,18 +82,23 @@ func main() {
 	if *endpoint != "" {
 		cfg.Endpoint = *endpoint
 	}
+	pin := buildinfo.CertPin
+	if *certPin != "" {
+		pin = *certPin
+	}
 
 	relURL := *updateURL
 	if relURL == "" {
 		relURL = releaseURL(cfg.Endpoint)
 	}
+	httpc := transport.PinnedClient(pin)
 
 	if *doUpd {
-		runUpdateOnce(relURL)
+		runUpdateOnce(relURL, httpc)
 		return
 	}
 
-	a := agent.New(cfg, &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(cfg.Key)}, buffer.New(cfg.RingPath(), 64<<20))
+	a := agent.New(cfg, &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(cfg.Key, pin)}, buffer.New(cfg.RingPath(), 64<<20))
 
 	if *test {
 		a.DryRun()
@@ -109,7 +116,7 @@ func main() {
 	defer stop()
 
 	if relURL != "" {
-		go autoUpdate(ctx, relURL, *updateEvery)
+		go autoUpdate(ctx, relURL, httpc, *updateEvery)
 	}
 
 	if err := a.Run(ctx, *interval, *heartbeat); err != nil && ctx.Err() == nil {
@@ -143,11 +150,11 @@ func releaseURL(endpoint string) string {
 	return scheme + "://" + u.Host + "/release"
 }
 
-func runUpdateOnce(relURL string) {
+func runUpdateOnce(relURL string, httpc *http.Client) {
 	if relURL == "" {
 		log.Fatal("update: no release url; use --update-url or --endpoint")
 	}
-	u := update.New(relURL)
+	u := update.New(relURL, httpc)
 	latest, err := u.LatestVersion()
 	if err != nil {
 		log.Fatal(err)
@@ -167,8 +174,8 @@ func runUpdateOnce(relURL string) {
 	_ = exec.Command("systemctl", "restart", "wakora-agent").Run()
 }
 
-func autoUpdate(ctx context.Context, relURL string, every time.Duration) {
-	u := update.New(relURL)
+func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every time.Duration) {
+	u := update.New(relURL, httpc)
 	exe, err := os.Executable()
 	if err != nil {
 		return
