@@ -22,6 +22,7 @@ type Agent struct {
 	cfg          *config.Config
 	ring         *buffer.Ring
 	publisherKey string
+	metrics      *metrics.Collector
 	key          atomic.Value
 	seq          uint64
 
@@ -35,7 +36,13 @@ type Agent struct {
 }
 
 func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
-	a := &Agent{cfg: cfg, ring: ring, publisherKey: publisherKey, lastRun: map[string]time.Time{}}
+	a := &Agent{
+		cfg:          cfg,
+		ring:         ring,
+		publisherKey: publisherKey,
+		metrics:      metrics.NewCollector(),
+		lastRun:      map[string]time.Time{},
+	}
 	a.key.Store(cfg.Key)
 	return a
 }
@@ -46,17 +53,16 @@ func (a *Agent) Key() string {
 }
 
 func (a *Agent) collect() protocol.MetricsBatch {
-	h := metrics.Collect()
+	ts, pts := a.metrics.Collect()
+	points := make([]protocol.MetricPoint, len(pts))
+	for i, p := range pts {
+		points[i] = protocol.MetricPoint{Name: p.Name, Value: p.Value, Tags: p.Tags}
+	}
 	return protocol.MetricsBatch{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
-		Timestamp: h.Timestamp,
-		Points: []protocol.MetricPoint{
-			{Name: "host.load1", Value: h.Load1},
-			{Name: "host.mem.total_kb", Value: float64(h.MemTotalKB)},
-			{Name: "host.mem.free_kb", Value: float64(h.MemFreeKB)},
-			{Name: "host.uptime_sec", Value: h.UptimeSec},
-		},
+		Timestamp: ts,
+		Points:    points,
 	}
 }
 
