@@ -3,8 +3,10 @@ package defs
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -82,27 +84,40 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		return hosts[i].Port < hosts[j].Port
 	})
 	for _, h := range hosts {
+		r := probeVhost(service, h, timeout)
+		o.Extra = append(o.Extra, r.check)
+
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
-		payload, _ := json.Marshal(map[string]any{"service": service, "port": h.Port, "ssl": h.SSL})
+		payload, _ := json.Marshal(map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL})
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
 
-		check, sslDays, hasSSL := probeVhost(service, h, timeout)
-		o.Extra = append(o.Extra, check)
 		tags := map[string]string{"vhost": h.Name, "port": strconv.Itoa(h.Port)}
-		if check.Status == "ok" {
+		if r.check.Status == "ok" {
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{
-				Name: "svc." + service + ".vhost.latency_ms", Value: check.LatencyMs, Tags: tags,
+				Name: "svc." + service + ".vhost.latency_ms", Value: r.check.LatencyMs, Tags: tags,
 			})
 		}
-		if hasSSL {
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{
-				Name: "svc." + service + ".vhost.ssl_days_left", Value: sslDays, Tags: tags,
-			})
+		if r.hasSSL {
+			trusted := 0.0
+			if r.trusted {
+				trusted = 1
+			}
+			o.Metrics = append(o.Metrics,
+				protocol.MetricPoint{Name: "svc." + service + ".vhost.ssl_days_left", Value: r.sslDays, Tags: tags},
+				protocol.MetricPoint{Name: "svc." + service + ".vhost.ssl_trusted", Value: trusted, Tags: tags},
+			)
 		}
 	}
 }
 
-func probeVhost(service string, h vhost, timeout time.Duration) (protocol.CheckResult, float64, bool) {
+type vhostResult struct {
+	check   protocol.CheckResult
+	sslDays float64
+	hasSSL  bool
+	trusted bool
+}
+
+func probeVhost(service string, h vhost, timeout time.Duration) vhostResult {
 	hostHeader := h.Name
 	if hostHeader == "_" || hostHeader == "" {
 		hostHeader = "localhost"
@@ -110,18 +125,20 @@ func probeVhost(service string, h vhost, timeout time.Duration) (protocol.CheckR
 	scheme := "http"
 	if h.SSL || h.Port == 443 {
 		scheme = "https"
+	} else if h.Port != 80 && sniffTLS(h.Port, hostHeader, timeout) {
+		scheme = "https"
 	}
-	res := protocol.CheckResult{
+	r := vhostResult{check: protocol.CheckResult{
 		CheckID:   service + "/vhost/" + fmt.Sprintf("%s:%d", h.Name, h.Port),
 		Kind:      "http",
 		Target:    fmt.Sprintf("%s://%s:%d/", scheme, hostHeader, h.Port),
 		Timestamp: time.Now().Unix(),
-	}
+	}}
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s://127.0.0.1:%d/", scheme, h.Port), nil)
 	if err != nil {
-		res.Status = "fail"
-		res.Error = err.Error()
-		return res, 0, false
+		r.check.Status = "fail"
+		r.check.Error = err.Error()
+		return r
 	}
 	req.Host = hostHeader
 	client := &http.Client{
@@ -137,30 +154,67 @@ func probeVhost(service string, h vhost, timeout time.Duration) (protocol.CheckR
 	}
 	start := time.Now()
 	resp, err := client.Do(req)
-	res.LatencyMs = float64(time.Since(start).Microseconds()) / 1000
+	r.check.LatencyMs = float64(time.Since(start).Microseconds()) / 1000
 	if err != nil {
-		res.Status = "fail"
-		res.Error = err.Error()
-		return res, 0, false
+		r.check.Status = "fail"
+		r.check.Error = err.Error()
+		return r
 	}
 	defer resp.Body.Close()
 
-	var sslDays float64
-	hasSSL := false
+	var notes []string
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
-		sslDays = time.Until(resp.TLS.PeerCertificates[0].NotAfter).Hours() / 24
-		hasSSL = true
-	}
-	if resp.StatusCode >= 500 {
-		res.Status = "fail"
-		res.Error = "status " + strconv.Itoa(resp.StatusCode)
-	} else {
-		res.Status = "ok"
-		if resp.StatusCode >= 400 {
-			res.Error = "status " + strconv.Itoa(resp.StatusCode)
+		r.hasSSL = true
+		cert := resp.TLS.PeerCertificates[0]
+		r.sslDays = time.Until(cert.NotAfter).Hours() / 24
+		r.trusted = true
+		if time.Now().After(cert.NotAfter) {
+			r.trusted = false
+			notes = append(notes, "certificate expired")
+		} else if note := verifyCert(resp.TLS.PeerCertificates); note != "" {
+			r.trusted = false
+			notes = append(notes, note)
 		}
 	}
-	return res, sslDays, hasSSL
+	if resp.StatusCode >= 500 {
+		r.check.Status = "fail"
+		notes = append([]string{"status " + strconv.Itoa(resp.StatusCode)}, notes...)
+	} else {
+		r.check.Status = "ok"
+		if resp.StatusCode >= 400 {
+			notes = append([]string{"status " + strconv.Itoa(resp.StatusCode)}, notes...)
+		}
+	}
+	r.check.Error = strings.Join(notes, "; ")
+	return r
+}
+
+func sniffTLS(port int, serverName string, timeout time.Duration) bool {
+	d := &net.Dialer{Timeout: timeout}
+	conn, err := tls.DialWithDialer(d, "tcp", fmt.Sprintf("127.0.0.1:%d", port), &tls.Config{
+		InsecureSkipVerify: true,
+		ServerName:         serverName,
+	})
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func verifyCert(chain []*x509.Certificate) string {
+	leaf := chain[0]
+	if len(chain) == 1 && leaf.Issuer.String() == leaf.Subject.String() {
+		return "self-signed certificate"
+	}
+	opts := x509.VerifyOptions{Intermediates: x509.NewCertPool()}
+	for _, c := range chain[1:] {
+		opts.Intermediates.AddCert(c)
+	}
+	if _, err := leaf.Verify(opts); err != nil {
+		return "untrusted certificate"
+	}
+	return ""
 }
 
 var nginxServerRe = regexp.MustCompile(`^server\s*\{?`)
