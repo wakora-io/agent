@@ -15,9 +15,11 @@ import (
 )
 
 type Outcome struct {
-	Check   protocol.CheckResult
-	Metrics []protocol.MetricPoint
-	Facts   map[string]string
+	Check    protocol.CheckResult
+	Extra    []protocol.CheckResult
+	Metrics  []protocol.MetricPoint
+	Facts    map[string]string
+	InvFacts []protocol.Fact
 }
 
 var execAllowlist = map[string]bool{
@@ -70,6 +72,8 @@ func RunProbe(service string, p protocol.Probe) Outcome {
 		}
 	case "exec":
 		runExec(&o, p, timeout)
+	case "vhosts":
+		runVhosts(&o, service, p, timeout)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type

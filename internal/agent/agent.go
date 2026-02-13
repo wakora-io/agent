@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,6 +34,7 @@ type Agent struct {
 	active       []protocol.Definition
 	lastRun      map[string]time.Time
 	serviceFacts map[string]map[string]string
+	probeFacts   map[string][]protocol.Fact
 
 	lastSignal string
 }
@@ -44,6 +47,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		metrics:      metrics.NewCollector(),
 		lastRun:      map[string]time.Time{},
 		serviceFacts: map[string]map[string]string{},
+		probeFacts:   map[string][]protocol.Fact{},
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -194,6 +198,9 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 			pf = append(pf, protocol.Fact{Kind: "service", Key: svc, Payload: string(payload)})
 		}
 	}
+	for _, extra := range a.probeFacts {
+		pf = append(pf, extra...)
+	}
 	a.mu.Unlock()
 	a.seq++
 	msg, err := protocol.Encode(protocol.TypeDiscovery, a.seq, protocol.DiscoverySnapshot{
@@ -236,6 +243,12 @@ func (a *Agent) refreshActive() {
 			delete(a.serviceFacts, svc)
 		}
 	}
+	for key := range a.probeFacts {
+		svc, _, _ := strings.Cut(key, "/")
+		if !activeSet[svc] {
+			delete(a.probeFacts, key)
+		}
+	}
 	a.active = active
 }
 
@@ -259,15 +272,17 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 	for _, d := range due {
 		for _, p := range d.Probes {
 			o := defs.RunProbe(d.Service, p)
-			o.Check.ServerID = a.cfg.ServerID
-			o.Check.Hostname = a.cfg.Hostname
-			a.seq++
-			msg, err := protocol.Encode(protocol.TypeCheck, a.seq, o.Check)
-			if err != nil {
-				continue
-			}
-			if err := conn.Send(msg); err != nil {
-				return err
+			for _, check := range append([]protocol.CheckResult{o.Check}, o.Extra...) {
+				check.ServerID = a.cfg.ServerID
+				check.Hostname = a.cfg.Hostname
+				a.seq++
+				msg, err := protocol.Encode(protocol.TypeCheck, a.seq, check)
+				if err != nil {
+					continue
+				}
+				if err := conn.Send(msg); err != nil {
+					return err
+				}
 			}
 			if len(o.Metrics) > 0 {
 				a.seq++
@@ -286,12 +301,34 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			if len(o.Facts) > 0 && a.mergeServiceFacts(d.Service, o.Facts) {
 				factsChanged = true
 			}
+			if a.setProbeFacts(d.Service+"/"+p.Name, o.InvFacts) {
+				factsChanged = true
+			}
 		}
 	}
 	if factsChanged {
 		return a.sendDiscovery(conn)
 	}
 	return nil
+}
+
+func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(facts) == 0 {
+		if _, had := a.probeFacts[key]; had {
+			delete(a.probeFacts, key)
+			return true
+		}
+		return false
+	}
+	newRaw, err := json.Marshal(facts)
+	if err != nil {
+		return false
+	}
+	oldRaw, _ := json.Marshal(a.probeFacts[key])
+	a.probeFacts[key] = facts
+	return !bytes.Equal(newRaw, oldRaw)
 }
 
 func (a *Agent) mergeServiceFacts(service string, facts map[string]string) bool {
