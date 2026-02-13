@@ -98,6 +98,8 @@ type Probe struct {
 	Facts        []ParseRule `json:"facts,omitempty"`
 	Driver       string      `json:"driver,omitempty"`
 	Secret       string      `json:"secret,omitempty"`
+	User         string      `json:"user,omitempty"`
+	Socket       bool        `json:"socket,omitempty"`
 	Query        string      `json:"query,omitempty"`
 	KVMetrics    []KVMetric  `json:"kvMetrics,omitempty"`
 }

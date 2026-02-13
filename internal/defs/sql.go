@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type CredResolver func(name string) (secret.Cred, bool)
 func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration, resolve CredResolver) {
 	o.Check.Target = p.Driver + ":" + p.Query
 	cred := secret.Cred{}
+	hasSecret := false
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {
@@ -28,8 +30,14 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 			return
 		}
 		cred = c
+		hasSecret = true
+	} else {
+		cred.User = p.User
+		if cred.User == "" {
+			cred.User = "root"
+		}
 	}
-	dsn, driver, err := buildDSN(p, cred)
+	dsn, driver, err := buildDSN(p, cred, hasSecret)
 	if err != nil {
 		o.Check.Status = "fail"
 		o.Check.Error = err.Error()
@@ -72,15 +80,33 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 	}
 }
 
-func buildDSN(p protocol.Probe, cred secret.Cred) (string, string, error) {
-	addr := p.Address
+var mysqlSockets = []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"}
+var pgSocketDirs = []string{"/var/run/postgresql", "/run/postgresql", "/tmp"}
+
+func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, string, error) {
 	switch p.Driver {
 	case "mysql":
+		if p.Socket {
+			sock := findSocket(mysqlSockets)
+			if sock == "" {
+				return "", "", fmt.Errorf("no mysql unix socket found")
+			}
+			return fmt.Sprintf("%s:%s@unix(%s)/?timeout=5s&readTimeout=5s", cred.User, cred.Pass, sock), "mysql", nil
+		}
+		addr := p.Address
 		if addr == "" {
 			addr = "127.0.0.1:3306"
 		}
 		return fmt.Sprintf("%s:%s@tcp(%s)/?timeout=5s&readTimeout=5s", cred.User, cred.Pass, addr), "mysql", nil
 	case "postgres":
+		if p.Socket {
+			dir := findSocketDir(pgSocketDirs, ".s.PGSQL.5432")
+			if dir == "" {
+				return "", "", fmt.Errorf("no postgres unix socket found")
+			}
+			return fmt.Sprintf("postgres://%s:%s@/postgres?host=%s&connect_timeout=5", cred.User, cred.Pass, dir), "pgx", nil
+		}
+		addr := p.Address
 		if addr == "" {
 			addr = "127.0.0.1:5432"
 		}
@@ -92,6 +118,24 @@ func buildDSN(p protocol.Probe, cred secret.Cred) (string, string, error) {
 	default:
 		return "", "", fmt.Errorf("unsupported sql driver %q", p.Driver)
 	}
+}
+
+func findSocket(paths []string) string {
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			return p
+		}
+	}
+	return ""
+}
+
+func findSocketDir(dirs []string, marker string) string {
+	for _, d := range dirs {
+		if _, err := os.Stat(d + "/" + marker); err == nil {
+			return d
+		}
+	}
+	return ""
 }
 
 func scanKV(rows *sql.Rows) map[string]string {
