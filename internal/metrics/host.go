@@ -165,12 +165,29 @@ func (c *Collector) cpuPoints() []Point {
 	}
 	prevTotal, prevIdle := c.prevCPUTotal, c.prevCPUIdle
 	c.prevCPUTotal, c.prevCPUIdle = total, idle
-	if !c.hasPrev || total <= prevTotal {
+	if !c.hasPrev {
 		return nil
+	}
+	used, ok := cpuUsedPct(total, idle, prevTotal, prevIdle)
+	if !ok {
+		return nil
+	}
+	return []Point{{Name: "host.cpu.used_pct", Value: used}}
+}
+
+func cpuUsedPct(total, idle, prevTotal, prevIdle uint64) (float64, bool) {
+	if total <= prevTotal || idle < prevIdle {
+		return 0, false
 	}
 	dTotal := float64(total - prevTotal)
 	dIdle := float64(idle - prevIdle)
-	return []Point{{Name: "host.cpu.used_pct", Value: (dTotal - dIdle) / dTotal * 100}}
+	used := (dTotal - dIdle) / dTotal * 100
+	if used < 0 {
+		used = 0
+	} else if used > 100 {
+		used = 100
+	}
+	return used, true
 }
 
 func (c *Collector) netPoints(now time.Time) []Point {
