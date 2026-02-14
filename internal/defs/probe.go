@@ -3,6 +3,7 @@ package defs
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os/exec"
@@ -47,25 +48,7 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 	start := time.Now()
 	switch p.Type {
 	case "http":
-		o.Check.Target = p.URL
-		client := &http.Client{Timeout: timeout}
-		resp, err := client.Get(p.URL)
-		if err != nil {
-			o.Check.Status = "fail"
-			o.Check.Error = err.Error()
-			break
-		}
-		resp.Body.Close()
-		want := p.ExpectStatus
-		if want == 0 {
-			want = 200
-		}
-		if resp.StatusCode == want {
-			o.Check.Status = "ok"
-		} else {
-			o.Check.Status = "fail"
-			o.Check.Error = fmt.Sprintf("status %d, want %d", resp.StatusCode, want)
-		}
+		runHTTP(&o, p, timeout, resolve)
 	case "tcp":
 		o.Check.Target = p.Address
 		conn, err := net.DialTimeout("tcp", p.Address, timeout)
@@ -100,6 +83,63 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		})
 	}
 	return o
+}
+
+func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredResolver) {
+	o.Check.Target = p.URL
+	req, err := http.NewRequest(http.MethodGet, p.URL, nil)
+	if err != nil {
+		o.Check.Status = "fail"
+		o.Check.Error = err.Error()
+		return
+	}
+	if p.Secret != "" {
+		c, ok := resolve(p.Secret)
+		if !ok {
+			o.Check.Status = "fail"
+			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
+			return
+		}
+		req.SetBasicAuth(c.User, c.Pass)
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		o.Check.Status = "fail"
+		o.Check.Error = err.Error()
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	resp.Body.Close()
+	want := p.ExpectStatus
+	if want == 0 {
+		want = 200
+	}
+	if resp.StatusCode != want {
+		o.Check.Status = "fail"
+		o.Check.Error = fmt.Sprintf("status %d, want %d", resp.StatusCode, want)
+		return
+	}
+	o.Check.Status = "ok"
+	for _, r := range p.Metrics {
+		v, ok := extract(body, r.Regex)
+		if !ok {
+			continue
+		}
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: r.Name, Value: f})
+		}
+	}
+	for _, r := range p.Facts {
+		v, ok := extract(body, r.Regex)
+		if !ok {
+			continue
+		}
+		if o.Facts == nil {
+			o.Facts = map[string]string{}
+		}
+		o.Facts[r.Name] = v
+	}
 }
 
 func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
