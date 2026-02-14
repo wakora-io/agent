@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+name="wakora-agent"
+description="Wakora Agent"
+command="/usr/local/bin/wakora"
+supervisor=supervise-daemon
+respawn_delay=3
+respawn_max=0
+
+depend() {
+	need net
+	after firewall
+}

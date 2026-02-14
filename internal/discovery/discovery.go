@@ -46,6 +46,9 @@ func ChangeSignal() string {
 	if fi, err := os.Stat("/var/lib/rpm"); err == nil {
 		fmt.Fprintf(h, "rpm:%d;", fi.ModTime().UnixNano())
 	}
+	if fi, err := os.Stat("/lib/apk/db/installed"); err == nil {
+		fmt.Fprintf(h, "apk:%d:%d;", fi.ModTime().UnixNano(), fi.Size())
+	}
 	for _, k := range listenKeys() {
 		io.WriteString(h, k+";")
 	}
@@ -251,7 +254,10 @@ func packages() []Fact {
 	if facts := dpkgPackages(); facts != nil {
 		return facts
 	}
-	return rpmPackages()
+	if facts := rpmPackages(); facts != nil {
+		return facts
+	}
+	return apkPackages()
 }
 
 func dpkgPackages() []Fact {
@@ -304,6 +310,37 @@ func rpmPackages() []Fact {
 		}
 		agg[name] = &packageInfo{Version: version}
 	}
+	return sortedFacts("package", agg)
+}
+
+func apkPackages() []Fact {
+	data, err := os.ReadFile("/lib/apk/db/installed")
+	if err != nil {
+		return nil
+	}
+	return parseApkDB(string(data))
+}
+
+func parseApkDB(data string) []Fact {
+	agg := map[string]*packageInfo{}
+	var name, version string
+	commit := func() {
+		if name != "" {
+			agg[name] = &packageInfo{Version: version}
+		}
+		name, version = "", ""
+	}
+	for _, line := range strings.Split(data, "\n") {
+		switch {
+		case line == "":
+			commit()
+		case strings.HasPrefix(line, "P:"):
+			name = line[2:]
+		case strings.HasPrefix(line, "V:"):
+			version = line[2:]
+		}
+	}
+	commit()
 	return sortedFacts("package", agg)
 }
 
