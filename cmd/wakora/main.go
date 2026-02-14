@@ -57,6 +57,7 @@ func main() {
 	discoveryEvery := flag.Duration("discovery-interval", 30*time.Minute, "full discovery resync interval")
 	discoveryCheck := flag.Duration("discovery-check", 30*time.Second, "cheap change-detection interval (dpkg + listening ports)")
 	logPath := flag.String("log-file", "/var/log/wakora/agent.log", "own log file (service mode), empty = stderr only")
+	spoolAge := flag.Duration("spool-age", 24*time.Hour, "offline spool age limit (oldest entries dropped)")
 	flag.Parse()
 
 	if *showVersion {
@@ -124,7 +125,7 @@ func main() {
 		return
 	}
 
-	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20), pubKey)
+	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20, *spoolAge), pubKey)
 
 	if *test {
 		a.DryRun()

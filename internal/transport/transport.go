@@ -12,6 +12,7 @@ import (
 type Conn interface {
 	Send(protocol.Message) error
 	Recv() (protocol.Message, error)
+	Ping(ctx context.Context) error
 	Close() error
 }
 

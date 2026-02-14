@@ -31,6 +31,7 @@ type Agent struct {
 	detector     *anomaly.Detector
 	key          atomic.Value
 	seq          uint64
+	connected    atomic.Bool
 
 	mu           sync.Mutex
 	facts        []discovery.Fact
@@ -92,7 +93,10 @@ func (a *Agent) collect() protocol.MetricsBatch {
 }
 
 func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery, discoveryCheck time.Duration) error {
+	go a.offlineLoop(ctx, interval)
 	return client.Run(ctx, func(conn transport.Conn) error {
+		a.connected.Store(true)
+		defer a.connected.Store(false)
 		a.drainSpool(conn)
 		if err := a.sendHeartbeat(conn); err != nil {
 			return err
@@ -143,6 +147,13 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					return err
 				}
 			case <-hb.C:
+				pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				err := conn.Ping(pctx)
+				cancel()
+				if err != nil {
+					log.Printf("link dead (ping failed): %v", err)
+					return err
+				}
 				if err := a.sendHeartbeat(conn); err != nil {
 					return err
 				}
@@ -194,14 +205,7 @@ func (a *Agent) observePoints(conn transport.Conn, points []protocol.MetricPoint
 			continue
 		}
 		log.Printf("anomaly: %s z=%.1f value=%.2f baseline=%.2f", an.Metric, an.Z, an.Value, an.Baseline)
-		detail, err := json.Marshal(map[string]any{
-			"metric":   an.Metric,
-			"tags":     an.Tags,
-			"value":    round2(an.Value),
-			"baseline": round2(an.Baseline),
-			"sigma":    round2(an.Sigma),
-			"z":        round2(an.Z),
-		})
+		detail, err := anomalyDetail(an)
 		if err != nil {
 			continue
 		}
@@ -221,6 +225,63 @@ func (a *Agent) observePoints(conn transport.Conn, points []protocol.MetricPoint
 		}
 	}
 	return nil
+}
+
+func anomalyDetail(an *anomaly.Anomaly) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"metric":   an.Metric,
+		"tags":     an.Tags,
+		"value":    round2(an.Value),
+		"baseline": round2(an.Baseline),
+		"sigma":    round2(an.Sigma),
+		"z":        round2(an.Z),
+	})
+}
+
+func (a *Agent) offlineLoop(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if a.connected.Load() {
+			continue
+		}
+		batch := a.collect()
+		if msg, err := protocol.Encode(protocol.TypeMetrics, 0, batch); err == nil {
+			if raw, err := json.Marshal(msg); err == nil {
+				_ = a.ring.Append(raw)
+			}
+		}
+		now := time.Now()
+		for _, p := range batch.Points {
+			an := a.detector.Observe(p.Name, p.Tags, p.Value, now)
+			if an == nil {
+				continue
+			}
+			log.Printf("anomaly (offline, spooled): %s z=%.1f", an.Metric, an.Z)
+			detail, err := anomalyDetail(an)
+			if err != nil {
+				continue
+			}
+			msg, err := protocol.Encode(protocol.TypeEvent, 0, protocol.AgentEvent{
+				ServerID:  a.cfg.ServerID,
+				Hostname:  a.cfg.Hostname,
+				Kind:      "anomaly",
+				Detail:    string(detail),
+				Timestamp: now.Unix(),
+			})
+			if err != nil {
+				continue
+			}
+			if raw, err := json.Marshal(msg); err == nil {
+				_ = a.ring.Append(raw)
+			}
+		}
+	}
 }
 
 func round2(v float64) float64 {
