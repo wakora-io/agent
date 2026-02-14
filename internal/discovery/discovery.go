@@ -100,6 +100,11 @@ func processes() []Fact {
 		if err != nil {
 			continue
 		}
+		// containerized processes are visible in host /proc (shared kernel) but must not
+		// match host-level service definitions: containers are covered by the docker probe
+		if cg, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cgroup")); err == nil && containerCgroup(string(cg)) {
+			continue
+		}
 		comm, err := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
 		if err != nil {
 			continue
@@ -121,6 +126,15 @@ func processes() []Fact {
 		agg[name] = &procInfo{Count: 1, Pid: pid, Cmdline: cmd, Exe: exe}
 	}
 	return sortedFacts("process", agg)
+}
+
+func containerCgroup(s string) bool {
+	for _, marker := range []string{"docker-", "/docker/", "libpod-", "kubepods", "cri-containerd"} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 type portInfo struct {
