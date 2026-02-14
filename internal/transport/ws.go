@@ -78,9 +78,6 @@ func (w *wsConn) Send(m protocol.Message) error {
 	return w.c.Write(ctx, websocket.MessageText, data)
 }
 
-// Ping bounds dead-link detection: without it a silently blackholed TCP
-// connection keeps accepting writes into the kernel buffer for many minutes
-// while metrics silently pile up unsent.
 func (w *wsConn) Ping(ctx context.Context) error {
 	return w.c.Ping(ctx)
 }

@@ -43,8 +43,6 @@ func New() *Detector {
 	return &Detector{states: map[string]*state{}}
 }
 
-// Observe is called from the connected event loop and from the offline
-// spool loop, which can overlap for an instant around reconnect.
 func (d *Detector) Observe(metric string, tags map[string]string, value float64, now time.Time) *Anomaly {
 	d.mu.Lock()
 	defer d.mu.Unlock()

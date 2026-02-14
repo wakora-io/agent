@@ -100,8 +100,6 @@ func processes() []Fact {
 		if err != nil {
 			continue
 		}
-		// containerized processes are visible in host /proc (shared kernel) but must not
-		// match host-level service definitions: containers are covered by the docker probe
 		if cg, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cgroup")); err == nil && containerCgroup(string(cg)) {
 			continue
 		}
