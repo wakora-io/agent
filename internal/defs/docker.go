@@ -39,6 +39,25 @@ type dockerStats struct {
 		Usage float64            `json:"usage"`
 		Stats map[string]float64 `json:"stats"`
 	} `json:"memory_stats"`
+	Networks map[string]struct {
+		RxBytes float64 `json:"rx_bytes"`
+		TxBytes float64 `json:"tx_bytes"`
+	} `json:"networks"`
+	Blkio struct {
+		IOServiceBytes []struct {
+			Op    string  `json:"op"`
+			Value float64 `json:"value"`
+		} `json:"io_service_bytes_recursive"`
+	} `json:"blkio_stats"`
+}
+
+type dockerInspect struct {
+	RestartCount float64 `json:"RestartCount"`
+	State        struct {
+		Health struct {
+			Status string `json:"Status"`
+		} `json:"Health"`
+	} `json:"State"`
 }
 
 type dockerGroup struct {
@@ -46,6 +65,12 @@ type dockerGroup struct {
 	Count   int
 	Running int
 	Names   []string
+}
+
+type groupStats struct {
+	cpu, mem, netRx, netTx, blkRead, blkWrite float64
+	restarts, unhealthy                       float64
+	hasCPU, hasHealth                         bool
 }
 
 func runDocker(o *Outcome, service string, p protocol.Probe, timeout time.Duration) {
@@ -92,18 +117,28 @@ func runDocker(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		protocol.MetricPoint{Name: prefix + "services", Value: float64(len(groups))},
 	)
 
-	cpuByImage, memByImage := collectStats(client, containers, timeout)
+	stats := collectStats(client, containers, timeout)
 	for _, g := range groups {
 		tags := map[string]string{"image": g.Image}
 		o.Metrics = append(o.Metrics,
 			protocol.MetricPoint{Name: prefix + "group.containers", Value: float64(g.Count), Tags: tags},
 			protocol.MetricPoint{Name: prefix + "group.running", Value: float64(g.Running), Tags: tags},
 		)
-		if cpu, ok := cpuByImage[g.Image]; ok {
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + "group.cpu_pct", Value: cpu, Tags: tags})
-		}
-		if mem, ok := memByImage[g.Image]; ok {
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + "group.mem_bytes", Value: mem, Tags: tags})
+		if gs := stats[g.Image]; gs != nil {
+			if gs.hasCPU {
+				o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + "group.cpu_pct", Value: gs.cpu, Tags: tags})
+			}
+			o.Metrics = append(o.Metrics,
+				protocol.MetricPoint{Name: prefix + "group.mem_bytes", Value: gs.mem, Tags: tags},
+				protocol.MetricPoint{Name: prefix + "group.net_rx_total", Value: gs.netRx, Tags: tags},
+				protocol.MetricPoint{Name: prefix + "group.net_tx_total", Value: gs.netTx, Tags: tags},
+				protocol.MetricPoint{Name: prefix + "group.blkio_read_total", Value: gs.blkRead, Tags: tags},
+				protocol.MetricPoint{Name: prefix + "group.blkio_write_total", Value: gs.blkWrite, Tags: tags},
+				protocol.MetricPoint{Name: prefix + "group.restarts", Value: gs.restarts, Tags: tags},
+			)
+			if gs.hasHealth {
+				o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + "group.unhealthy", Value: gs.unhealthy, Tags: tags})
+			}
 		}
 
 		names := g.Names
@@ -119,38 +154,78 @@ func runDocker(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	}
 }
 
-func collectStats(client *http.Client, containers []dockerContainer, timeout time.Duration) (cpu, mem map[string]float64) {
-	cpu = map[string]float64{}
-	mem = map[string]float64{}
+func collectStats(client *http.Client, containers []dockerContainer, timeout time.Duration) map[string]*groupStats {
+	out := map[string]*groupStats{}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	for _, c := range containers {
-		if c.State != "running" {
-			continue
+	group := func(img string) *groupStats {
+		g := out[img]
+		if g == nil {
+			g = &groupStats{}
+			out[img] = g
 		}
+		return g
+	}
+	for _, c := range containers {
 		wg.Add(1)
 		go func(c dockerContainer) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			img := imageKey(c.Image)
+
+			var ins dockerInspect
+			if err := dockerGetCtx(ctx, client, "/containers/"+c.ID+"/json", &ins); err == nil {
+				mu.Lock()
+				g := group(img)
+				g.restarts += ins.RestartCount
+				if hs := ins.State.Health.Status; hs != "" {
+					g.hasHealth = true
+					if hs == "unhealthy" {
+						g.unhealthy++
+					}
+				}
+				mu.Unlock()
+			}
+
+			if c.State != "running" {
+				return
+			}
 			var s dockerStats
 			if err := dockerGetCtx(ctx, client, "/containers/"+c.ID+"/stats?stream=false", &s); err != nil {
 				return
 			}
-			img := imageKey(c.Image)
 			mu.Lock()
 			defer mu.Unlock()
-			if pct, ok := cpuPercent(s); ok {
-				cpu[img] += pct
-			}
-			mem[img] += memUsage(s)
+			g := group(img)
+			addStats(g, s)
 		}(c)
 	}
 	wg.Wait()
-	return cpu, mem
+	return out
+}
+
+func addStats(g *groupStats, s dockerStats) {
+	if pct, ok := cpuPercent(s); ok {
+		g.cpu += pct
+		g.hasCPU = true
+	}
+	g.mem += memUsage(s)
+	for _, n := range s.Networks {
+		g.netRx += n.RxBytes
+		g.netTx += n.TxBytes
+	}
+	for _, e := range s.Blkio.IOServiceBytes {
+		switch strings.ToLower(e.Op) {
+		case "read":
+			g.blkRead += e.Value
+		case "write":
+			g.blkWrite += e.Value
+		}
+	}
 }
 
 func groupContainers(cs []dockerContainer) []dockerGroup {

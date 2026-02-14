@@ -26,7 +26,8 @@ type Outcome struct {
 var execAllowlist = map[string]bool{
 	"nginx": true, "apache2ctl": true, "httpd": true, "php-fpm": true,
 	"mariadbd": true, "mysqld": true, "mysqladmin": true, "mariadb-admin": true,
-	"redis-cli": true, "psql": true, "postconf": true,
+	"redis-cli": true, "psql": true, "postconf": true, "postqueue": true, "mailq": true,
+	"dovecot": true, "doveadm": true, "named": true, "rndc": true, "named-checkconf": true,
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {
