@@ -36,6 +36,7 @@ type Agent struct {
 	mu           sync.Mutex
 	facts        []discovery.Fact
 	defs         []protocol.Definition
+	roles        map[string]string
 	active       []protocol.Definition
 	lastRun      map[string]time.Time
 	serviceFacts map[string]map[string]string
@@ -353,9 +354,12 @@ func (a *Agent) refreshActive() {
 		on := false
 		reason := ""
 		if len(d.Hosts) > 0 {
-			if a.isCollectorFor(d.Hosts) {
+			switch a.collectorState(d.Service, d.Hosts) {
+			case collectorActive:
 				on = true
 				reason = "collector role"
+			case collectorStandby:
+				log.Printf("service %s: standby collector (active: %s)", d.Service, a.roles[d.Service])
 			}
 		} else if defs.Matches(d, a.facts) {
 			on = true
@@ -494,13 +498,27 @@ func (a *Agent) resolveSecret(name string) (secret.Cred, bool) {
 	return secret.GetCred(a.cfg.Dir(), name)
 }
 
-func (a *Agent) isCollectorFor(hosts []string) bool {
+const (
+	collectorOff = iota
+	collectorStandby
+	collectorActive
+)
+
+func (a *Agent) collectorState(service string, hosts []string) int {
+	member := false
 	for _, h := range hosts {
 		if h == a.cfg.Hostname || h == a.cfg.ServerID {
-			return true
+			member = true
+			break
 		}
 	}
-	return false
+	if !member {
+		return collectorOff
+	}
+	if active := a.roles[service]; active != "" && active != a.cfg.Hostname && active != a.cfg.ServerID {
+		return collectorStandby
+	}
+	return collectorActive
 }
 
 func (a *Agent) resolvePort(process string) string {
@@ -809,6 +827,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		verified := defs.Verify(set, a.publisherKey)
 		a.mu.Lock()
 		a.defs = verified
+		a.roles = set.Roles
 		a.mu.Unlock()
 		log.Printf("definitions received: %d verified of %d", len(verified), len(set.Definitions))
 		a.refreshActive()

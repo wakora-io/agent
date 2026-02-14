@@ -66,6 +66,7 @@ type SignedDefinition struct {
 
 type DefinitionSet struct {
 	Definitions []SignedDefinition `json:"definitions"`
+	Roles       map[string]string  `json:"roles,omitempty"`
 }
 
 type Match struct {
