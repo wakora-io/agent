@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -143,6 +145,11 @@ func main() {
 		if err := logfile.Setup(*logPath); err != nil {
 			log.Printf("log file unavailable (%v), continuing with stderr", err)
 		}
+	}
+
+	debug.SetMemoryLimit(128 << 20)
+	if runtime.NumCPU() > 2 {
+		runtime.GOMAXPROCS(2)
 	}
 
 	client := &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(a.Key, pin)}

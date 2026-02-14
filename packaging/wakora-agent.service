@@ -1,0 +1,25 @@
+[Unit]
+Description=Wakora Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/wakora
+Restart=always
+RestartSec=3
+User=root
+
+Nice=10
+CPUQuota=30%
+CPUWeight=20
+MemoryHigh=160M
+MemoryMax=256M
+OOMScoreAdjust=500
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+NoNewPrivileges=no
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
