@@ -91,6 +91,11 @@ type Counter struct {
 	Regex string `json:"regex,omitempty"`
 }
 
+type OID struct {
+	Name string `json:"name"`
+	OID  string `json:"oid"`
+}
+
 type Probe struct {
 	Name         string      `json:"name"`
 	Type         string      `json:"type"`
@@ -112,13 +117,19 @@ type Probe struct {
 	Path         string      `json:"path,omitempty"`
 	PathFrom     string      `json:"pathFrom,omitempty"`
 	Counters     []Counter   `json:"counters,omitempty"`
+	Target       string      `json:"target,omitempty"`
+	Get          []OID       `json:"get,omitempty"`
+	Walk         []OID       `json:"walk,omitempty"`
+	LabelOID     string      `json:"labelOid,omitempty"`
+	DeviceFacts  []OID       `json:"deviceFacts,omitempty"`
 }
 
 type Definition struct {
-	Service     string  `json:"service"`
-	Match       Match   `json:"match"`
-	Probes      []Probe `json:"probes"`
-	IntervalSec int     `json:"intervalSec,omitempty"`
+	Service     string   `json:"service"`
+	Match       Match    `json:"match"`
+	Hosts       []string `json:"hosts,omitempty"`
+	Probes      []Probe  `json:"probes"`
+	IntervalSec int      `json:"intervalSec,omitempty"`
 }
 
 type AgentEvent struct {

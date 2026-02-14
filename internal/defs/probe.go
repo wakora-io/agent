@@ -83,6 +83,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runSQL(&o, service, p, timeout, resolve)
 	case "redis":
 		runRedis(&o, service, p, timeout, resolve)
+	case "snmp":
+		runSNMP(&o, service, p, timeout, resolve)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type

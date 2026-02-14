@@ -276,11 +276,22 @@ func (a *Agent) refreshActive() {
 	var active []protocol.Definition
 	activeSet := map[string]bool{}
 	for _, d := range a.defs {
-		if defs.Matches(d, a.facts) {
+		on := false
+		reason := ""
+		if len(d.Hosts) > 0 {
+			if a.isCollectorFor(d.Hosts) {
+				on = true
+				reason = "collector role"
+			}
+		} else if defs.Matches(d, a.facts) {
+			on = true
+			reason = "matched"
+		}
+		if on {
 			active = append(active, d)
 			activeSet[d.Service] = true
 			if !prev[d.Service] {
-				log.Printf("service matched: %s, %d probe(s) activated", d.Service, len(d.Probes))
+				log.Printf("service %s: %s, %d probe(s) activated", d.Service, reason, len(d.Probes))
 			}
 		} else if prev[d.Service] {
 			log.Printf("service unmatched: %s, probes deactivated", d.Service)
@@ -395,6 +406,15 @@ func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
 
 func (a *Agent) resolveSecret(name string) (secret.Cred, bool) {
 	return secret.GetCred(a.cfg.Dir(), name)
+}
+
+func (a *Agent) isCollectorFor(hosts []string) bool {
+	for _, h := range hosts {
+		if h == a.cfg.Hostname || h == a.cfg.ServerID {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) resolvePort(process string) string {
