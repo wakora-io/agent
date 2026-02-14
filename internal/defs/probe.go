@@ -2,10 +2,12 @@ package defs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -29,6 +31,7 @@ var execAllowlist = map[string]bool{
 	"mariadbd": true, "mysqld": true, "mysqladmin": true, "mariadb-admin": true,
 	"redis-cli": true, "psql": true, "postconf": true, "postqueue": true, "mailq": true,
 	"dovecot": true, "doveadm": true, "named": true, "rndc": true, "named-checkconf": true,
+	"apt-get": true, "dnf": true, "yum": true, "rpm": true,
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {
@@ -71,6 +74,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runSNMP(&o, service, p, timeout, resolve)
 	case "docker":
 		runDocker(&o, service, p, timeout)
+	case "file":
+		runFile(&o, service, p)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type
@@ -121,7 +126,47 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 		return
 	}
 	o.Check.Status = "ok"
-	for _, r := range p.Metrics {
+	applyMetricRules(o, p.Metrics, body)
+	applyFactRules(o, p.Facts, body)
+}
+
+func runFile(o *Outcome, service string, p protocol.Probe) {
+	o.Check.Target = p.Path
+	if p.Path == "" {
+		o.Check.Status = "fail"
+		o.Check.Error = "file path not set"
+		return
+	}
+	data, err := os.ReadFile(p.Path)
+	exists := 1.0
+	if err != nil {
+		if !os.IsNotExist(err) {
+			o.Check.Status = "fail"
+			o.Check.Error = err.Error()
+			return
+		}
+		exists = 0
+		data = nil
+	}
+	if len(data) > 1<<20 {
+		data = data[:1<<20]
+	}
+	o.Check.Status = "ok"
+	o.Metrics = append(o.Metrics, protocol.MetricPoint{
+		Name: "svc." + service + "." + p.Name + ".exists", Value: exists,
+	})
+	if exists == 1 {
+		applyMetricRules(o, p.Metrics, data)
+		applyFactRules(o, p.Facts, data)
+	}
+}
+
+func applyMetricRules(o *Outcome, rules []protocol.ParseRule, body []byte) {
+	for _, r := range rules {
+		if r.Count {
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: r.Name, Value: float64(extractCount(body, r.Regex))})
+			continue
+		}
 		v, ok := extract(body, r.Regex)
 		if !ok {
 			continue
@@ -130,8 +175,17 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: r.Name, Value: f})
 		}
 	}
-	for _, r := range p.Facts {
-		v, ok := extract(body, r.Regex)
+}
+
+func applyFactRules(o *Outcome, rules []protocol.ParseRule, body []byte) {
+	for _, r := range rules {
+		var v string
+		var ok bool
+		if r.All {
+			v, ok = extractAll(body, r.Regex)
+		} else {
+			v, ok = extract(body, r.Regex)
+		}
 		if !ok {
 			continue
 		}
@@ -140,6 +194,14 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 		}
 		o.Facts[r.Name] = v
 	}
+}
+
+func extractCount(out []byte, pattern string) int {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return 0
+	}
+	return len(re.FindAllIndex(out, -1))
 }
 
 func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
@@ -166,7 +228,7 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 		o.Check.Error = "timeout"
 		return
 	}
-	if err != nil {
+	if err != nil && !exitCodeAllowed(p, err) {
 		o.Check.Status = "fail"
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -179,31 +241,21 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 		return
 	}
 	o.Check.Status = "ok"
-	for _, r := range p.Metrics {
-		v, ok := extract(out, r.Regex)
-		if !ok {
-			continue
-		}
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: r.Name, Value: f})
+	applyMetricRules(o, p.Metrics, out)
+	applyFactRules(o, p.Facts, out)
+}
+
+func exitCodeAllowed(p protocol.Probe, err error) bool {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return false
+	}
+	for _, c := range p.OKCodes {
+		if ee.ExitCode() == c {
+			return true
 		}
 	}
-	for _, r := range p.Facts {
-		var v string
-		var ok bool
-		if r.All {
-			v, ok = extractAll(out, r.Regex)
-		} else {
-			v, ok = extract(out, r.Regex)
-		}
-		if !ok {
-			continue
-		}
-		if o.Facts == nil {
-			o.Facts = map[string]string{}
-		}
-		o.Facts[r.Name] = v
-	}
+	return false
 }
 
 func extractAll(out []byte, pattern string) (string, bool) {

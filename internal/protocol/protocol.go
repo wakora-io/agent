@@ -80,6 +80,7 @@ type ParseRule struct {
 	Name  string `json:"name"`
 	Regex string `json:"regex"`
 	All   bool   `json:"all,omitempty"`
+	Count bool   `json:"count,omitempty"`
 }
 
 type KVMetric struct {
@@ -125,6 +126,7 @@ type Probe struct {
 	DeviceFacts  []OID       `json:"deviceFacts,omitempty"`
 	Port         int         `json:"port,omitempty"`
 	AllowFrom    []string    `json:"allowFrom,omitempty"`
+	OKCodes      []int       `json:"okCodes,omitempty"`
 }
 
 type Definition struct {

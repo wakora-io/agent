@@ -43,6 +43,9 @@ func ChangeSignal() string {
 	if fi, err := os.Stat("/var/lib/dpkg/status"); err == nil {
 		fmt.Fprintf(h, "dpkg:%d:%d;", fi.ModTime().UnixNano(), fi.Size())
 	}
+	if fi, err := os.Stat("/var/lib/rpm"); err == nil {
+		fmt.Fprintf(h, "rpm:%d;", fi.ModTime().UnixNano())
+	}
 	for _, k := range listenKeys() {
 		io.WriteString(h, k+";")
 	}
@@ -245,6 +248,13 @@ type packageInfo struct {
 }
 
 func packages() []Fact {
+	if facts := dpkgPackages(); facts != nil {
+		return facts
+	}
+	return rpmPackages()
+}
+
+func dpkgPackages() []Fact {
 	f, err := os.Open("/var/lib/dpkg/status")
 	if err != nil {
 		return nil
@@ -275,6 +285,25 @@ func packages() []Fact {
 		}
 	}
 	commit()
+	return sortedFacts("package", agg)
+}
+
+func rpmPackages() []Fact {
+	if _, err := os.Stat("/var/lib/rpm"); err != nil {
+		return nil
+	}
+	out, err := exec.Command("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\n").Output()
+	if err != nil {
+		return nil
+	}
+	agg := map[string]*packageInfo{}
+	for _, line := range strings.Split(string(out), "\n") {
+		name, version, ok := strings.Cut(line, "\t")
+		if !ok || name == "" {
+			continue
+		}
+		agg[name] = &packageInfo{Version: version}
+	}
 	return sortedFacts("package", agg)
 }
 
