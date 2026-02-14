@@ -32,6 +32,7 @@ var execAllowlist = map[string]bool{
 	"redis-cli": true, "psql": true, "postconf": true, "postqueue": true, "mailq": true,
 	"dovecot": true, "doveadm": true, "named": true, "rndc": true, "named-checkconf": true,
 	"apt-get": true, "dnf": true, "yum": true, "rpm": true, "zypper": true, "apk": true,
+	"vsftpd": true,
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {
