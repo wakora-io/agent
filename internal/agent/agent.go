@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,8 +40,17 @@ type Agent struct {
 	serviceFacts map[string]map[string]string
 	probeFacts   map[string][]protocol.Fact
 	tailers      map[string]*defs.Tailer
+	trapL        map[int]*defs.TrapListener
+	syslogL      map[int]*defs.SyslogListener
+	listenerPrev map[string]listenerCounts
 
 	lastSignal string
+}
+
+type listenerCounts struct {
+	total, severe uint64
+	matches       map[string]uint64
+	at            time.Time
 }
 
 func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
@@ -54,6 +64,9 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		serviceFacts: map[string]map[string]string{},
 		probeFacts:   map[string][]protocol.Fact{},
 		tailers:      map[string]*defs.Tailer{},
+		trapL:        map[int]*defs.TrapListener{},
+		syslogL:      map[int]*defs.SyslogListener{},
+		listenerPrev: map[string]listenerCounts{},
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -336,6 +349,18 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
+			if p.Type == "traps" {
+				if err := a.runTraps(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
+			if p.Type == "syslog" {
+				if err := a.runSyslog(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
 			if (p.Type == "sql" || p.Type == "redis") && p.Address == "" && !p.Socket && p.PortProcess != "" {
 				if port := a.resolvePort(p.PortProcess); port != "" {
 					p.Address = "127.0.0.1:" + port
@@ -499,6 +524,191 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 		}
 	}
 	return nil
+}
+
+func (a *Agent) snmpTargets() map[string][]string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := map[string][]string{}
+	for _, d := range a.active {
+		for _, p := range d.Probes {
+			if p.Type != "snmp" || p.Target == "" {
+				continue
+			}
+			host := p.Target
+			if h, _, ok := strings.Cut(p.Target, ":"); ok {
+				host = h
+			}
+			out[host] = append(out[host], d.Service)
+		}
+	}
+	return out
+}
+
+func (a *Agent) runTraps(conn transport.Conn, service string, p protocol.Probe) error {
+	port := p.Port
+	if port <= 0 {
+		port = 162
+	}
+	l := a.trapL[port]
+	if l == nil {
+		l = defs.NewTrapListener(port)
+		l.Start()
+		a.trapL[port] = l
+		log.Printf("trap listener started on udp/%d", port)
+	}
+	targets := a.snmpTargets()
+	allowed := make([]string, 0, len(targets)+len(p.AllowFrom))
+	for host := range targets {
+		allowed = append(allowed, host)
+	}
+	allowed = append(allowed, p.AllowFrom...)
+	l.SetAllowed(allowed)
+
+	events, total, dropped, lerr := l.Drain()
+	check := protocol.CheckResult{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		CheckID:   service + "/" + p.Name,
+		Kind:      "traps",
+		Target:    "udp/" + strconv.Itoa(port),
+		Timestamp: time.Now().Unix(),
+	}
+	if lerr != nil {
+		check.Status = "fail"
+		check.Error = lerr.Error()
+		return a.sendCheck(conn, check)
+	}
+	check.Status = "ok"
+	if err := a.sendCheck(conn, check); err != nil {
+		return err
+	}
+
+	const forwardCap = 20
+	for i, ev := range events {
+		if i >= forwardCap {
+			log.Printf("trap forward cap reached, %d trap(s) summarized", len(events)-forwardCap)
+			break
+		}
+		detail, err := json.Marshal(map[string]any{
+			"source": ev.Source, "oid": ev.OID, "name": ev.Name, "vars": ev.Vars,
+		})
+		if err != nil {
+			continue
+		}
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Kind:      "trap",
+			Detail:    string(detail),
+			Timestamp: ev.At.Unix(),
+		})
+		if err != nil {
+			continue
+		}
+		if err := conn.Send(msg); err != nil {
+			return err
+		}
+	}
+
+	if len(events) > 0 {
+		a.mu.Lock()
+		for _, ev := range events {
+			for _, svc := range targets[ev.Source] {
+				delete(a.lastRun, svc)
+				log.Printf("trap %s from %s: confirming poll of %s scheduled", ev.Name, ev.Source, svc)
+			}
+		}
+		a.mu.Unlock()
+	}
+
+	pts := []protocol.MetricPoint{
+		{Name: "dev.traps.received_total", Value: float64(total)},
+		{Name: "dev.traps.dropped_total", Value: float64(dropped)},
+	}
+	return a.sendProbeMetrics(conn, pts)
+}
+
+func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe) error {
+	port := p.Port
+	if port <= 0 {
+		port = 514
+	}
+	l := a.syslogL[port]
+	if l == nil {
+		l = defs.NewSyslogListener(port)
+		l.Start()
+		a.syslogL[port] = l
+		log.Printf("syslog listener started on udp/%d", port)
+	}
+	l.Configure(p.Counters, p.AllowFrom)
+	total, severe, dropped, matches, lerr := l.Snapshot()
+	check := protocol.CheckResult{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		CheckID:   service + "/" + p.Name,
+		Kind:      "syslog",
+		Target:    "udp/" + strconv.Itoa(port),
+		Timestamp: time.Now().Unix(),
+	}
+	if lerr != nil {
+		check.Status = "fail"
+		check.Error = lerr.Error()
+		return a.sendCheck(conn, check)
+	}
+	check.Status = "ok"
+	if err := a.sendCheck(conn, check); err != nil {
+		return err
+	}
+
+	key := service + "/" + p.Name
+	now := time.Now()
+	prev, had := a.listenerPrev[key]
+	a.listenerPrev[key] = listenerCounts{total: total, severe: severe, matches: matches, at: now}
+	pts := []protocol.MetricPoint{
+		{Name: "dev.syslog.dropped_total", Value: float64(dropped)},
+	}
+	if had {
+		secs := now.Sub(prev.at).Seconds()
+		if secs > 0 {
+			pts = append(pts,
+				protocol.MetricPoint{Name: "dev.syslog.rate", Value: rate(total, prev.total, secs)},
+				protocol.MetricPoint{Name: "dev.syslog.severe_rate", Value: rate(severe, prev.severe, secs)},
+			)
+			for name, v := range matches {
+				pts = append(pts, protocol.MetricPoint{Name: name, Value: rate(v, prev.matches[name], secs)})
+			}
+		}
+	}
+	return a.sendProbeMetrics(conn, pts)
+}
+
+func rate(cur, prev uint64, secs float64) float64 {
+	if cur < prev {
+		prev = 0
+	}
+	return float64(int(float64(cur-prev)/secs*1000+0.5)) / 1000
+}
+
+func (a *Agent) sendProbeMetrics(conn transport.Conn, pts []protocol.MetricPoint) error {
+	if len(pts) == 0 {
+		return nil
+	}
+	a.seq++
+	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		Timestamp: time.Now().Unix(),
+		Points:    pts,
+	})
+	if err != nil {
+		return nil
+	}
+	if err := conn.Send(msg); err != nil {
+		return err
+	}
+	return a.observePoints(conn, pts)
 }
 
 func (a *Agent) sendCheck(conn transport.Conn, check protocol.CheckResult) error {

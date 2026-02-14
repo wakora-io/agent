@@ -122,6 +122,8 @@ type Probe struct {
 	Walk         []OID       `json:"walk,omitempty"`
 	LabelOID     string      `json:"labelOid,omitempty"`
 	DeviceFacts  []OID       `json:"deviceFacts,omitempty"`
+	Port         int         `json:"port,omitempty"`
+	AllowFrom    []string    `json:"allowFrom,omitempty"`
 }
 
 type Definition struct {
