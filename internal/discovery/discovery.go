@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,49 @@ func Collect() []Fact {
 	facts = append(facts, ports()...)
 	facts = append(facts, packages()...)
 	facts = append(facts, units()...)
+	facts = append(facts, netFacts()...)
 	return facts
+}
+
+func netFacts() []Fact {
+	ip := primaryIP()
+	if ip == "" {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"ip": ip})
+	if err != nil {
+		return nil
+	}
+	return []Fact{{Kind: "net", Key: "primary_ip", Payload: string(payload)}}
+}
+
+func primaryIP() string {
+	if conn, err := net.Dial("udp", "8.8.8.8:53"); err == nil {
+		la, ok := conn.LocalAddr().(*net.UDPAddr)
+		conn.Close()
+		if ok && la.IP != nil {
+			return la.IP.String()
+		}
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.IsGlobalUnicast() {
+				return ipn.IP.String()
+			}
+		}
+	}
+	return ""
 }
 
 func CountByKind(facts []Fact) map[string]int {
