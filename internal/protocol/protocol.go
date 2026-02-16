@@ -133,6 +133,7 @@ type Probe struct {
 	PrivProto    string      `json:"privProto,omitempty"`
 	Context      string      `json:"context,omitempty"`
 	Process      string      `json:"process,omitempty"`
+	Domains      []string    `json:"domains,omitempty"`
 }
 
 type Definition struct {
