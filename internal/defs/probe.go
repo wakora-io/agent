@@ -79,6 +79,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runFile(&o, service, p)
 	case "pve":
 		runPVE(&o, service, p, timeout)
+	case "haproxy":
+		runHAProxy(&o, service, p, timeout)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type
