@@ -70,10 +70,11 @@ type DefinitionSet struct {
 }
 
 type Match struct {
-	Process string `json:"process,omitempty"`
-	Port    string `json:"port,omitempty"`
-	Package string `json:"package,omitempty"`
-	Unit    string `json:"unit,omitempty"`
+	Process       string `json:"process,omitempty"`
+	ProcessPrefix string `json:"processPrefix,omitempty"`
+	Port          string `json:"port,omitempty"`
+	Package       string `json:"package,omitempty"`
+	Unit          string `json:"unit,omitempty"`
 }
 
 type ParseRule struct {
@@ -131,6 +132,7 @@ type Probe struct {
 	AuthProto    string      `json:"authProto,omitempty"`
 	PrivProto    string      `json:"privProto,omitempty"`
 	Context      string      `json:"context,omitempty"`
+	Process      string      `json:"process,omitempty"`
 }
 
 type Definition struct {

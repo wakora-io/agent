@@ -414,6 +414,25 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
+			if p.Type == "procfact" {
+				a.mu.Lock()
+				facts := a.facts
+				a.mu.Unlock()
+				if pf := defs.ProcFacts(facts, p); len(pf) > 0 && a.mergeServiceFacts(d.Service, pf) {
+					factsChanged = true
+				}
+				continue
+			}
+			if p.Type == "file" && p.Path == "" && p.PathFrom != "" {
+				a.mu.Lock()
+				if sf := a.serviceFacts[d.Service]; sf != nil {
+					p.Path = sf[p.PathFrom]
+				}
+				a.mu.Unlock()
+				if p.Path == "" {
+					continue
+				}
+			}
 			if p.Type == "traps" {
 				if err := a.runTraps(conn, d.Service, p); err != nil {
 					return err

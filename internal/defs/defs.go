@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"wakora.io/agent/internal/discovery"
 	"wakora.io/agent/internal/protocol"
@@ -42,11 +43,22 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 		}
 		return false
 	}
+	hasPrefix := func(kind, prefix string) bool {
+		for _, f := range facts {
+			if f.Kind == kind && strings.HasPrefix(f.Key, prefix) {
+				return true
+			}
+		}
+		return false
+	}
 	m := d.Match
-	if m.Process == "" && m.Port == "" && m.Package == "" && m.Unit == "" {
+	if m.Process == "" && m.ProcessPrefix == "" && m.Port == "" && m.Package == "" && m.Unit == "" {
 		return false
 	}
 	if m.Process != "" && !has("process", m.Process) {
+		return false
+	}
+	if m.ProcessPrefix != "" && !hasPrefix("process", m.ProcessPrefix) {
 		return false
 	}
 	if m.Port != "" && !has("port", m.Port) {
@@ -59,4 +71,34 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 		return false
 	}
 	return true
+}
+
+func ProcFacts(facts []discovery.Fact, p protocol.Probe) map[string]string {
+	prefix := p.Process
+	if prefix == "" {
+		return nil
+	}
+	for _, f := range facts {
+		if f.Kind != "process" || !strings.HasPrefix(f.Key, prefix) {
+			continue
+		}
+		var info struct {
+			Cmdline string `json:"cmdline"`
+			Exe     string `json:"exe"`
+		}
+		if json.Unmarshal([]byte(f.Payload), &info) != nil {
+			continue
+		}
+		body := []byte(f.Key + "\x00" + info.Cmdline + "\x00" + info.Exe)
+		out := map[string]string{}
+		for _, r := range p.Facts {
+			if v, ok := extract(body, r.Regex); ok {
+				out[r.Name] = v
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
 }
