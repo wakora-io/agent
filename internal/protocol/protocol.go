@@ -134,6 +134,8 @@ type Probe struct {
 	Context      string      `json:"context,omitempty"`
 	Process      string      `json:"process,omitempty"`
 	Domains      []string    `json:"domains,omitempty"`
+	Channels     []string    `json:"channels,omitempty"`
+	WindowSec    int         `json:"windowSec,omitempty"`
 }
 
 type Definition struct {

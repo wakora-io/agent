@@ -13,21 +13,13 @@ import (
 )
 
 func machineKey() []byte {
-	sum := sha256.Sum256([]byte("wakora-agent-v1:" + machineID()))
+	sum := sha256.Sum256([]byte("wakora-agent-v1:" + MachineID()))
 	return sum[:]
 }
 
 func MachineID() string {
-	return machineID()
-}
-
-func machineID() string {
-	for _, p := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
-		if b, err := os.ReadFile(p); err == nil {
-			if s := strings.TrimSpace(string(b)); s != "" {
-				return s
-			}
-		}
+	if id := platformMachineID(); id != "" {
+		return id
 	}
 	if h, err := os.Hostname(); err == nil {
 		return h

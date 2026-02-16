@@ -9,8 +9,6 @@ import (
 	"wakora.io/agent/internal/secret"
 )
 
-const defaultDir = "/etc/wakora"
-
 type Config struct {
 	Endpoint  string
 	ServerID  string

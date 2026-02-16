@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"runtime"
 	"runtime/debug"
@@ -32,7 +31,7 @@ import (
 )
 
 func main() {
-	configDir := flag.String("config", "/etc/wakora", "config directory")
+	configDir := flag.String("config", defaultConfigDir, "config directory")
 	endpoint := flag.String("endpoint", "", "override built-in gateway endpoint (dev)")
 	certPin := flag.String("cert-pin", "", "override built-in gateway certificate pin (dev)")
 	publisherKey := flag.String("publisher-key", "", "override built-in definitions publisher key (dev)")
@@ -58,7 +57,7 @@ func main() {
 	heartbeat := flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	discoveryEvery := flag.Duration("discovery-interval", 30*time.Minute, "full discovery resync interval")
 	discoveryCheck := flag.Duration("discovery-check", 30*time.Second, "cheap change-detection interval (dpkg + listening ports)")
-	logPath := flag.String("log-file", "/var/log/wakora/agent.log", "own log file (service mode), empty = stderr only")
+	logPath := flag.String("log-file", defaultLogFile, "own log file (service mode), empty = stderr only")
 	spoolAge := flag.Duration("spool-age", 24*time.Hour, "offline spool age limit (oldest entries dropped)")
 	flag.Parse()
 
@@ -157,7 +156,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if relURL != "" {
+	if relURL != "" && runtime.GOOS != "windows" {
 		go autoUpdate(ctx, relURL, httpc, *updateEvery)
 	}
 
@@ -287,7 +286,7 @@ func runUpdateOnce(relURL string, httpc *http.Client) {
 		log.Fatal(err)
 	}
 	log.Printf("updated %s -> %s", buildinfo.Version, latest)
-	_ = exec.Command("systemctl", "restart", "wakora-agent").Run()
+	restartService()
 }
 
 func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every time.Duration) {

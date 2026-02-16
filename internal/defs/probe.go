@@ -84,6 +84,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runHAProxy(&o, service, p, timeout)
 	case "domain":
 		runDomain(&o, service, p, timeout)
+	case "wineventlog":
+		runEventLog(&o, service, p)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type
