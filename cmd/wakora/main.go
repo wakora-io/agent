@@ -71,6 +71,11 @@ func main() {
 		return
 	}
 
+	if args := flag.Args(); len(args) > 0 && args[0] == "service" {
+		runServiceCmd(args[1:])
+		return
+	}
+
 	cfg, err := config.Load(*configDir)
 	if err != nil {
 		log.Fatal(err)
@@ -156,11 +161,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if relURL != "" && runtime.GOOS != "windows" {
-		go autoUpdate(ctx, relURL, httpc, *updateEvery)
+	run := func(ctx context.Context) error {
+		if relURL != "" {
+			go autoUpdate(ctx, relURL, httpc, *updateEvery)
+		}
+		return a.Run(ctx, client, *interval, *heartbeat, *discoveryEvery, *discoveryCheck)
 	}
 
-	if err := a.Run(ctx, client, *interval, *heartbeat, *discoveryEvery, *discoveryCheck); err != nil && ctx.Err() == nil {
+	if underServiceManager() {
+		if err := runUnderServiceManager(ctx, run); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	if err := run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
 }
@@ -311,7 +326,7 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every ti
 				continue
 			}
 			log.Printf("auto-updated %s -> %s, restarting", buildinfo.Version, latest)
-			os.Exit(0)
+			exitForRestart()
 		}
 	}
 }

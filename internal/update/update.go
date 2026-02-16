@@ -38,7 +38,8 @@ func (u *Updater) LatestVersion() (string, error) {
 }
 
 func (u *Updater) Apply(target string) error {
-	sumBody, err := u.get("/wakora.sha256")
+	asset, sumAsset := assetNames()
+	sumBody, err := u.get(sumAsset)
 	if err != nil {
 		return err
 	}
@@ -46,7 +47,7 @@ func (u *Updater) Apply(target string) error {
 	if len(fields) == 0 {
 		return errors.New("update: empty checksum")
 	}
-	bin, err := u.get("/wakora")
+	bin, err := u.get(asset)
 	if err != nil {
 		return err
 	}
@@ -74,7 +75,11 @@ func (u *Updater) Apply(target string) error {
 		os.Remove(name)
 		return err
 	}
-	return os.Rename(name, target)
+	if err := replaceBinary(name, target); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 func (u *Updater) get(path string) ([]byte, error) {
