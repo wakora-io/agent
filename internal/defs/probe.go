@@ -33,6 +33,7 @@ var execAllowlist = map[string]bool{
 	"dovecot": true, "doveadm": true, "named": true, "rndc": true, "named-checkconf": true,
 	"apt-get": true, "dnf": true, "yum": true, "rpm": true, "zypper": true, "apk": true,
 	"vsftpd": true, "pveversion": true, "qm": true, "pct": true, "pvesm": true,
+	"mongosh": true, "mongo": true,
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {

@@ -426,7 +426,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
-			if (p.Type == "sql" || p.Type == "redis") && p.Address == "" && !p.Socket && p.PortProcess != "" {
+			if (p.Type == "sql" || p.Type == "redis" || p.Type == "tcp") && p.Address == "" && !p.Socket && p.PortProcess != "" {
 				if port := a.resolvePort(p.PortProcess); port != "" {
 					p.Address = "127.0.0.1:" + port
 				}
