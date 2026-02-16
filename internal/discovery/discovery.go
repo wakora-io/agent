@@ -133,7 +133,7 @@ func processes() []Fact {
 }
 
 func containerCgroup(s string) bool {
-	for _, marker := range []string{"docker-", "/docker/", "libpod-", "kubepods", "cri-containerd"} {
+	for _, marker := range []string{"docker-", "/docker/", "libpod-", "kubepods", "cri-containerd", "/lxc/", "lxc.payload"} {
 		if strings.Contains(s, marker) {
 			return true
 		}
