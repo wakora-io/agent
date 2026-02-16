@@ -174,13 +174,17 @@ func runSecret(dir string, args []string) {
 	switch args[0] {
 	case "set":
 		if len(args) < 2 {
-			log.Fatal("usage: wakora secret set NAME [--user U]")
+			log.Fatal("usage: wakora secret set NAME [--user U] [--priv]")
 		}
 		name := args[1]
 		user := ""
-		for i := 2; i < len(args)-1; i++ {
-			if args[i] == "--user" {
+		withPriv := false
+		for i := 2; i < len(args); i++ {
+			switch {
+			case args[i] == "--user" && i+1 < len(args):
 				user = args[i+1]
+			case args[i] == "--priv":
+				withPriv = true
 			}
 		}
 		if user == "" {
@@ -188,7 +192,11 @@ func runSecret(dir string, args []string) {
 			user = readLine()
 		}
 		pass := readSecret("password: ")
-		if err := secret.SetCred(dir, name, secret.Cred{User: user, Pass: pass}); err != nil {
+		priv := ""
+		if withPriv {
+			priv = readSecret("privacy passphrase: ")
+		}
+		if err := secret.SetCred(dir, name, secret.Cred{User: user, Pass: pass, Priv: priv}); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Fprintf(os.Stderr, "secret %q stored (encrypted, stays on this host)\n", name)
@@ -213,10 +221,11 @@ func runSecret(dir string, args []string) {
 	}
 }
 
+var stdinReader = bufio.NewReader(os.Stdin)
+
 func readLine() string {
-	sc := bufio.NewScanner(os.Stdin)
-	sc.Scan()
-	return strings.TrimSpace(sc.Text())
+	line, _ := stdinReader.ReadString('\n')
+	return strings.TrimSpace(line)
 }
 
 func readSecret(prompt string) string {

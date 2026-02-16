@@ -127,6 +127,10 @@ type Probe struct {
 	Port         int         `json:"port,omitempty"`
 	AllowFrom    []string    `json:"allowFrom,omitempty"`
 	OKCodes      []int       `json:"okCodes,omitempty"`
+	V3           bool        `json:"v3,omitempty"`
+	AuthProto    string      `json:"authProto,omitempty"`
+	PrivProto    string      `json:"privProto,omitempty"`
+	Context      string      `json:"context,omitempty"`
 }
 
 type Definition struct {

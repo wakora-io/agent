@@ -11,6 +11,7 @@ import (
 type Cred struct {
 	User string
 	Pass string
+	Priv string
 }
 
 func storePath(dir string) string {
@@ -33,7 +34,15 @@ func SetCred(dir, name string, c Cred) error {
 	if err != nil {
 		return err
 	}
-	all[name] = map[string]string{"user": encUser, "pass": encPass}
+	fields := map[string]string{"user": encUser, "pass": encPass}
+	if c.Priv != "" {
+		encPriv, err := Encrypt(c.Priv)
+		if err != nil {
+			return err
+		}
+		fields["priv"] = encPriv
+	}
+	all[name] = fields
 	return writeRaw(dir, all)
 }
 
@@ -54,7 +63,13 @@ func GetCred(dir, name string) (Cred, bool) {
 	if err != nil {
 		return Cred{}, false
 	}
-	return Cred{User: user, Pass: pass}, true
+	c := Cred{User: user, Pass: pass}
+	if enc, ok := fields["priv"]; ok {
+		if priv, err := Decrypt(enc); err == nil {
+			c.Priv = priv
+		}
+	}
+	return c, true
 }
 
 func ListCreds(dir string) []string {

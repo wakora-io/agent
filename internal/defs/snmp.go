@@ -2,6 +2,7 @@ package defs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/gosnmp/gosnmp"
 
 	"wakora.io/agent/internal/protocol"
+	"wakora.io/agent/internal/secret"
 )
 
 func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration, resolve CredResolver) {
@@ -20,7 +22,7 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 		o.Check.Error = "snmp target not set"
 		return
 	}
-	community := "public"
+	var cred secret.Cred
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {
@@ -28,7 +30,7 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
 			return
 		}
-		community = c.Pass
+		cred = c
 	}
 
 	host, port := p.Target, uint16(161)
@@ -39,8 +41,21 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 		}
 	}
 	g := &gosnmp.GoSNMP{
-		Target: host, Port: port, Community: community,
-		Version: gosnmp.Version2c, Timeout: timeout, Retries: 1, MaxOids: 60,
+		Target: host, Port: port,
+		Timeout: timeout, Retries: 1, MaxOids: 60,
+	}
+	if p.V3 {
+		if err := snmpV3(g, p, cred); err != nil {
+			o.Check.Status = "fail"
+			o.Check.Error = err.Error()
+			return
+		}
+	} else {
+		g.Version = gosnmp.Version2c
+		g.Community = "public"
+		if cred.Pass != "" {
+			g.Community = cred.Pass
+		}
 	}
 	if err := g.Connect(); err != nil {
 		o.Check.Status = "fail"
@@ -130,6 +145,53 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "device", Key: host, Payload: string(payload)})
 		}
 	}
+}
+
+func snmpV3(g *gosnmp.GoSNMP, p protocol.Probe, cred secret.Cred) error {
+	if cred.User == "" {
+		return errors.New("snmpv3: secret with user required")
+	}
+	authProtos := map[string]gosnmp.SnmpV3AuthProtocol{
+		"MD5": gosnmp.MD5, "SHA": gosnmp.SHA, "SHA224": gosnmp.SHA224,
+		"SHA256": gosnmp.SHA256, "SHA384": gosnmp.SHA384, "SHA512": gosnmp.SHA512,
+	}
+	privProtos := map[string]gosnmp.SnmpV3PrivProtocol{
+		"DES": gosnmp.DES, "AES": gosnmp.AES, "AES192": gosnmp.AES192, "AES256": gosnmp.AES256,
+	}
+
+	usm := &gosnmp.UsmSecurityParameters{UserName: cred.User}
+	flags := gosnmp.NoAuthNoPriv
+	if p.AuthProto != "" {
+		proto, ok := authProtos[strings.ToUpper(p.AuthProto)]
+		if !ok {
+			return errors.New("snmpv3: unknown authProto " + p.AuthProto)
+		}
+		if cred.Pass == "" {
+			return errors.New("snmpv3: auth passphrase missing in secret")
+		}
+		usm.AuthenticationProtocol = proto
+		usm.AuthenticationPassphrase = cred.Pass
+		flags = gosnmp.AuthNoPriv
+	}
+	if p.PrivProto != "" {
+		proto, ok := privProtos[strings.ToUpper(p.PrivProto)]
+		if !ok {
+			return errors.New("snmpv3: unknown privProto " + p.PrivProto)
+		}
+		if cred.Priv == "" {
+			return errors.New("snmpv3: privacy passphrase missing in secret (wakora secret set --priv)")
+		}
+		usm.PrivacyProtocol = proto
+		usm.PrivacyPassphrase = cred.Priv
+		flags = gosnmp.AuthPriv
+	}
+
+	g.Version = gosnmp.Version3
+	g.SecurityModel = gosnmp.UserSecurityModel
+	g.MsgFlags = flags
+	g.SecurityParameters = usm
+	g.ContextName = p.Context
+	return nil
 }
 
 func normOID(oid string) string {
