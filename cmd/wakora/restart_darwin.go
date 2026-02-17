@@ -1,4 +1,4 @@
-//go:build !windows && !darwin
+//go:build darwin
 
 package main
 
@@ -8,7 +8,7 @@ import (
 )
 
 func restartService() {
-	_ = exec.Command("systemctl", "restart", "wakora-agent").Run()
+	_ = exec.Command("launchctl", "kickstart", "-k", "system/"+launchdLabel).Run()
 }
 
 func exitForRestart() {
