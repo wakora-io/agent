@@ -85,6 +85,12 @@ type ParseRule struct {
 	Count bool   `json:"count,omitempty"`
 }
 
+type PromRule struct {
+	Name   string   `json:"name"`
+	Metric string   `json:"metric"`
+	Tags   []string `json:"tags,omitempty"`
+}
+
 type KVMetric struct {
 	Name string `json:"name"`
 	Key  string `json:"key"`
@@ -144,6 +150,7 @@ type Probe struct {
 	Idents       []string    `json:"idents,omitempty"`
 	Targets      []string    `json:"targets,omitempty"`
 	ExpectBody   string      `json:"expectBody,omitempty"`
+	Prom         []PromRule  `json:"prom,omitempty"`
 }
 
 type Definition struct {

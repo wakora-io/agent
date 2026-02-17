@@ -148,6 +148,7 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 	}
 	o.Check.Status = "ok"
 	applyMetricRules(o, p.Metrics, body)
+	applyProm(o, p.Prom, body)
 	applyFactRules(o, p.Facts, body)
 }
 
