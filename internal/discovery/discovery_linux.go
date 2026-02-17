@@ -23,7 +23,26 @@ func Collect() []Fact {
 	facts = append(facts, packages()...)
 	facts = append(facts, units()...)
 	facts = append(facts, netFacts()...)
+	facts = append(facts, initFact())
 	return facts
+}
+
+func initFact() Fact {
+	system := "unknown"
+	switch {
+	case statOK("/run/systemd/system"):
+		system = "systemd"
+	case statOK("/run/openrc"):
+		system = "openrc"
+	case statOK("/etc/inittab"):
+		system = "sysvinit"
+	}
+	return Fact{Kind: "init", Key: system, Payload: "{}"}
+}
+
+func statOK(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func ChangeSignal() string {

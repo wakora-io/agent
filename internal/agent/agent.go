@@ -42,6 +42,7 @@ type Agent struct {
 	serviceFacts map[string]map[string]string
 	probeFacts   map[string][]protocol.Fact
 	tailers      map[string]*defs.Tailer
+	journals     map[string]*defs.JournalTailer
 	trapL        map[int]*defs.TrapListener
 	syslogL      map[int]*defs.SyslogListener
 	listenerPrev map[string]listenerCounts
@@ -67,6 +68,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		serviceFacts: map[string]map[string]string{},
 		probeFacts:   map[string][]protocol.Fact{},
 		tailers:      map[string]*defs.Tailer{},
+		journals:     map[string]*defs.JournalTailer{},
 		trapL:        map[int]*defs.TrapListener{},
 		syslogL:      map[int]*defs.SyslogListener{},
 		listenerPrev: map[string]listenerCounts{},
@@ -426,12 +428,20 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
+			if p.Type == "journal" {
+				if err := a.runJournal(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
 			if p.Type == "procfact" {
 				a.mu.Lock()
 				facts := a.facts
 				a.mu.Unlock()
-				if pf := defs.ProcFacts(facts, p); len(pf) > 0 && a.mergeServiceFacts(d.Service, pf) {
-					factsChanged = true
+				if pf := defs.ProcFacts(facts, p); len(pf) > 0 {
+					if ch, _ := a.mergeServiceFacts(d.Service, pf); ch {
+						factsChanged = true
+					}
 				}
 				continue
 			}
@@ -492,8 +502,14 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					return err
 				}
 			}
-			if len(o.Facts) > 0 && a.mergeServiceFacts(d.Service, o.Facts) {
-				factsChanged = true
+			if len(o.Facts) > 0 {
+				ch, integrity := a.mergeServiceFacts(d.Service, o.Facts)
+				if ch {
+					factsChanged = true
+				}
+				if err := a.sendIntegrity(conn, d.Service, integrity); err != nil {
+					return err
+				}
 			}
 			if a.setProbeFacts(d.Service+"/"+p.Name, o.InvFacts) {
 				factsChanged = true
@@ -609,6 +625,49 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 		a.tailers[key] = t
 	}
 	pts, err := t.Sample(p.Counters, time.Now())
+	if err != nil {
+		check.Status = "fail"
+		check.Error = err.Error()
+		return a.sendCheck(conn, check)
+	}
+	check.Status = "ok"
+	if err := a.sendCheck(conn, check); err != nil {
+		return err
+	}
+	if len(pts) > 0 {
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Timestamp: time.Now().Unix(),
+			Points:    pts,
+		})
+		if err == nil {
+			if err := conn.Send(msg); err != nil {
+				return err
+			}
+			return a.observePoints(conn, pts)
+		}
+	}
+	return nil
+}
+
+func (a *Agent) runJournal(conn transport.Conn, service string, p protocol.Probe) error {
+	key := service + "/" + p.Name
+	j := a.journals[key]
+	if j == nil {
+		j = defs.NewJournalTailer()
+		a.journals[key] = j
+	}
+	check := protocol.CheckResult{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		CheckID:   key,
+		Kind:      "journal",
+		Target:    strings.Join(p.Idents, ","),
+		Timestamp: time.Now().Unix(),
+	}
+	pts, err := j.Sample(p.Idents, p.Counters, time.Now())
 	if err != nil {
 		check.Status = "fail"
 		check.Error = err.Error()
@@ -830,7 +889,39 @@ func (a *Agent) sendCheck(conn transport.Conn, check protocol.CheckResult) error
 	return conn.Send(msg)
 }
 
-func (a *Agent) mergeServiceFacts(service string, facts map[string]string) bool {
+type factChange struct {
+	Key, Old, New string
+}
+
+func (a *Agent) sendIntegrity(conn transport.Conn, service string, changes []factChange) error {
+	for _, c := range changes {
+		name := strings.TrimSuffix(c.Key, "Sha256")
+		detail, err := json.Marshal(map[string]string{
+			"service": service, "file": name, "oldSha256": c.Old, "newSha256": c.New,
+		})
+		if err != nil {
+			continue
+		}
+		log.Printf("integrity: %s/%s content changed", service, name)
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Kind:      "integrity",
+			Detail:    string(detail),
+			Timestamp: time.Now().Unix(),
+		})
+		if err != nil {
+			continue
+		}
+		if err := conn.Send(msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *Agent) mergeServiceFacts(service string, facts map[string]string) (bool, []factChange) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	cur := a.serviceFacts[service]
@@ -839,13 +930,17 @@ func (a *Agent) mergeServiceFacts(service string, facts map[string]string) bool 
 		a.serviceFacts[service] = cur
 	}
 	changed := false
+	var integrity []factChange
 	for k, v := range facts {
 		if cur[k] != v {
+			if strings.HasSuffix(k, "Sha256") && cur[k] != "" {
+				integrity = append(integrity, factChange{Key: k, Old: cur[k], New: v})
+			}
 			cur[k] = v
 			changed = true
 		}
 	}
-	return changed
+	return changed, integrity
 }
 
 func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {

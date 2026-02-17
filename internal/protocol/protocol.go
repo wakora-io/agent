@@ -75,6 +75,7 @@ type Match struct {
 	Port          string `json:"port,omitempty"`
 	Package       string `json:"package,omitempty"`
 	Unit          string `json:"unit,omitempty"`
+	Init          string `json:"init,omitempty"`
 }
 
 type ParseRule struct {
@@ -119,6 +120,7 @@ type Probe struct {
 	KVMetrics    []KVMetric  `json:"kvMetrics,omitempty"`
 	Path         string      `json:"path,omitempty"`
 	PathFrom     string      `json:"pathFrom,omitempty"`
+	Hash         bool        `json:"hash,omitempty"`
 	Counters     []Counter   `json:"counters,omitempty"`
 	Target       string      `json:"target,omitempty"`
 	Get          []OID       `json:"get,omitempty"`
@@ -136,6 +138,7 @@ type Probe struct {
 	Domains      []string    `json:"domains,omitempty"`
 	Channels     []string    `json:"channels,omitempty"`
 	WindowSec    int         `json:"windowSec,omitempty"`
+	Idents       []string    `json:"idents,omitempty"`
 }
 
 type Definition struct {

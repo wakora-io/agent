@@ -52,7 +52,7 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 		return false
 	}
 	m := d.Match
-	if m.Process == "" && m.ProcessPrefix == "" && m.Port == "" && m.Package == "" && m.Unit == "" {
+	if m.Process == "" && m.ProcessPrefix == "" && m.Port == "" && m.Package == "" && m.Unit == "" && m.Init == "" {
 		return false
 	}
 	if m.Process != "" && !has("process", m.Process) {
@@ -69,6 +69,22 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 	}
 	if m.Unit != "" && !has("unit", m.Unit) {
 		return false
+	}
+	if m.Init != "" {
+		if m.Init == "*" {
+			ok := false
+			for _, f := range facts {
+				if f.Kind == "init" {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return false
+			}
+		} else if !has("init", m.Init) {
+			return false
+		}
 	}
 	return true
 }
