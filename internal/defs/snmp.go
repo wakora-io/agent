@@ -161,22 +161,23 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 	}
 }
 
+var snmpAuthProtos = map[string]gosnmp.SnmpV3AuthProtocol{
+	"MD5": gosnmp.MD5, "SHA": gosnmp.SHA, "SHA224": gosnmp.SHA224,
+	"SHA256": gosnmp.SHA256, "SHA384": gosnmp.SHA384, "SHA512": gosnmp.SHA512,
+}
+
+var snmpPrivProtos = map[string]gosnmp.SnmpV3PrivProtocol{
+	"DES": gosnmp.DES, "AES": gosnmp.AES, "AES192": gosnmp.AES192, "AES256": gosnmp.AES256,
+}
+
 func snmpV3(g *gosnmp.GoSNMP, p protocol.Probe, cred secret.Cred) error {
 	if cred.User == "" {
 		return errors.New("snmpv3: secret with user required")
 	}
-	authProtos := map[string]gosnmp.SnmpV3AuthProtocol{
-		"MD5": gosnmp.MD5, "SHA": gosnmp.SHA, "SHA224": gosnmp.SHA224,
-		"SHA256": gosnmp.SHA256, "SHA384": gosnmp.SHA384, "SHA512": gosnmp.SHA512,
-	}
-	privProtos := map[string]gosnmp.SnmpV3PrivProtocol{
-		"DES": gosnmp.DES, "AES": gosnmp.AES, "AES192": gosnmp.AES192, "AES256": gosnmp.AES256,
-	}
-
 	usm := &gosnmp.UsmSecurityParameters{UserName: cred.User}
 	flags := gosnmp.NoAuthNoPriv
 	if p.AuthProto != "" {
-		proto, ok := authProtos[strings.ToUpper(p.AuthProto)]
+		proto, ok := snmpAuthProtos[strings.ToUpper(p.AuthProto)]
 		if !ok {
 			return errors.New("snmpv3: unknown authProto " + p.AuthProto)
 		}
@@ -188,7 +189,7 @@ func snmpV3(g *gosnmp.GoSNMP, p protocol.Probe, cred secret.Cred) error {
 		flags = gosnmp.AuthNoPriv
 	}
 	if p.PrivProto != "" {
-		proto, ok := privProtos[strings.ToUpper(p.PrivProto)]
+		proto, ok := snmpPrivProtos[strings.ToUpper(p.PrivProto)]
 		if !ok {
 			return errors.New("snmpv3: unknown privProto " + p.PrivProto)
 		}

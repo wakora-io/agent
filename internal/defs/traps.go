@@ -28,8 +28,17 @@ type TrapEvent struct {
 	At     time.Time
 }
 
+type V3Auth struct {
+	User      string
+	AuthProto string
+	PrivProto string
+	AuthPass  string
+	PrivPass  string
+}
+
 type TrapListener struct {
 	port int
+	v3   *V3Auth
 
 	mu      sync.Mutex
 	events  []TrapEvent
@@ -50,9 +59,22 @@ func NewTrapListener(port int) *TrapListener {
 
 func (t *TrapListener) Port() int { return t.port }
 
+func (t *TrapListener) SetV3(a V3Auth) { t.v3 = &a }
+
 func (t *TrapListener) Start() {
 	tl := gosnmp.NewTrapListener()
-	tl.Params = gosnmp.Default
+	if t.v3 != nil {
+		params, err := v3ListenerParams(*t.v3)
+		if err != nil {
+			t.mu.Lock()
+			t.lastErr = err
+			t.mu.Unlock()
+			return
+		}
+		tl.Params = params
+	} else {
+		tl.Params = gosnmp.Default
+	}
 	tl.OnNewTrap = func(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
 		t.ingest(addr.IP.String(), packet)
 	}
@@ -63,6 +85,41 @@ func (t *TrapListener) Start() {
 		t.lastErr = err
 		t.mu.Unlock()
 	}()
+}
+
+func v3ListenerParams(a V3Auth) (*gosnmp.GoSNMP, error) {
+	g := &gosnmp.GoSNMP{
+		Version:       gosnmp.Version3,
+		SecurityModel: gosnmp.UserSecurityModel,
+		MsgFlags:      gosnmp.NoAuthNoPriv,
+		Logger:        gosnmp.NewLogger(nil),
+	}
+	usm := &gosnmp.UsmSecurityParameters{
+		UserName:                 a.User,
+		AuthoritativeEngineID:    "wakora-collector",
+		AuthoritativeEngineBoots: 1,
+		AuthoritativeEngineTime:  uint32(time.Now().Unix()),
+	}
+	if a.AuthProto != "" {
+		proto, ok := snmpAuthProtos[strings.ToUpper(a.AuthProto)]
+		if !ok {
+			return nil, fmt.Errorf("traps v3: unknown authProto %s", a.AuthProto)
+		}
+		usm.AuthenticationProtocol = proto
+		usm.AuthenticationPassphrase = a.AuthPass
+		g.MsgFlags = gosnmp.AuthNoPriv
+	}
+	if a.PrivProto != "" {
+		proto, ok := snmpPrivProtos[strings.ToUpper(a.PrivProto)]
+		if !ok {
+			return nil, fmt.Errorf("traps v3: unknown privProto %s", a.PrivProto)
+		}
+		usm.PrivacyProtocol = proto
+		usm.PrivacyPassphrase = a.PrivPass
+		g.MsgFlags = gosnmp.AuthPriv
+	}
+	g.SecurityParameters = usm
+	return g, nil
 }
 
 func (t *TrapListener) Close() {

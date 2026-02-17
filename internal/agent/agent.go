@@ -833,9 +833,24 @@ func (a *Agent) runTraps(conn transport.Conn, service string, p protocol.Probe) 
 	l := a.trapL[port]
 	if l == nil {
 		l = defs.NewTrapListener(port)
+		if p.V3 {
+			c, ok := a.resolveSecret(p.Secret)
+			if !ok {
+				return a.sendCheck(conn, protocol.CheckResult{
+					ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
+					CheckID: service + "/" + p.Name, Kind: "traps", Target: "udp/" + strconv.Itoa(port),
+					Status: "fail", Error: "secret " + p.Secret + " not set (v3 traps need USM creds)",
+					Timestamp: time.Now().Unix(),
+				})
+			}
+			l.SetV3(defs.V3Auth{
+				User: c.User, AuthProto: p.AuthProto, PrivProto: p.PrivProto,
+				AuthPass: c.Pass, PrivPass: c.Priv,
+			})
+		}
 		l.Start()
 		a.trapL[port] = l
-		log.Printf("trap listener started on udp/%d", port)
+		log.Printf("trap listener started on udp/%d (v3=%v)", port, p.V3)
 	}
 	targets := a.snmpTargets()
 	allowed := make([]string, 0, len(targets)+len(p.AllowFrom))
