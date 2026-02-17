@@ -147,11 +147,12 @@ type Probe struct {
 }
 
 type Definition struct {
-	Service     string   `json:"service"`
-	Match       Match    `json:"match"`
-	Hosts       []string `json:"hosts,omitempty"`
-	Probes      []Probe  `json:"probes"`
-	IntervalSec int      `json:"intervalSec,omitempty"`
+	Service         string   `json:"service"`
+	Match           Match    `json:"match"`
+	Hosts           []string `json:"hosts,omitempty"`
+	Probes          []Probe  `json:"probes"`
+	IntervalSec     int      `json:"intervalSec,omitempty"`
+	MinAgentVersion string   `json:"minAgentVersion,omitempty"`
 }
 
 type AgentEvent struct {

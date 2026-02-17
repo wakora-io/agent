@@ -4,19 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/secret"
 )
 
 type Config struct {
-	Endpoint  string
-	ServerID  string
-	Hostname  string
-	Key       string
-	Baseline  bool
-	Overrides map[string]map[string]string
-	dir       string
+	Endpoint          string
+	ServerID          string
+	Hostname          string
+	Key               string
+	Baseline          bool
+	CustomMetricsPort int
+	Overrides         map[string]map[string]string
+	dir               string
 }
 
 func Load(dir string) (*Config, error) {
@@ -32,6 +34,11 @@ func Load(dir string) (*Config, error) {
 		f.Close()
 	}
 	c.Baseline = c.Overrides["agent"]["baseline"] == "true"
+	if v := c.Overrides["agent"]["custom-metrics-port"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.CustomMetricsPort = n
+		}
+	}
 	id, err := loadIdentity(dir)
 	if err != nil {
 		return nil, err
@@ -115,4 +122,3 @@ func WriteOverride(dir, service, key, value string) error {
 	sections[service][key] = value
 	return writeINI(path, sections)
 }
-

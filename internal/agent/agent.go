@@ -47,8 +47,10 @@ type Agent struct {
 	syslogL      map[int]*defs.SyslogListener
 	listenerPrev map[string]listenerCounts
 
-	lastSignal   string
-	baselineTold bool
+	lastSignal        string
+	baselineTold      bool
+	warnedUnsupported map[string]bool
+	custom            chan []protocol.MetricPoint
 }
 
 type listenerCounts struct {
@@ -59,19 +61,21 @@ type listenerCounts struct {
 
 func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 	a := &Agent{
-		cfg:          cfg,
-		ring:         ring,
-		publisherKey: publisherKey,
-		metrics:      metrics.NewCollector(),
-		detector:     anomaly.New(),
-		lastRun:      map[string]time.Time{},
-		serviceFacts: map[string]map[string]string{},
-		probeFacts:   map[string][]protocol.Fact{},
-		tailers:      map[string]*defs.Tailer{},
-		journals:     map[string]*defs.JournalTailer{},
-		trapL:        map[int]*defs.TrapListener{},
-		syslogL:      map[int]*defs.SyslogListener{},
-		listenerPrev: map[string]listenerCounts{},
+		cfg:               cfg,
+		ring:              ring,
+		publisherKey:      publisherKey,
+		metrics:           metrics.NewCollector(),
+		detector:          anomaly.New(),
+		lastRun:           map[string]time.Time{},
+		serviceFacts:      map[string]map[string]string{},
+		probeFacts:        map[string][]protocol.Fact{},
+		tailers:           map[string]*defs.Tailer{},
+		journals:          map[string]*defs.JournalTailer{},
+		trapL:             map[int]*defs.TrapListener{},
+		syslogL:           map[int]*defs.SyslogListener{},
+		listenerPrev:      map[string]listenerCounts{},
+		warnedUnsupported: map[string]bool{},
+		custom:            make(chan []protocol.MetricPoint, 256),
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -98,6 +102,9 @@ func (a *Agent) collect() protocol.MetricsBatch {
 
 func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery, discoveryCheck time.Duration) error {
 	go a.offlineLoop(ctx, interval)
+	if a.cfg.CustomMetricsPort > 0 {
+		go a.serveCustomMetrics(ctx, a.cfg.CustomMetricsPort)
+	}
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
 		defer a.connected.Store(false)
@@ -179,6 +186,22 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			case <-pt.C:
 				if err := a.runDueProbes(conn); err != nil {
 					return err
+				}
+			case pts := <-a.custom:
+				a.seq++
+				msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+					ServerID:  a.cfg.ServerID,
+					Hostname:  a.cfg.Hostname,
+					Timestamp: time.Now().Unix(),
+					Points:    pts,
+				})
+				if err == nil {
+					if err := conn.Send(msg); err != nil {
+						return err
+					}
+					if err := a.observePoints(conn, pts); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -341,6 +364,45 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	return conn.Send(msg)
 }
 
+func (a *Agent) supported(d protocol.Definition) bool {
+	if d.MinAgentVersion != "" && !versionAtLeast(buildinfo.Version, d.MinAgentVersion) {
+		if !a.warnedUnsupported[d.Service] {
+			log.Printf("service %s requires agent >= %s (have %s) - skipped until update", d.Service, d.MinAgentVersion, buildinfo.Version)
+			a.warnedUnsupported[d.Service] = true
+		}
+		return false
+	}
+	if uns := defs.UnsupportedProbes(d); len(uns) > 0 {
+		if !a.warnedUnsupported[d.Service] {
+			log.Printf("service %s uses probe type(s) %v this agent (%s) does not know - skipped until update", d.Service, uns, buildinfo.Version)
+			a.warnedUnsupported[d.Service] = true
+		}
+		return false
+	}
+	return true
+}
+
+func versionAtLeast(have, min string) bool {
+	h, okH := versionNum(have)
+	m, okM := versionNum(min)
+	if !okH || !okM {
+		return true
+	}
+	return h >= m
+}
+
+func versionNum(v string) (int, bool) {
+	digits := strings.TrimLeftFunc(v, func(r rune) bool { return r < '0' || r > '9' })
+	if digits == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 func (a *Agent) refreshActive() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -362,6 +424,9 @@ func (a *Agent) refreshActive() {
 	var active []protocol.Definition
 	activeSet := map[string]bool{}
 	for _, d := range a.defs {
+		if !a.supported(d) {
+			continue
+		}
 		on := false
 		reason := ""
 		if len(d.Hosts) > 0 {

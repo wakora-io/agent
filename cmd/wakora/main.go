@@ -60,6 +60,7 @@ func main() {
 	logPath := flag.String("log-file", defaultLogFile, "own log file (service mode), empty = stderr only")
 	spoolAge := flag.Duration("spool-age", 24*time.Hour, "offline spool age limit (oldest entries dropped)")
 	baseline := flag.Bool("baseline", false, "safe baseline (Speed 1): metrics/discovery/heartbeat only, pushed definitions are not executed")
+	customPort := flag.Int("custom-metrics-port", 0, "loopback port for app custom-metric ingest (app.* only), 0 = off")
 	flag.Parse()
 
 	if *showVersion {
@@ -83,6 +84,9 @@ func main() {
 	}
 	if *baseline {
 		cfg.Baseline = true
+	}
+	if *customPort > 0 {
+		cfg.CustomMetricsPort = *customPort
 	}
 	if *endpoint != "" {
 		cfg.Endpoint = *endpoint
