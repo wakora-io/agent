@@ -86,6 +86,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runHAProxy(&o, service, p, timeout)
 	case "domain":
 		runDomain(&o, service, p, timeout)
+	case "ext":
+		runExt(&o, service, p, timeout)
 	case "wineventlog":
 		runEventLog(&o, service, p)
 	default:

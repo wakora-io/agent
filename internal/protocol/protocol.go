@@ -139,6 +139,8 @@ type Probe struct {
 	Channels     []string    `json:"channels,omitempty"`
 	WindowSec    int         `json:"windowSec,omitempty"`
 	Idents       []string    `json:"idents,omitempty"`
+	Targets      []string    `json:"targets,omitempty"`
+	ExpectBody   string      `json:"expectBody,omitempty"`
 }
 
 type Definition struct {
