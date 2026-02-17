@@ -46,7 +46,8 @@ type Agent struct {
 	syslogL      map[int]*defs.SyslogListener
 	listenerPrev map[string]listenerCounts
 
-	lastSignal string
+	lastSignal   string
+	baselineTold bool
 }
 
 type listenerCounts struct {
@@ -344,6 +345,14 @@ func (a *Agent) refreshActive() {
 	if a.facts == nil {
 		return
 	}
+	if a.cfg.Baseline {
+		if len(a.defs) > 0 && !a.baselineTold {
+			log.Printf("baseline mode: %d signed definition(s) held, probe execution withheld until opt-in", len(a.defs))
+			a.baselineTold = true
+		}
+		a.active = nil
+		return
+	}
 	prev := map[string]bool{}
 	for _, d := range a.active {
 		prev[d.Service] = true
@@ -367,12 +376,15 @@ func (a *Agent) refreshActive() {
 		}
 		if on {
 			active = append(active, d)
-			activeSet[d.Service] = true
-			if !prev[d.Service] {
+			if !prev[d.Service] && !activeSet[d.Service] {
 				log.Printf("service %s: %s, %d probe(s) activated", d.Service, reason, len(d.Probes))
 			}
-		} else if prev[d.Service] {
-			log.Printf("service unmatched: %s, probes deactivated", d.Service)
+			activeSet[d.Service] = true
+		}
+	}
+	for svc := range prev {
+		if !activeSet[svc] {
+			log.Printf("service unmatched: %s, probes deactivated", svc)
 		}
 	}
 	for svc := range a.serviceFacts {

@@ -14,6 +14,7 @@ type Config struct {
 	ServerID  string
 	Hostname  string
 	Key       string
+	Baseline  bool
 	Overrides map[string]map[string]string
 	dir       string
 }
@@ -30,6 +31,7 @@ func Load(dir string) (*Config, error) {
 		c.Overrides = parseINI(f)
 		f.Close()
 	}
+	c.Baseline = c.Overrides["agent"]["baseline"] == "true"
 	id, err := loadIdentity(dir)
 	if err != nil {
 		return nil, err

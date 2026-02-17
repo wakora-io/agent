@@ -59,6 +59,7 @@ func main() {
 	discoveryCheck := flag.Duration("discovery-check", 30*time.Second, "cheap change-detection interval (dpkg + listening ports)")
 	logPath := flag.String("log-file", defaultLogFile, "own log file (service mode), empty = stderr only")
 	spoolAge := flag.Duration("spool-age", 24*time.Hour, "offline spool age limit (oldest entries dropped)")
+	baseline := flag.Bool("baseline", false, "safe baseline (Speed 1): metrics/discovery/heartbeat only, pushed definitions are not executed")
 	flag.Parse()
 
 	if *showVersion {
@@ -79,6 +80,9 @@ func main() {
 	cfg, err := config.Load(*configDir)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *baseline {
+		cfg.Baseline = true
 	}
 	if *endpoint != "" {
 		cfg.Endpoint = *endpoint
@@ -154,6 +158,10 @@ func main() {
 	debug.SetMemoryLimit(128 << 20)
 	if runtime.NumCPU() > 2 {
 		runtime.GOMAXPROCS(2)
+	}
+
+	if cfg.Baseline {
+		log.Print("safe baseline (Speed 1): pushed definitions will not execute; enable with wakora --set agent.baseline=false")
 	}
 
 	client := &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(a.Key, pin)}
