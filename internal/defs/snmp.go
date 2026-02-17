@@ -108,6 +108,20 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 	}
 
 	walked := false
+	if p.Sensors {
+		if ok, err := walkSensors(g, deviceTag, o); ok {
+			walked = true
+		} else if err != "" {
+			lastErr = err
+		}
+	}
+	if p.PoE {
+		if ok, err := walkPoE(g, deviceTag, o); ok {
+			walked = true
+		} else if err != "" {
+			lastErr = err
+		}
+	}
 	for _, w := range p.Walk {
 		base := normOID(w.OID)
 		if err := g.Walk(base, func(pdu gosnmp.SnmpPDU) error {

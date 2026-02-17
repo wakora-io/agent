@@ -134,6 +134,8 @@ type Probe struct {
 	AuthProto    string      `json:"authProto,omitempty"`
 	PrivProto    string      `json:"privProto,omitempty"`
 	Context      string      `json:"context,omitempty"`
+	Sensors      bool        `json:"sensors,omitempty"`
+	PoE          bool        `json:"poe,omitempty"`
 	Process      string      `json:"process,omitempty"`
 	Domains      []string    `json:"domains,omitempty"`
 	Channels     []string    `json:"channels,omitempty"`
