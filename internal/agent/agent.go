@@ -364,6 +364,48 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	return conn.Send(msg)
 }
 
+func splitPaths(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// locationOverride resolves a service location fact against the operator
+// precedence ladder: an explicit wakora.conf override (fed by manual edits,
+// backend per-host push, or install flags) always wins over auto-discovery.
+// Keys map camelCase facts to kebab-case conf keys (accessLog -> access-path).
+func (a *Agent) locationOverride(service, fact string) (string, bool) {
+	sec := a.cfg.Overrides[service]
+	if sec == nil {
+		return "", false
+	}
+	for _, key := range []string{overrideKey(fact), fact} {
+		if v := strings.TrimSpace(sec[key]); v != "" {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func overrideKey(fact string) string {
+	var b strings.Builder
+	for i, r := range fact {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r + 32)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func (a *Agent) supported(d protocol.Definition) bool {
 	if d.MinAgentVersion != "" && !versionAtLeast(buildinfo.Version, d.MinAgentVersion) {
 		if !a.warnedUnsupported[d.Service] {
@@ -511,11 +553,15 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				continue
 			}
 			if p.Type == "file" && p.Path == "" && p.PathFrom != "" {
-				a.mu.Lock()
-				if sf := a.serviceFacts[d.Service]; sf != nil {
-					p.Path = sf[p.PathFrom]
+				if ov, ok := a.locationOverride(d.Service, p.PathFrom); ok {
+					p.Path = ov
+				} else {
+					a.mu.Lock()
+					if sf := a.serviceFacts[d.Service]; sf != nil {
+						p.Path = sf[p.PathFrom]
+					}
+					a.mu.Unlock()
 				}
-				a.mu.Unlock()
 				if p.Path == "" {
 					continue
 				}
@@ -659,15 +705,15 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 	if p.Path != "" {
 		paths = []string{p.Path}
 	} else if p.PathFrom != "" {
-		a.mu.Lock()
-		if facts := a.serviceFacts[service]; facts != nil {
-			for _, v := range strings.Split(facts[p.PathFrom], ",") {
-				if v = strings.TrimSpace(v); v != "" {
-					paths = append(paths, v)
-				}
+		if ov, ok := a.locationOverride(service, p.PathFrom); ok {
+			paths = splitPaths(ov)
+		} else {
+			a.mu.Lock()
+			if facts := a.serviceFacts[service]; facts != nil {
+				paths = splitPaths(facts[p.PathFrom])
 			}
+			a.mu.Unlock()
 		}
-		a.mu.Unlock()
 	}
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,

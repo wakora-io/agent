@@ -6,9 +6,12 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -75,6 +78,15 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		return
 	}
 	o.Check.Status = "ok"
+
+	if p.Command != "nginx" {
+		if logs := apacheAccessLogs(p.Command); len(logs) > 0 {
+			if o.Facts == nil {
+				o.Facts = map[string]string{}
+			}
+			o.Facts["accessLog"] = strings.Join(logs, ",")
+		}
+	}
 
 	hosts := parse(out)
 	sort.Slice(hosts, func(i, j int) bool {
@@ -215,6 +227,69 @@ func verifyCert(chain []*x509.Certificate) string {
 		return "untrusted certificate"
 	}
 	return ""
+}
+
+var apacheCustomLogRe = regexp.MustCompile(`(?mi)^\s*CustomLog\s+"?([^"\s]+)`)
+
+func apacheAccessLogs(cmd string) []string {
+	confDir := "/etc/apache2"
+	logDir := "/var/log/apache2"
+	if cmd == "httpd" {
+		confDir = "/etc/httpd"
+		logDir = "/var/log/httpd"
+	}
+	if v := apacheEnvLogDir(confDir + "/envvars"); v != "" {
+		logDir = v
+	}
+	seen := map[string]bool{}
+	var out []string
+	_ = filepath.WalkDir(confDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".conf") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		for _, m := range apacheCustomLogRe.FindAllSubmatch(data, -1) {
+			p := resolveApachePath(string(m[1]), logDir)
+			if p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
+
+func resolveApachePath(raw, logDir string) string {
+	raw = strings.ReplaceAll(raw, "${APACHE_LOG_DIR}", logDir)
+	raw = strings.ReplaceAll(raw, "$APACHE_LOG_DIR", logDir)
+	if strings.Contains(raw, "$") || raw == "" {
+		return ""
+	}
+	if !strings.HasPrefix(raw, "/") {
+		raw = logDir + "/" + raw
+	}
+	return raw
+}
+
+func apacheEnvLogDir(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	m := regexp.MustCompile(`(?m)APACHE_LOG_DIR=(\S+)`).FindSubmatch(data)
+	if len(m) < 2 {
+		return ""
+	}
+	v := strings.Trim(string(m[1]), `"`)
+	if i := strings.IndexByte(v, '$'); i >= 0 {
+		v = v[:i]
+	}
+	return v
 }
 
 var nginxServerRe = regexp.MustCompile(`^server\s*\{?`)
