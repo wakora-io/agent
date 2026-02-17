@@ -36,6 +36,7 @@ var execAllowlist = map[string]bool{
 	"apt-get": true, "dnf": true, "yum": true, "rpm": true, "zypper": true, "apk": true,
 	"vsftpd": true, "pveversion": true, "qm": true, "pct": true, "pvesm": true,
 	"mongosh": true, "mongo": true, "systemctl": true,
+	"varnishstat": true, "unbound-control": true, "exim": true, "exim4": true,
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {
@@ -88,6 +89,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runDomain(&o, service, p, timeout)
 	case "ext":
 		runExt(&o, service, p, timeout)
+	case "snmpscan":
+		runSNMPScan(&o, service, p, timeout, resolve)
 	case "wineventlog":
 		runEventLog(&o, service, p)
 	default:
@@ -119,7 +122,11 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
 			return
 		}
-		req.SetBasicAuth(c.User, c.Pass)
+		if p.AuthHeader != "" {
+			req.Header.Set(p.AuthHeader, c.Pass)
+		} else {
+			req.SetBasicAuth(c.User, c.Pass)
+		}
 	}
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)

@@ -113,6 +113,7 @@ type Probe struct {
 	Facts        []ParseRule `json:"facts,omitempty"`
 	Driver       string      `json:"driver,omitempty"`
 	Secret       string      `json:"secret,omitempty"`
+	AuthHeader   string      `json:"authHeader,omitempty"`
 	User         string      `json:"user,omitempty"`
 	Socket       bool        `json:"socket,omitempty"`
 	PortProcess  string      `json:"portProcess,omitempty"`
