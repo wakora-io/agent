@@ -39,17 +39,10 @@ func memPoints() []Point {
 	if err != nil || total == 0 {
 		return nil
 	}
-	pagesize, _ := unix.SysctlUint64("hw.pagesize")
-	if pagesize == 0 {
-		pagesize = 4096
-	}
-	free, _ := unix.SysctlUint64("vm.page_free_count")
-	avail := free * pagesize
-	pts := []Point{
-		{Name: "host.mem.total_kb", Value: float64(total) / 1024},
-		{Name: "host.mem.available_kb", Value: float64(avail) / 1024},
-		{Name: "host.mem.used_pct", Value: float64(total-avail) / float64(total) * 100},
-	}
+	// used_pct/available need mach vm_statistics (free alone reads ~0 on macOS
+	// because inactive/cached pages are reclaimable but not "free") -> cgo tail.
+	// Ship total + swap pressure, which is the honest memory-pressure signal here.
+	pts := []Point{{Name: "host.mem.total_kb", Value: float64(total) / 1024}}
 	if raw, err := unix.SysctlRaw("vm.swapusage"); err == nil && len(raw) >= 24 {
 		swapTotal := binary.LittleEndian.Uint64(raw[0:8])
 		swapUsed := binary.LittleEndian.Uint64(raw[16:24])
