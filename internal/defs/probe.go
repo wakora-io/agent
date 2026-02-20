@@ -93,6 +93,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runSNMPScan(&o, service, p, timeout, resolve)
 	case "keepalived":
 		runKeepalived(&o, service, p)
+	case "virsh":
+		runVirsh(&o, service, p, timeout)
 	case "wineventlog":
 		runEventLog(&o, service, p)
 	default:

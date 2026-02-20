@@ -57,7 +57,9 @@ func runKeepalived(o *Outcome, service string, p protocol.Probe) {
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + ".priority", Value: v})
 		}
 	}
-	o.Facts = map[string]string{}
+	if o.Facts == nil {
+		o.Facts = map[string]string{}
+	}
 	if len(vips) > 0 {
 		o.Facts["vip"] = strings.Join(vips, ",")
 	}
