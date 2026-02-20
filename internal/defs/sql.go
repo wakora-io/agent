@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/microsoft/go-mssqldb"
+	_ "github.com/microsoft/go-mssqldb/namedpipe"
+	_ "github.com/microsoft/go-mssqldb/sharedmemory"
 
 	"wakora.io/agent/internal/protocol"
 	"wakora.io/agent/internal/secret"
@@ -120,17 +123,24 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 	case "sqlserver", "mssql":
 		addr := p.Address
 		if addr == "" {
-			addr = "127.0.0.1:1433"
+			addr = "localhost"
 		}
-		host, port, _ := strings.Cut(addr, ":")
-		if port == "" {
-			port = "1433"
+		hostport, instance, _ := strings.Cut(addr, "/")
+		q := url.Values{}
+		q.Set("database", "master")
+		q.Set("connection timeout", "5")
+		q.Set("dial timeout", "5")
+		q.Set("encrypt", "disable")
+		u := &url.URL{
+			Scheme:   "sqlserver",
+			Host:     hostport,
+			Path:     instance,
+			RawQuery: q.Encode(),
 		}
-		q := "database=master&connection+timeout=5&encrypt=disable"
-		if !hasSecret {
-			return fmt.Sprintf("sqlserver://%s:%s?%s", host, port, q), "sqlserver", nil
+		if hasSecret {
+			u.User = url.UserPassword(cred.User, cred.Pass)
 		}
-		return fmt.Sprintf("sqlserver://%s:%s@%s:%s?%s", cred.User, cred.Pass, host, port, q), "sqlserver", nil
+		return u.String(), "sqlserver", nil
 	default:
 		return "", "", fmt.Errorf("unsupported sql driver %q", p.Driver)
 	}

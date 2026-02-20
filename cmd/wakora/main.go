@@ -322,6 +322,24 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every ti
 	if err != nil {
 		return
 	}
+	check := func() {
+		latest, err := u.LatestVersion()
+		if err != nil || latest == buildinfo.Version {
+			return
+		}
+		if err := u.Apply(exe); err != nil {
+			log.Printf("auto-update failed: %v", err)
+			return
+		}
+		log.Printf("auto-updated %s -> %s, restarting", buildinfo.Version, latest)
+		exitForRestart()
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(90 * time.Second):
+		check()
+	}
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -329,16 +347,7 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every ti
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			latest, err := u.LatestVersion()
-			if err != nil || latest == buildinfo.Version {
-				continue
-			}
-			if err := u.Apply(exe); err != nil {
-				log.Printf("auto-update failed: %v", err)
-				continue
-			}
-			log.Printf("auto-updated %s -> %s, restarting", buildinfo.Version, latest)
-			exitForRestart()
+			check()
 		}
 	}
 }
