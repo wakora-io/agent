@@ -13,12 +13,21 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type httpredDsCtx struct {
+	_     structs.HostLayout
+	Ts    uint64
+	Dport uint16
+	_     [6]byte
+}
+
 type httpredHttpEvent struct {
 	_      structs.HostLayout
 	DurNs  uint64
 	Port   uint16
 	Status uint16
-	Pad    uint32
+	Kind   uint8
+	Pad0   uint8
+	Pad1   uint16
 }
 
 type httpredRecvCtx struct {
@@ -31,6 +40,9 @@ type httpredRecvCtx struct {
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
+	httpredMapDownstreamPorts = "downstream_ports"
+	httpredMapDsPending       = "ds_pending"
+	httpredMapDsStart         = "ds_start"
 	httpredMapEvents          = "events"
 	httpredMapInflight        = "inflight"
 	httpredMapRecvs           = "recvs"
@@ -92,10 +104,13 @@ type httpredProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type httpredMapSpecs struct {
-	Events       *ebpf.MapSpec `ebpf:"events"`
-	Inflight     *ebpf.MapSpec `ebpf:"inflight"`
-	Recvs        *ebpf.MapSpec `ebpf:"recvs"`
-	WatchedPorts *ebpf.MapSpec `ebpf:"watched_ports"`
+	DownstreamPorts *ebpf.MapSpec `ebpf:"downstream_ports"`
+	DsPending       *ebpf.MapSpec `ebpf:"ds_pending"`
+	DsStart         *ebpf.MapSpec `ebpf:"ds_start"`
+	Events          *ebpf.MapSpec `ebpf:"events"`
+	Inflight        *ebpf.MapSpec `ebpf:"inflight"`
+	Recvs           *ebpf.MapSpec `ebpf:"recvs"`
+	WatchedPorts    *ebpf.MapSpec `ebpf:"watched_ports"`
 }
 
 // httpredVariableSpecs contains global variables before they are loaded into the kernel.
@@ -125,14 +140,20 @@ func (o *httpredObjects) Close() error {
 //
 // It can be passed to loadHttpredObjects or ebpf.CollectionSpec.LoadAndAssign.
 type httpredMaps struct {
-	Events       *ebpf.Map `ebpf:"events"`
-	Inflight     *ebpf.Map `ebpf:"inflight"`
-	Recvs        *ebpf.Map `ebpf:"recvs"`
-	WatchedPorts *ebpf.Map `ebpf:"watched_ports"`
+	DownstreamPorts *ebpf.Map `ebpf:"downstream_ports"`
+	DsPending       *ebpf.Map `ebpf:"ds_pending"`
+	DsStart         *ebpf.Map `ebpf:"ds_start"`
+	Events          *ebpf.Map `ebpf:"events"`
+	Inflight        *ebpf.Map `ebpf:"inflight"`
+	Recvs           *ebpf.Map `ebpf:"recvs"`
+	WatchedPorts    *ebpf.Map `ebpf:"watched_ports"`
 }
 
 func (m *httpredMaps) Close() error {
 	return _HttpredClose(
+		m.DownstreamPorts,
+		m.DsPending,
+		m.DsStart,
 		m.Events,
 		m.Inflight,
 		m.Recvs,

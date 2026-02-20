@@ -37,19 +37,27 @@ type PortStats struct {
 	Elapsed time.Duration
 }
 
+type Snapshot struct {
+	HTTP       map[uint16]PortStats
+	Downstream map[string]PortStats
+	Elapsed    time.Duration
+}
+
 type Engine struct {
 	mu        sync.Mutex
 	objs      httpredObjects
 	links     []link.Link
 	rb        *ringbuf.Reader
-	agg       map[uint16]*portAgg
+	httpAgg   map[uint16]*portAgg
+	dsAgg     map[string]*portAgg
+	dsByPort  map[uint16]string
 	lastDrain time.Time
 	lastErr   error
 	started   bool
 }
 
 func NewEngine() *Engine {
-	return &Engine{agg: map[uint16]*portAgg{}}
+	return &Engine{httpAgg: map[uint16]*portAgg{}, dsAgg: map[string]*portAgg{}, dsByPort: map[uint16]string{}}
 }
 
 func Supported() (bool, string) {
@@ -65,7 +73,7 @@ func Supported() (bool, string) {
 	return true, ""
 }
 
-func (e *Engine) Start(ports []int) error {
+func (e *Engine) Start(ports []int, downstream map[string][]int) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.started {
@@ -90,6 +98,17 @@ func (e *Engine) Start(ports []int) error {
 			if err := e.objs.WatchedPorts.Put(uint16(p), one); err != nil {
 				e.closeLocked()
 				return err
+			}
+		}
+	}
+	for comp, dports := range downstream {
+		for _, p := range dports {
+			if p > 0 && p < 65536 {
+				if err := e.objs.DownstreamPorts.Put(uint16(p), one); err != nil {
+					e.closeLocked()
+					return err
+				}
+				e.dsByPort[uint16(p)] = comp
 			}
 		}
 	}
@@ -140,24 +159,39 @@ func (e *Engine) readLoop() {
 			e.mu.Unlock()
 			continue
 		}
-		if len(rec.RawSample) < 12 {
+		if len(rec.RawSample) < 13 {
 			continue
 		}
 		durNs := binary.LittleEndian.Uint64(rec.RawSample[0:8])
 		port := binary.LittleEndian.Uint16(rec.RawSample[8:10])
 		status := binary.LittleEndian.Uint16(rec.RawSample[10:12])
+		kind := rec.RawSample[12]
 		e.mu.Lock()
-		a := e.agg[port]
-		if a == nil {
-			a = &portAgg{}
-			e.agg[port] = a
+		var a *portAgg
+		if kind == 1 {
+			comp := e.dsByPort[port]
+			if comp == "" {
+				e.mu.Unlock()
+				continue
+			}
+			a = e.dsAgg[comp]
+			if a == nil {
+				a = &portAgg{}
+				e.dsAgg[comp] = a
+			}
+		} else {
+			a = e.httpAgg[port]
+			if a == nil {
+				a = &portAgg{}
+				e.httpAgg[port] = a
+			}
+			if status >= 500 {
+				a.err5xx++
+			} else if status >= 400 {
+				a.err4xx++
+			}
 		}
 		a.count++
-		if status >= 500 {
-			a.err5xx++
-		} else if status >= 400 {
-			a.err4xx++
-		}
 		if durNs > a.maxNs {
 			a.maxNs = durNs
 		}
@@ -174,30 +208,42 @@ func (e *Engine) readLoop() {
 	}
 }
 
-func (e *Engine) Drain() (map[uint16]PortStats, error) {
+func (e *Engine) Drain() (Snapshot, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.started {
-		return nil, errors.New("engine not started")
+		return Snapshot{}, errors.New("engine not started")
 	}
 	elapsed := time.Since(e.lastDrain)
 	e.lastDrain = time.Now()
-	out := make(map[uint16]PortStats, len(e.agg))
-	for port, a := range e.agg {
-		out[port] = PortStats{
-			Count:   a.count,
-			Err5xx:  a.err5xx,
-			Err4xx:  a.err4xx,
-			MaxMs:   float64(a.maxNs) / 1e6,
-			P50Ms:   percentile(a, 0.50),
-			P95Ms:   percentile(a, 0.95),
-			Elapsed: elapsed,
-		}
-		e.agg[port] = &portAgg{}
+	snap := Snapshot{
+		HTTP:       make(map[uint16]PortStats, len(e.httpAgg)),
+		Downstream: make(map[string]PortStats, len(e.dsAgg)),
+		Elapsed:    elapsed,
+	}
+	for port, a := range e.httpAgg {
+		snap.HTTP[port] = statsFrom(a, elapsed)
+		e.httpAgg[port] = &portAgg{}
+	}
+	for comp, a := range e.dsAgg {
+		snap.Downstream[comp] = statsFrom(a, elapsed)
+		e.dsAgg[comp] = &portAgg{}
 	}
 	err := e.lastErr
 	e.lastErr = nil
-	return out, err
+	return snap, err
+}
+
+func statsFrom(a *portAgg, elapsed time.Duration) PortStats {
+	return PortStats{
+		Count:   a.count,
+		Err5xx:  a.err5xx,
+		Err4xx:  a.err4xx,
+		MaxMs:   float64(a.maxNs) / 1e6,
+		P50Ms:   percentile(a, 0.50),
+		P95Ms:   percentile(a, 0.95),
+		Elapsed: elapsed,
+	}
 }
 
 func percentile(a *portAgg, q float64) float64 {

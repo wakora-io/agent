@@ -76,6 +76,7 @@ struct pt_regs {
 
 struct sock_common {
 	__u16 skc_num;
+	__be16 skc_dport;
 } __attribute__((preserve_access_index));
 
 struct sock {

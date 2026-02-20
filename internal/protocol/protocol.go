@@ -92,6 +92,11 @@ type PromRule struct {
 	Tags   []string `json:"tags,omitempty"`
 }
 
+type Component struct {
+	Name  string `json:"name"`
+	Ports []int  `json:"ports"`
+}
+
 type KVMetric struct {
 	Name string `json:"name"`
 	Key  string `json:"key"`
@@ -137,6 +142,7 @@ type Probe struct {
 	DeviceFacts  []OID       `json:"deviceFacts,omitempty"`
 	Port         int         `json:"port,omitempty"`
 	Ports        []int       `json:"ports,omitempty"`
+	Downstream   []Component `json:"downstream,omitempty"`
 	AllowFrom    []string    `json:"allowFrom,omitempty"`
 	OKCodes      []int       `json:"okCodes,omitempty"`
 	V3           bool        `json:"v3,omitempty"`

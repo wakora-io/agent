@@ -1003,13 +1003,17 @@ func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Prob
 	}
 	if a.apmEngine == nil {
 		if a.apmErr == nil {
+			downstream := map[string][]int{}
+			for _, c := range p.Downstream {
+				downstream[c.Name] = c.Ports
+			}
 			a.apmEngine = apm.NewEngine()
-			if err := a.apmEngine.Start(p.Ports); err != nil {
+			if err := a.apmEngine.Start(p.Ports, downstream); err != nil {
 				a.apmErr = err
 				a.apmEngine = nil
 				log.Printf("ebpf http engine unavailable: %v", err)
 			} else {
-				log.Printf("ebpf http engine started, ports %v", p.Ports)
+				log.Printf("ebpf http engine started, ports %v downstream %v", p.Ports, downstream)
 			}
 		}
 		if a.apmEngine == nil {
@@ -1018,7 +1022,7 @@ func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Prob
 			return a.sendCheck(conn, check)
 		}
 	}
-	stats, derr := a.apmEngine.Drain()
+	snap, derr := a.apmEngine.Drain()
 	if derr != nil {
 		check.Status = "fail"
 		check.Error = derr.Error()
@@ -1029,7 +1033,7 @@ func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Prob
 		return err
 	}
 	var pts []protocol.MetricPoint
-	for port, s := range stats {
+	for port, s := range snap.HTTP {
 		secs := s.Elapsed.Seconds()
 		if secs <= 0 {
 			continue
@@ -1045,6 +1049,21 @@ func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Prob
 				protocol.MetricPoint{Name: "apm.http.p50_ms", Value: s.P50Ms, Tags: tags},
 				protocol.MetricPoint{Name: "apm.http.p95_ms", Value: s.P95Ms, Tags: tags},
 				protocol.MetricPoint{Name: "apm.http.max_ms", Value: s.MaxMs, Tags: tags},
+			)
+		}
+	}
+	for comp, s := range snap.Downstream {
+		secs := s.Elapsed.Seconds()
+		if secs <= 0 {
+			continue
+		}
+		tags := map[string]string{"component": comp}
+		pts = append(pts, protocol.MetricPoint{Name: "apm.backend.call_rate", Value: rate(s.Count, 0, secs), Tags: tags})
+		if s.Count > 0 {
+			pts = append(pts,
+				protocol.MetricPoint{Name: "apm.backend.p50_ms", Value: s.P50Ms, Tags: tags},
+				protocol.MetricPoint{Name: "apm.backend.p95_ms", Value: s.P95Ms, Tags: tags},
+				protocol.MetricPoint{Name: "apm.backend.max_ms", Value: s.MaxMs, Tags: tags},
 			)
 		}
 	}
