@@ -26,6 +26,7 @@ type Outcome struct {
 	Metrics  []protocol.MetricPoint
 	Facts    map[string]string
 	InvFacts []protocol.Fact
+	Events   []protocol.AgentEvent
 }
 
 var execAllowlist = map[string]bool{

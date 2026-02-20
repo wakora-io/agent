@@ -469,6 +469,9 @@ func (a *Agent) refreshActive() {
 		if !a.supported(d) {
 			continue
 		}
+		if len(d.RunOn) > 0 && !a.hostListed(d.RunOn) {
+			continue
+		}
 		on := false
 		reason := ""
 		if len(d.Hosts) > 0 {
@@ -589,7 +592,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					p.Address = "127.0.0.1:" + port
 				}
 			}
-			o := defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
+			var o defs.Outcome
+			if p.Type == "apmphp" {
+				o = defs.RunAPMPhp(d.Service, p, a.cfg.Dir())
+			} else {
+				o = defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
+			}
 			for _, check := range append([]protocol.CheckResult{o.Check}, o.Extra...) {
 				check.ServerID = a.cfg.ServerID
 				check.Hostname = a.cfg.Hostname
@@ -631,6 +639,22 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			if a.setProbeFacts(d.Service+"/"+p.Name, o.InvFacts) {
 				factsChanged = true
 			}
+			for _, ev := range o.Events {
+				ev.ServerID = a.cfg.ServerID
+				ev.Hostname = a.cfg.Hostname
+				if ev.Timestamp == 0 {
+					ev.Timestamp = time.Now().Unix()
+				}
+				log.Printf("%s: %s", ev.Kind, ev.Detail)
+				a.seq++
+				emsg, err := protocol.Encode(protocol.TypeEvent, a.seq, ev)
+				if err != nil {
+					continue
+				}
+				if err := conn.Send(emsg); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if factsChanged {
@@ -667,6 +691,15 @@ const (
 	collectorStandby
 	collectorActive
 )
+
+func (a *Agent) hostListed(hosts []string) bool {
+	for _, h := range hosts {
+		if h == a.cfg.Hostname || h == a.cfg.ServerID {
+			return true
+		}
+	}
+	return false
+}
 
 func (a *Agent) collectorState(service string, hosts []string) int {
 	member := false

@@ -113,58 +113,60 @@ type OID struct {
 }
 
 type Probe struct {
-	Name         string      `json:"name"`
-	Type         string      `json:"type"`
-	URL          string      `json:"url,omitempty"`
-	Address      string      `json:"address,omitempty"`
-	ExpectStatus int         `json:"expectStatus,omitempty"`
-	TimeoutSec   int         `json:"timeoutSec,omitempty"`
-	Command      string      `json:"command,omitempty"`
-	Args         []string    `json:"args,omitempty"`
-	Metrics      []ParseRule `json:"metrics,omitempty"`
-	Facts        []ParseRule `json:"facts,omitempty"`
-	Driver       string      `json:"driver,omitempty"`
-	Secret       string      `json:"secret,omitempty"`
-	AuthHeader   string      `json:"authHeader,omitempty"`
-	User         string      `json:"user,omitempty"`
-	Socket       bool        `json:"socket,omitempty"`
-	PortProcess  string      `json:"portProcess,omitempty"`
-	Query        string      `json:"query,omitempty"`
-	KVMetrics    []KVMetric  `json:"kvMetrics,omitempty"`
-	Path         string      `json:"path,omitempty"`
-	PathFrom     string      `json:"pathFrom,omitempty"`
-	Hash         bool        `json:"hash,omitempty"`
-	Counters     []Counter   `json:"counters,omitempty"`
-	Target       string      `json:"target,omitempty"`
-	Get          []OID       `json:"get,omitempty"`
-	Walk         []OID       `json:"walk,omitempty"`
-	LabelOID     string      `json:"labelOid,omitempty"`
-	DeviceFacts  []OID       `json:"deviceFacts,omitempty"`
-	Port         int         `json:"port,omitempty"`
-	Ports        []int       `json:"ports,omitempty"`
-	Downstream   []Component `json:"downstream,omitempty"`
-	AllowFrom    []string    `json:"allowFrom,omitempty"`
-	OKCodes      []int       `json:"okCodes,omitempty"`
-	V3           bool        `json:"v3,omitempty"`
-	AuthProto    string      `json:"authProto,omitempty"`
-	PrivProto    string      `json:"privProto,omitempty"`
-	Context      string      `json:"context,omitempty"`
-	Sensors      bool        `json:"sensors,omitempty"`
-	PoE          bool        `json:"poe,omitempty"`
-	Process      string      `json:"process,omitempty"`
-	Domains      []string    `json:"domains,omitempty"`
-	Channels     []string    `json:"channels,omitempty"`
-	WindowSec    int         `json:"windowSec,omitempty"`
-	Idents       []string    `json:"idents,omitempty"`
-	Targets      []string    `json:"targets,omitempty"`
-	ExpectBody   string      `json:"expectBody,omitempty"`
-	Prom         []PromRule  `json:"prom,omitempty"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	URL          string            `json:"url,omitempty"`
+	Address      string            `json:"address,omitempty"`
+	ExpectStatus int               `json:"expectStatus,omitempty"`
+	TimeoutSec   int               `json:"timeoutSec,omitempty"`
+	Command      string            `json:"command,omitempty"`
+	Args         []string          `json:"args,omitempty"`
+	Metrics      []ParseRule       `json:"metrics,omitempty"`
+	Facts        []ParseRule       `json:"facts,omitempty"`
+	Driver       string            `json:"driver,omitempty"`
+	Secret       string            `json:"secret,omitempty"`
+	AuthHeader   string            `json:"authHeader,omitempty"`
+	User         string            `json:"user,omitempty"`
+	Socket       bool              `json:"socket,omitempty"`
+	PortProcess  string            `json:"portProcess,omitempty"`
+	Query        string            `json:"query,omitempty"`
+	KVMetrics    []KVMetric        `json:"kvMetrics,omitempty"`
+	Path         string            `json:"path,omitempty"`
+	PathFrom     string            `json:"pathFrom,omitempty"`
+	Hash         bool              `json:"hash,omitempty"`
+	Counters     []Counter         `json:"counters,omitempty"`
+	Target       string            `json:"target,omitempty"`
+	Get          []OID             `json:"get,omitempty"`
+	Walk         []OID             `json:"walk,omitempty"`
+	LabelOID     string            `json:"labelOid,omitempty"`
+	DeviceFacts  []OID             `json:"deviceFacts,omitempty"`
+	Port         int               `json:"port,omitempty"`
+	Ports        []int             `json:"ports,omitempty"`
+	Downstream   []Component       `json:"downstream,omitempty"`
+	Options      map[string]string `json:"options,omitempty"`
+	AllowFrom    []string          `json:"allowFrom,omitempty"`
+	OKCodes      []int             `json:"okCodes,omitempty"`
+	V3           bool              `json:"v3,omitempty"`
+	AuthProto    string            `json:"authProto,omitempty"`
+	PrivProto    string            `json:"privProto,omitempty"`
+	Context      string            `json:"context,omitempty"`
+	Sensors      bool              `json:"sensors,omitempty"`
+	PoE          bool              `json:"poe,omitempty"`
+	Process      string            `json:"process,omitempty"`
+	Domains      []string          `json:"domains,omitempty"`
+	Channels     []string          `json:"channels,omitempty"`
+	WindowSec    int               `json:"windowSec,omitempty"`
+	Idents       []string          `json:"idents,omitempty"`
+	Targets      []string          `json:"targets,omitempty"`
+	ExpectBody   string            `json:"expectBody,omitempty"`
+	Prom         []PromRule        `json:"prom,omitempty"`
 }
 
 type Definition struct {
 	Service         string   `json:"service"`
 	Match           Match    `json:"match"`
 	Hosts           []string `json:"hosts,omitempty"`
+	RunOn           []string `json:"runOn,omitempty"`
 	Probes          []Probe  `json:"probes"`
 	IntervalSec     int      `json:"intervalSec,omitempty"`
 	MinAgentVersion string   `json:"minAgentVersion,omitempty"`
