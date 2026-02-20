@@ -102,16 +102,33 @@ func installService() error {
 	}
 	defer m.Disconnect()
 
-	if s, err := m.OpenService(serviceName); err == nil {
-		s.Close()
-		return fmt.Errorf("service %q already exists", serviceName)
-	}
-	s, err := m.CreateService(serviceName, exe, mgr.Config{
-		DisplayName:  "Wakora Agent",
-		Description:  "Wakora monitoring agent",
-		StartType:    mgr.StartAutomatic,
+	cfg := mgr.Config{
+		DisplayName:      "Wakora Agent",
+		Description:      "Wakora monitoring agent",
+		StartType:        mgr.StartAutomatic,
 		DelayedAutoStart: true,
-	})
+	}
+	if s, err := m.OpenService(serviceName); err == nil {
+		defer s.Close()
+		cur, err := s.Config()
+		if err != nil {
+			return err
+		}
+		cur.BinaryPathName = exe
+		cur.DisplayName = cfg.DisplayName
+		cur.Description = cfg.Description
+		cur.StartType = cfg.StartType
+		cur.DelayedAutoStart = cfg.DelayedAutoStart
+		if err := s.UpdateConfig(cur); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "service exists, updated binary path to "+exe)
+		if st, err := s.Query(); err == nil && st.State == svc.Running {
+			return nil
+		}
+		return s.Start()
+	}
+	s, err := m.CreateService(serviceName, exe, cfg)
 	if err != nil {
 		return err
 	}

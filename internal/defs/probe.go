@@ -97,6 +97,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runVirsh(&o, service, p, timeout)
 	case "wineventlog":
 		runEventLog(&o, service, p)
+	case "iis":
+		runIIS(&o, service, p, timeout)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type

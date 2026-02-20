@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/microsoft/go-mssqldb"
 
 	"wakora.io/agent/internal/protocol"
 	"wakora.io/agent/internal/secret"
@@ -22,15 +23,16 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 	o.Check.Target = p.Driver + ":" + p.Query
 	cred := secret.Cred{}
 	hasSecret := false
+	isMSSQL := p.Driver == "sqlserver" || p.Driver == "mssql"
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
-		if !ok {
+		if !ok && !isMSSQL {
 			o.Check.Status = "fail"
 			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
 			return
 		}
 		cred = c
-		hasSecret = true
+		hasSecret = ok
 	} else {
 		cred.User = p.User
 		if cred.User == "" {
@@ -115,6 +117,20 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 			port = "5432"
 		}
 		return fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable&connect_timeout=5", cred.User, cred.Pass, host, port), "pgx", nil
+	case "sqlserver", "mssql":
+		addr := p.Address
+		if addr == "" {
+			addr = "127.0.0.1:1433"
+		}
+		host, port, _ := strings.Cut(addr, ":")
+		if port == "" {
+			port = "1433"
+		}
+		q := "database=master&connection+timeout=5&encrypt=disable"
+		if !hasSecret {
+			return fmt.Sprintf("sqlserver://%s:%s?%s", host, port, q), "sqlserver", nil
+		}
+		return fmt.Sprintf("sqlserver://%s:%s@%s:%s?%s", cred.User, cred.Pass, host, port, q), "sqlserver", nil
 	default:
 		return "", "", fmt.Errorf("unsupported sql driver %q", p.Driver)
 	}

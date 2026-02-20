@@ -119,12 +119,12 @@ func probeExternal(url string, expectStatus int, bodyRe *regexp.Regexp, timeout 
 
 	var dnsStart, connectStart, tlsStart, start time.Time
 	trace := &httptrace.ClientTrace{
-		DNSStart:     func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
-		DNSDone:      func(httptrace.DNSDoneInfo) { r.dnsMs = msSince(dnsStart) },
-		ConnectStart: func(_, _ string) { connectStart = time.Now() },
-		ConnectDone:  func(_, _ string, _ error) { r.connectMs = msSince(connectStart) },
-		TLSHandshakeStart: func() { tlsStart = time.Now() },
-		TLSHandshakeDone:  func(tls.ConnectionState, error) { r.tlsMs = msSince(tlsStart) },
+		DNSStart:             func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
+		DNSDone:              func(httptrace.DNSDoneInfo) { r.dnsMs = msSince(dnsStart) },
+		ConnectStart:         func(_, _ string) { connectStart = time.Now() },
+		ConnectDone:          func(_, _ string, _ error) { r.connectMs = msSince(connectStart) },
+		TLSHandshakeStart:    func() { tlsStart = time.Now() },
+		TLSHandshakeDone:     func(tls.ConnectionState, error) { r.tlsMs = msSince(tlsStart) },
 		GotFirstResponseByte: func() { r.ttfbMs = msSince(start) },
 	}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))

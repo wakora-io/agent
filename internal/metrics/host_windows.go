@@ -10,17 +10,17 @@ import (
 )
 
 var (
-	kernel32              = windows.NewLazySystemDLL("kernel32.dll")
+	kernel32               = windows.NewLazySystemDLL("kernel32.dll")
 	procGlobalMemoryStatus = kernel32.NewProc("GlobalMemoryStatusEx")
-	procGetTickCount64    = kernel32.NewProc("GetTickCount64")
-	procGetSystemTimes    = kernel32.NewProc("GetSystemTimes")
-	procGetDiskFreeSpace  = kernel32.NewProc("GetDiskFreeSpaceExW")
-	procGetLogicalDrives  = kernel32.NewProc("GetLogicalDrives")
-	procGetDriveType      = kernel32.NewProc("GetDriveTypeW")
+	procGetTickCount64     = kernel32.NewProc("GetTickCount64")
+	procGetSystemTimes     = kernel32.NewProc("GetSystemTimes")
+	procGetDiskFreeSpace   = kernel32.NewProc("GetDiskFreeSpaceExW")
+	procGetLogicalDrives   = kernel32.NewProc("GetLogicalDrives")
+	procGetDriveType       = kernel32.NewProc("GetDriveTypeW")
 
-	iphlpapi              = windows.NewLazySystemDLL("iphlpapi.dll")
-	procGetIfTable2       = iphlpapi.NewProc("GetIfTable2")
-	procFreeMibTable      = iphlpapi.NewProc("FreeMibTable")
+	iphlpapi         = windows.NewLazySystemDLL("iphlpapi.dll")
+	procGetIfTable2  = iphlpapi.NewProc("GetIfTable2")
+	procFreeMibTable = iphlpapi.NewProc("FreeMibTable")
 )
 
 type memoryStatusEx struct {
