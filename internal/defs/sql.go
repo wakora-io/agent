@@ -130,6 +130,9 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 		q.Set("connection timeout", "5")
 		q.Set("dial timeout", "5")
 		q.Set("encrypt", "disable")
+		if p.Socket {
+			q.Set("protocol", "lpc")
+		}
 		u := &url.URL{
 			Scheme:   "sqlserver",
 			Host:     hostport,
