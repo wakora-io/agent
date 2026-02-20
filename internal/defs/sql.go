@@ -26,16 +26,15 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 	o.Check.Target = p.Driver + ":" + p.Query
 	cred := secret.Cred{}
 	hasSecret := false
-	isMSSQL := p.Driver == "sqlserver" || p.Driver == "mssql"
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
-		if !ok && !isMSSQL {
+		if !ok {
 			o.Check.Status = "fail"
 			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
 			return
 		}
 		cred = c
-		hasSecret = ok
+		hasSecret = true
 	} else {
 		cred.User = p.User
 		if cred.User == "" {
