@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"wakora.io/agent/internal/anomaly"
+	"wakora.io/agent/internal/apm"
 	"wakora.io/agent/internal/buffer"
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
@@ -46,6 +48,8 @@ type Agent struct {
 	trapL        map[int]*defs.TrapListener
 	syslogL      map[int]*defs.SyslogListener
 	listenerPrev map[string]listenerCounts
+	apmEngine    *apm.Engine
+	apmErr       error
 
 	lastSignal        string
 	baselineTold      bool
@@ -574,6 +578,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
+			if p.Type == "ebpfhttp" {
+				if err := a.runEBPFHTTP(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
 			if (p.Type == "sql" || p.Type == "redis" || p.Type == "tcp") && p.Address == "" && !p.Socket && p.PortProcess != "" {
 				if port := a.resolvePort(p.PortProcess); port != "" {
 					p.Address = "127.0.0.1:" + port
@@ -980,6 +990,65 @@ func rate(cur, prev uint64, secs float64) float64 {
 		prev = 0
 	}
 	return float64(int(float64(cur-prev)/secs*1000+0.5)) / 1000
+}
+
+func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Probe) error {
+	check := protocol.CheckResult{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		CheckID:   service + "/" + p.Name,
+		Kind:      "ebpfhttp",
+		Target:    fmt.Sprintf("kprobe tcp ports %v", p.Ports),
+		Timestamp: time.Now().Unix(),
+	}
+	if a.apmEngine == nil {
+		if a.apmErr == nil {
+			a.apmEngine = apm.NewEngine()
+			if err := a.apmEngine.Start(p.Ports); err != nil {
+				a.apmErr = err
+				a.apmEngine = nil
+				log.Printf("ebpf http engine unavailable: %v", err)
+			} else {
+				log.Printf("ebpf http engine started, ports %v", p.Ports)
+			}
+		}
+		if a.apmEngine == nil {
+			check.Status = "fail"
+			check.Error = a.apmErr.Error()
+			return a.sendCheck(conn, check)
+		}
+	}
+	stats, derr := a.apmEngine.Drain()
+	if derr != nil {
+		check.Status = "fail"
+		check.Error = derr.Error()
+		return a.sendCheck(conn, check)
+	}
+	check.Status = "ok"
+	if err := a.sendCheck(conn, check); err != nil {
+		return err
+	}
+	var pts []protocol.MetricPoint
+	for port, s := range stats {
+		secs := s.Elapsed.Seconds()
+		if secs <= 0 {
+			continue
+		}
+		tags := map[string]string{"port": strconv.Itoa(int(port))}
+		pts = append(pts,
+			protocol.MetricPoint{Name: "apm.http.req_rate", Value: rate(s.Count, 0, secs), Tags: tags},
+			protocol.MetricPoint{Name: "apm.http.error_rate", Value: rate(s.Err5xx, 0, secs), Tags: tags},
+			protocol.MetricPoint{Name: "apm.http.client_error_rate", Value: rate(s.Err4xx, 0, secs), Tags: tags},
+		)
+		if s.Count > 0 {
+			pts = append(pts,
+				protocol.MetricPoint{Name: "apm.http.p50_ms", Value: s.P50Ms, Tags: tags},
+				protocol.MetricPoint{Name: "apm.http.p95_ms", Value: s.P95Ms, Tags: tags},
+				protocol.MetricPoint{Name: "apm.http.max_ms", Value: s.MaxMs, Tags: tags},
+			)
+		}
+	}
+	return a.sendProbeMetrics(conn, pts)
 }
 
 func (a *Agent) sendProbeMetrics(conn transport.Conn, pts []protocol.MetricPoint) error {

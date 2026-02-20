@@ -76,6 +76,7 @@ type Match struct {
 	Package       string `json:"package,omitempty"`
 	Unit          string `json:"unit,omitempty"`
 	Init          string `json:"init,omitempty"`
+	Capability    string `json:"capability,omitempty"`
 }
 
 type ParseRule struct {
@@ -135,6 +136,7 @@ type Probe struct {
 	LabelOID     string      `json:"labelOid,omitempty"`
 	DeviceFacts  []OID       `json:"deviceFacts,omitempty"`
 	Port         int         `json:"port,omitempty"`
+	Ports        []int       `json:"ports,omitempty"`
 	AllowFrom    []string    `json:"allowFrom,omitempty"`
 	OKCodes      []int       `json:"okCodes,omitempty"`
 	V3           bool        `json:"v3,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"wakora.io/agent/internal/apm"
 )
 
 func Collect() []Fact {
@@ -24,7 +27,23 @@ func Collect() []Fact {
 	facts = append(facts, units()...)
 	facts = append(facts, netFacts()...)
 	facts = append(facts, initFact())
+	facts = append(facts, capFacts()...)
 	return facts
+}
+
+func capFacts() []Fact {
+	ok, reason := apm.Supported()
+	kv := map[string]string{"available": "0"}
+	if ok {
+		kv["available"] = "1"
+	} else {
+		kv["reason"] = reason
+	}
+	payload, err := json.Marshal(kv)
+	if err != nil {
+		return nil
+	}
+	return []Fact{{Kind: "capability", Key: "ebpf", Payload: string(payload)}}
 }
 
 func initFact() Fact {

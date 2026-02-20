@@ -52,7 +52,10 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 		return false
 	}
 	m := d.Match
-	if m.Process == "" && m.ProcessPrefix == "" && m.Port == "" && m.Package == "" && m.Unit == "" && m.Init == "" {
+	if m.Process == "" && m.ProcessPrefix == "" && m.Port == "" && m.Package == "" && m.Unit == "" && m.Init == "" && m.Capability == "" {
+		return false
+	}
+	if m.Capability != "" && !hasCapability(facts, m.Capability) {
 		return false
 	}
 	if m.Process != "" && !has("process", m.Process) {
@@ -87,6 +90,21 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 		}
 	}
 	return true
+}
+
+func hasCapability(facts []discovery.Fact, key string) bool {
+	for _, f := range facts {
+		if f.Kind != "capability" || f.Key != key {
+			continue
+		}
+		var info struct {
+			Available string `json:"available"`
+		}
+		if json.Unmarshal([]byte(f.Payload), &info) == nil && info.Available == "1" {
+			return true
+		}
+	}
+	return false
 }
 
 func ProcFacts(facts []discovery.Fact, p protocol.Probe) map[string]string {

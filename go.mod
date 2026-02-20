@@ -3,6 +3,7 @@ module wakora.io/agent
 go 1.25.7
 
 require (
+	github.com/cilium/ebpf v0.22.0
 	github.com/coder/websocket v1.8.15
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/gosnmp/gosnmp v1.43.2
