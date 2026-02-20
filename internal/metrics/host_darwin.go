@@ -39,9 +39,6 @@ func memPoints() []Point {
 	if err != nil || total == 0 {
 		return nil
 	}
-	// used_pct/available need mach vm_statistics (free alone reads ~0 on macOS
-	// because inactive/cached pages are reclaimable but not "free") -> cgo tail.
-	// Ship total + swap pressure, which is the honest memory-pressure signal here.
 	pts := []Point{{Name: "host.mem.total_kb", Value: float64(total) / 1024}}
 	if raw, err := unix.SysctlRaw("vm.swapusage"); err == nil && len(raw) >= 24 {
 		swapTotal := binary.LittleEndian.Uint64(raw[0:8])
@@ -99,8 +96,6 @@ func diskPoints() []Point {
 	return pts
 }
 
-// cpuPoints and netPoints need mach host_statistics / route sysctl parsing that
-// are cgo-only or fiddly; pure-Go darwin ships load/mem/disk/uptime for now.
 func (c *Collector) cpuPoints() []Point { return nil }
 
 func (c *Collector) netPoints(time.Time) []Point { return nil }

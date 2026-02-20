@@ -14,9 +14,6 @@ const launchdLabel = "io.wakora.agent"
 
 const plistPath = "/Library/LaunchDaemons/" + launchdLabel + ".plist"
 
-// launchd runs the binary directly; there is no SCM-style manager loop to
-// enter, so the agent just runs normally and reports true only to skip the
-// no-op branch - Run() is called by main regardless.
 func underServiceManager() bool { return false }
 
 func runUnderServiceManager(context.Context, func(context.Context) error) error { return nil }

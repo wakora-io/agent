@@ -117,7 +117,6 @@ func installService() error {
 	}
 	defer s.Close()
 
-	// restart on crash, like systemd Restart=always
 	_ = s.SetRecoveryActions([]mgr.RecoveryAction{
 		{Type: mgr.ServiceRestart, Delay: 3 * time.Second},
 		{Type: mgr.ServiceRestart, Delay: 3 * time.Second},

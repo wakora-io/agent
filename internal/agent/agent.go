@@ -374,10 +374,6 @@ func splitPaths(v string) []string {
 	return out
 }
 
-// locationOverride resolves a service location fact against the operator
-// precedence ladder: an explicit wakora.conf override (fed by manual edits,
-// backend per-host push, or install flags) always wins over auto-discovery.
-// Keys map camelCase facts to kebab-case conf keys (accessLog -> access-path).
 func (a *Agent) locationOverride(service, fact string) (string, bool) {
 	sec := a.cfg.Overrides[service]
 	if sec == nil {
