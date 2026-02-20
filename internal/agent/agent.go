@@ -594,7 +594,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			}
 			var o defs.Outcome
 			if p.Type == "apmphp" {
-				o = defs.RunAPMPhp(d.Service, p, a.cfg.Dir())
+				o = defs.RunAPMPhp(d.Service, p, a.cfg.StateDir())
 			} else {
 				o = defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			}

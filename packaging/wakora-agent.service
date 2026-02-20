@@ -8,6 +8,7 @@ ExecStart=/usr/local/bin/wakora
 Restart=always
 RestartSec=3
 User=root
+StateDirectory=wakora
 
 Nice=10
 CPUQuota=30%

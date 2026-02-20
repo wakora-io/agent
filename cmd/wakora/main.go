@@ -139,6 +139,7 @@ func main() {
 		return
 	}
 
+	_ = os.MkdirAll(cfg.StateDir(), 0o700)
 	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20, *spoolAge), pubKey)
 
 	if *test {

@@ -3,3 +3,4 @@
 package config
 
 const defaultDir = "/etc/wakora"
+const defaultStateDir = "/var/lib/wakora"

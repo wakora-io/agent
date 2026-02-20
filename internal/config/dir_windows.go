@@ -8,6 +8,7 @@ import (
 )
 
 var defaultDir = windowsDir()
+var defaultStateDir = windowsDir()
 
 func windowsDir() string {
 	if pd := os.Getenv("ProgramData"); pd != "" {

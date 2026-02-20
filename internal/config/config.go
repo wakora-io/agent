@@ -19,13 +19,14 @@ type Config struct {
 	CustomMetricsPort int
 	Overrides         map[string]map[string]string
 	dir               string
+	stateDir          string
 }
 
 func Load(dir string) (*Config, error) {
 	if dir == "" {
 		dir = defaultDir
 	}
-	c := &Config{dir: dir, Endpoint: buildinfo.Endpoint, Overrides: map[string]map[string]string{}}
+	c := &Config{dir: dir, stateDir: defaultStateDir, Endpoint: buildinfo.Endpoint, Overrides: map[string]map[string]string{}}
 	if h, err := os.Hostname(); err == nil {
 		c.Hostname = h
 	}
@@ -49,11 +50,15 @@ func Load(dir string) (*Config, error) {
 }
 
 func (c *Config) RingPath() string {
-	return filepath.Join(c.dir, "buffer.jsonl")
+	return filepath.Join(c.stateDir, "buffer.jsonl")
 }
 
 func (c *Config) Dir() string {
 	return c.dir
+}
+
+func (c *Config) StateDir() string {
+	return c.stateDir
 }
 
 type identity struct {

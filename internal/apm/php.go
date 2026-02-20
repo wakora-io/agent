@@ -11,6 +11,7 @@ type PHPRuntime struct {
 	ThreadSafe   bool
 	Arch         string
 	Libc         string
+	ScanDir      string
 }
 
 func ParsePHPInfo(out string) PHPRuntime {
@@ -26,8 +27,21 @@ func ParsePHPInfo(out string) PHPRuntime {
 			rt.ThreadSafe = strings.EqualFold(v, "enabled")
 			continue
 		}
+		if v, ok := cutInfo(line, "Scan this dir for additional .ini files"); ok && rt.ScanDir == "" {
+			if v != "(none)" {
+				rt.ScanDir = firstPath(v)
+			}
+			continue
+		}
 	}
 	return rt
+}
+
+func firstPath(v string) string {
+	if i := strings.IndexAny(v, ",\n"); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
 }
 
 func cutInfo(line, key string) (string, bool) {
