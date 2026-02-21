@@ -17,6 +17,7 @@ type Config struct {
 	Key               string
 	Baseline          bool
 	CustomMetricsPort int
+	OTLPPort          int
 	Overrides         map[string]map[string]string
 	dir               string
 	stateDir          string
@@ -38,6 +39,11 @@ func Load(dir string) (*Config, error) {
 	if v := c.Overrides["agent"]["custom-metrics-port"]; v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.CustomMetricsPort = n
+		}
+	}
+	if v := c.Overrides["agent"]["otlp-port"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.OTLPPort = n
 		}
 	}
 	id, err := loadIdentity(dir)

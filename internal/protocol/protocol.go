@@ -12,6 +12,7 @@ const (
 	TypeCommand   MessageType = "command"
 	TypeCheck     MessageType = "check"
 	TypeEvent     MessageType = "event"
+	TypeSpans     MessageType = "spans"
 	TypeAck       MessageType = "ack"
 )
 
@@ -39,6 +40,25 @@ type Heartbeat struct {
 	Hostname  string `json:"hostname,omitempty"`
 	Version   string `json:"version,omitempty"`
 	Timestamp int64  `json:"ts"`
+}
+
+type Span struct {
+	TraceID      string            `json:"traceId"`
+	SpanID       string            `json:"spanId"`
+	ParentID     string            `json:"parentId,omitempty"`
+	Service      string            `json:"service,omitempty"`
+	Name         string            `json:"name"`
+	Kind         string            `json:"kind,omitempty"`
+	StartNano    uint64            `json:"startNano"`
+	DurationNano uint64            `json:"durNano"`
+	Status       string            `json:"status,omitempty"`
+	Attrs        map[string]string `json:"attrs,omitempty"`
+}
+
+type SpanBatch struct {
+	ServerID string `json:"serverId"`
+	Hostname string `json:"hostname,omitempty"`
+	Spans    []Span `json:"spans"`
 }
 
 type Command struct {

@@ -55,6 +55,7 @@ type Agent struct {
 	baselineTold      bool
 	warnedUnsupported map[string]bool
 	custom            chan []protocol.MetricPoint
+	spans             chan []protocol.Span
 }
 
 type listenerCounts struct {
@@ -80,6 +81,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		listenerPrev:      map[string]listenerCounts{},
 		warnedUnsupported: map[string]bool{},
 		custom:            make(chan []protocol.MetricPoint, 256),
+		spans:             make(chan []protocol.Span, 64),
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -108,6 +110,9 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 	go a.offlineLoop(ctx, interval)
 	if a.cfg.CustomMetricsPort > 0 {
 		go a.serveCustomMetrics(ctx, a.cfg.CustomMetricsPort)
+	}
+	if a.cfg.OTLPPort > 0 {
+		go a.serveOTLP(ctx, a.cfg.OTLPPort)
 	}
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
@@ -204,6 +209,18 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 						return err
 					}
 					if err := a.observePoints(conn, pts); err != nil {
+						return err
+					}
+				}
+			case sp := <-a.spans:
+				a.seq++
+				msg, err := protocol.Encode(protocol.TypeSpans, a.seq, protocol.SpanBatch{
+					ServerID: a.cfg.ServerID,
+					Hostname: a.cfg.Hostname,
+					Spans:    sp,
+				})
+				if err == nil {
+					if err := conn.Send(msg); err != nil {
 						return err
 					}
 				}
