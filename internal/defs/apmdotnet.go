@@ -97,11 +97,12 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 	}
 	env := apm.DotnetEnv(bundleDir, native, service, endpoint)
 
+	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
 	var content, command string
 	switch host {
 	case "iis":
 		content = iisEnvScript(env)
-		command = "powershell -File " + filepath.Join(stateDir, "staged", stageID+".staged") + "  (sets app-pool env, then: Restart-WebAppPool <pool>)"
+		command = "powershell -ExecutionPolicy Bypass -Command \"& ([scriptblock]::Create((Get-Content -Raw '" + stagedPath + "')))\""
 	default:
 		unit := p.Options["unit"]
 		if unit == "" {
@@ -110,7 +111,7 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 		content = systemdDropin(env)
 		dst := "/etc/systemd/system/" + unit + ".service.d/10-wakora-otel.conf"
 		command = "mkdir -p /etc/systemd/system/" + unit + ".service.d && cp " +
-			filepath.Join(stateDir, "staged", stageID+".staged") + " " + dst +
+			stagedPath + " " + dst +
 			" && systemctl daemon-reload && systemctl restart " + unit
 	}
 
@@ -142,6 +143,7 @@ func systemdDropin(env map[string]string) string {
 
 func iisEnvScript(env map[string]string) string {
 	var b strings.Builder
+	b.WriteString("# Wakora APM: set $env:WAKORA_POOL to your app pool before running (defaults to DefaultAppPool)\n")
 	b.WriteString("$pool = $env:WAKORA_POOL; if (-not $pool) { $pool = 'DefaultAppPool' }\n")
 	b.WriteString("Import-Module WebAdministration\n")
 	const filter = "system.applicationHost/applicationPools/add[@name='$pool']/environmentVariables"
