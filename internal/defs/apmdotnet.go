@@ -2,6 +2,7 @@ package defs
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,7 +134,7 @@ func systemdDropin(env map[string]string) string {
 	b.WriteString("[Service]\n")
 	for _, k := range dotnetEnvOrder {
 		if v := env[k]; v != "" {
-			b.WriteString("Environment=\"" + k + "=" + v + "\"\n")
+			fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", k, v)
 		}
 	}
 	return b.String()
@@ -143,9 +144,10 @@ func iisEnvScript(env map[string]string) string {
 	var b strings.Builder
 	b.WriteString("$pool = $env:WAKORA_POOL; if (-not $pool) { $pool = 'DefaultAppPool' }\n")
 	b.WriteString("Import-Module WebAdministration\n")
+	const filter = "system.applicationHost/applicationPools/add[@name='$pool']/environmentVariables"
 	for _, k := range dotnetEnvOrder {
 		if v := env[k]; v != "" {
-			b.WriteString("Add-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter \"system.applicationHost/applicationPools/add[@name='$pool']/environmentVariables\" -name '.' -value @{name='" + k + "';value='" + v + "'}\n")
+			fmt.Fprintf(&b, "Add-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter \"%s\" -name '.' -value @{name='%s';value='%s'}\n", filter, k, v)
 		}
 	}
 	b.WriteString("Restart-WebAppPool $pool\n")
