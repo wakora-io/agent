@@ -164,6 +164,15 @@ var dotnetEnvOrder = []string{
 	"OTEL_EXPORTER_OTLP_ENDPOINT",
 }
 
+func iisPoolInstrumented() bool {
+	windir := os.Getenv("windir")
+	if windir == "" {
+		windir = `C:\Windows`
+	}
+	raw, err := os.ReadFile(filepath.Join(windir, "System32", "inetsrv", "config", "applicationHost.config"))
+	return err == nil && strings.Contains(string(raw), "OTEL_DOTNET_AUTO_HOME")
+}
+
 func dotnetPlatform() (osTag, arch, nativeSub string) {
 	arch = apm.Arch()
 	if runtime.GOOS == "windows" {
@@ -176,6 +185,9 @@ func dotnetPlatform() (osTag, arch, nativeSub string) {
 }
 
 func dotnetInstrumented() (bool, int) {
+	if runtime.GOOS == "windows" {
+		return iisPoolInstrumented(), 0
+	}
 	if runtime.GOOS != "linux" {
 		return false, 0
 	}
