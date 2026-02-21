@@ -109,27 +109,40 @@ func (a *Agent) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.Contains(ct, "json") {
-		http.Error(w, "only OTLP/HTTP JSON is accepted (set otel.exporter.otlp.protocol=http/json)", http.StatusUnsupportedMediaType)
-		return
-	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 	if err != nil {
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
-	var exp otlpExport
-	if err := json.Unmarshal(body, &exp); err != nil {
-		http.Error(w, "invalid OTLP JSON", http.StatusBadRequest)
-		return
+	ct := r.Header.Get("Content-Type")
+	proto := strings.Contains(ct, "protobuf") || strings.Contains(ct, "x-protobuf")
+	var spans []protocol.Span
+	if proto {
+		spans, err = convertOTLPProto(body)
+		if err != nil {
+			http.Error(w, "invalid OTLP protobuf", http.StatusBadRequest)
+			return
+		}
+	} else {
+		var exp otlpExport
+		if err := json.Unmarshal(body, &exp); err != nil {
+			http.Error(w, "invalid OTLP JSON", http.StatusBadRequest)
+			return
+		}
+		spans = convertOTLP(exp)
 	}
-	spans := convertOTLP(exp)
 	if len(spans) == 0 {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	select {
 	case a.spans <- spans:
+		if proto {
+			w.Header().Set("Content-Type", "application/x-protobuf")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(otlpProtoResponse())
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{}"))
