@@ -4,7 +4,6 @@ package defs
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -279,11 +278,6 @@ func initSystem() string {
 		return "sysvinit"
 	}
 	return "systemd"
-}
-
-func apmEvent(kind string, detail map[string]string) protocol.AgentEvent {
-	raw, _ := json.Marshal(detail)
-	return protocol.AgentEvent{Kind: kind, Detail: string(raw)}
 }
 
 func preflightExtension(bin, soPath string) error {

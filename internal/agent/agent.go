@@ -622,9 +622,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 			}
 			var o defs.Outcome
-			if p.Type == "apmphp" {
+			switch p.Type {
+			case "apmphp":
 				o = defs.RunAPMPhp(d.Service, p, a.cfg.StateDir())
-			} else {
+			case "apmdotnet":
+				o = defs.RunAPMDotnet(d.Service, p, a.cfg.StateDir())
+			default:
 				o = defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			}
 			for _, check := range append([]protocol.CheckResult{o.Check}, o.Extra...) {
