@@ -180,7 +180,19 @@ func (s *PHPSampler) readZendString(addr uint64) string {
 	if err := s.readMem(addr+s.off.zstrVal, buf); err != nil {
 		return ""
 	}
+	if !printableName(buf) {
+		return ""
+	}
 	return string(buf)
+}
+
+func printableName(b []byte) bool {
+	for _, c := range b {
+		if c < 0x20 || c > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *PHPSampler) Sample() ([]string, error) {

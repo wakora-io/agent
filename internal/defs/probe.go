@@ -104,8 +104,6 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runIIS(&o, service, p, timeout)
 	case "hyperv":
 		runHyperV(&o, service, p)
-	case "apmprofile":
-		runAPMProfile(&o, service, p)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type

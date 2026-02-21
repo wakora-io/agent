@@ -26,14 +26,19 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 		o.Check.Error = reason
 		return
 	}
-	version := p.Options["phpVersion"]
-	if version == "" {
-		version = "8.3"
-	}
 	pids := phpFpmWorkers(p.Options["process"])
 	if len(pids) == 0 {
 		o.Check.Status = "fail"
 		o.Check.Error = "no php-fpm worker processes found"
+		return
+	}
+	version := p.Options["phpVersion"]
+	if version == "" {
+		version = detectPHPMinor(pids[0])
+	}
+	if version == "" {
+		o.Check.Status = "fail"
+		o.Check.Error = "could not determine php version (set options.phpVersion)"
 		return
 	}
 	var samplers []*apm.PHPSampler
@@ -93,6 +98,22 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 		protocol.MetricPoint{Name: prefix + "busy_pct", Value: float64(int(busy*10+0.5)) / 10},
 		protocol.MetricPoint{Name: prefix + "unique_stacks", Value: float64(len(folded))},
 	)
+}
+
+func detectPHPMinor(pid int) string {
+	exe, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command(exe, "-n", "-v").Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return ""
+	}
+	return apm.MinorVersion(fields[1])
 }
 
 func phpFpmWorkers(pattern string) []int {

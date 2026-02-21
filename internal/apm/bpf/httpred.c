@@ -157,15 +157,18 @@ int BPF_KRETPROBE(tcpRecvExit, long ret)
 		__u64 ts = c->ts;
 		bpf_map_delete_elem(&ds_start, &id);
 		if (ret > 0) {
-			struct http_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-			if (e) {
-				e->dur_ns = bpf_ktime_get_ns() - ts;
-				e->port = dport;
-				e->status = 0;
-				e->kind = 1;
-				e->pad0 = 0;
-				e->pad1 = 0;
-				bpf_ringbuf_submit(e, 0);
+			__u64 dur = bpf_ktime_get_ns() - ts;
+			if (dur <= 30000000000ULL) {
+				struct http_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+				if (e) {
+					e->dur_ns = dur;
+					e->port = dport;
+					e->status = 0;
+					e->kind = 1;
+					e->pad0 = 0;
+					e->pad1 = 0;
+					bpf_ringbuf_submit(e, 0);
+				}
 			}
 		}
 	}

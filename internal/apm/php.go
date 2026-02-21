@@ -62,6 +62,10 @@ func shortVersion(v string) string {
 	return v
 }
 
+func MinorVersion(v string) string {
+	return shortVersion(v)
+}
+
 func (r PHPRuntime) ThreadTag() string {
 	if r.ThreadSafe {
 		return "zts"

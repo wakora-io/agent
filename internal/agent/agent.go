@@ -56,6 +56,8 @@ type Agent struct {
 	warnedUnsupported map[string]bool
 	custom            chan []protocol.MetricPoint
 	spans             chan []protocol.Span
+	profiles          chan defs.Outcome
+	profiling         map[string]bool
 }
 
 type listenerCounts struct {
@@ -82,6 +84,8 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		warnedUnsupported: map[string]bool{},
 		custom:            make(chan []protocol.MetricPoint, 256),
 		spans:             make(chan []protocol.Span, 64),
+		profiles:          make(chan defs.Outcome, 8),
+		profiling:         map[string]bool{},
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -223,6 +227,10 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					if err := conn.Send(msg); err != nil {
 						return err
 					}
+				}
+			case o := <-a.profiles:
+				if err := a.emitProfile(conn, o); err != nil {
+					return err
 				}
 			}
 		}
@@ -596,6 +604,10 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				if err := a.runSyslog(conn, d.Service, p); err != nil {
 					return err
 				}
+				continue
+			}
+			if p.Type == "apmprofile" {
+				a.startProfile(d.Service, p)
 				continue
 			}
 			if p.Type == "ebpfhttp" {
@@ -1047,6 +1059,52 @@ func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe)
 		}
 	}
 	return a.sendProbeMetrics(conn, pts)
+}
+
+func (a *Agent) startProfile(service string, p protocol.Probe) {
+	a.mu.Lock()
+	if a.profiling[service] {
+		a.mu.Unlock()
+		return
+	}
+	a.profiling[service] = true
+	a.mu.Unlock()
+	go func() {
+		o := defs.RunAPMProfile(service, p)
+		a.mu.Lock()
+		a.profiling[service] = false
+		a.mu.Unlock()
+		select {
+		case a.profiles <- o:
+		default:
+		}
+	}()
+}
+
+func (a *Agent) emitProfile(conn transport.Conn, o defs.Outcome) error {
+	o.Check.ServerID = a.cfg.ServerID
+	o.Check.Hostname = a.cfg.Hostname
+	if err := a.sendCheck(conn, o.Check); err != nil {
+		return err
+	}
+	if err := a.sendProbeMetrics(conn, o.Metrics); err != nil {
+		return err
+	}
+	if len(o.ProfileStacks) > 0 {
+		pb := o.ProfileMeta
+		pb.ServerID = a.cfg.ServerID
+		pb.Hostname = a.cfg.Hostname
+		pb.Timestamp = time.Now().Unix()
+		pb.Stacks = o.ProfileStacks
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeProfile, a.seq, pb)
+		if err == nil {
+			if err := conn.Send(msg); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func rate(cur, prev uint64, secs float64) float64 {
