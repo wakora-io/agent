@@ -67,7 +67,7 @@ func NewPHPSampler(pid int, versionShort string) (*PHPSampler, error) {
 }
 
 func executorGlobalsAddr(pid int, exe string) (uint64, error) {
-	f, err := elf.Open(exe)
+	f, err := elf.Open(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
 		return 0, err
 	}
