@@ -32,18 +32,19 @@ func Collect() []Fact {
 }
 
 func capFacts() []Fact {
-	ok, reason := apm.Supported()
+	return []Fact{capFact("ebpf", apm.Supported), capFact("profile", apm.ProfileSupported)}
+}
+
+func capFact(key string, probe func() (bool, string)) Fact {
+	ok, reason := probe()
 	kv := map[string]string{"available": "0"}
 	if ok {
 		kv["available"] = "1"
 	} else {
 		kv["reason"] = reason
 	}
-	payload, err := json.Marshal(kv)
-	if err != nil {
-		return nil
-	}
-	return []Fact{{Kind: "capability", Key: "ebpf", Payload: string(payload)}}
+	payload, _ := json.Marshal(kv)
+	return Fact{Kind: "capability", Key: key, Payload: string(payload)}
 }
 
 func initFact() Fact {

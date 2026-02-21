@@ -13,6 +13,7 @@ const (
 	TypeCheck     MessageType = "check"
 	TypeEvent     MessageType = "event"
 	TypeSpans     MessageType = "spans"
+	TypeProfile   MessageType = "profile"
 	TypeAck       MessageType = "ack"
 )
 
@@ -59,6 +60,23 @@ type SpanBatch struct {
 	ServerID string `json:"serverId"`
 	Hostname string `json:"hostname,omitempty"`
 	Spans    []Span `json:"spans"`
+}
+
+type FoldedStack struct {
+	Stack   string `json:"stack"`
+	Samples uint32 `json:"samples"`
+}
+
+type ProfileBatch struct {
+	ServerID    string        `json:"serverId"`
+	Hostname    string        `json:"hostname,omitempty"`
+	Service     string        `json:"service"`
+	Timestamp   int64         `json:"ts"`
+	WindowSec   uint32        `json:"windowSec"`
+	SampleRate  uint32        `json:"sampleRate"`
+	SampleTotal uint32        `json:"sampleTotal"`
+	SampleHits  uint32        `json:"sampleHits"`
+	Stacks      []FoldedStack `json:"stacks"`
 }
 
 type Command struct {

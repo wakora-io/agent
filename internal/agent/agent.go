@@ -672,6 +672,20 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					return err
 				}
 			}
+			if len(o.ProfileStacks) > 0 {
+				pb := o.ProfileMeta
+				pb.ServerID = a.cfg.ServerID
+				pb.Hostname = a.cfg.Hostname
+				pb.Timestamp = time.Now().Unix()
+				pb.Stacks = o.ProfileStacks
+				a.seq++
+				pmsg, err := protocol.Encode(protocol.TypeProfile, a.seq, pb)
+				if err == nil {
+					if err := conn.Send(pmsg); err != nil {
+						return err
+					}
+				}
+			}
 		}
 	}
 	if factsChanged {

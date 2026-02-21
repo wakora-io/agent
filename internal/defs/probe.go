@@ -21,12 +21,14 @@ import (
 )
 
 type Outcome struct {
-	Check    protocol.CheckResult
-	Extra    []protocol.CheckResult
-	Metrics  []protocol.MetricPoint
-	Facts    map[string]string
-	InvFacts []protocol.Fact
-	Events   []protocol.AgentEvent
+	Check         protocol.CheckResult
+	Extra         []protocol.CheckResult
+	Metrics       []protocol.MetricPoint
+	Facts         map[string]string
+	InvFacts      []protocol.Fact
+	Events        []protocol.AgentEvent
+	ProfileStacks []protocol.FoldedStack
+	ProfileMeta   protocol.ProfileBatch
 }
 
 var execAllowlist = map[string]bool{
@@ -102,6 +104,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runIIS(&o, service, p, timeout)
 	case "hyperv":
 		runHyperV(&o, service, p)
+	case "apmprofile":
+		runAPMProfile(&o, service, p)
 	default:
 		o.Check.Status = "fail"
 		o.Check.Error = "unknown probe type " + p.Type
