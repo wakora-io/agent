@@ -5,10 +5,21 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/secret"
 )
+
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 type Config struct {
 	Endpoint          string
@@ -18,6 +29,7 @@ type Config struct {
 	Baseline          bool
 	CustomMetricsPort int
 	OTLPPort          int
+	OTLPBind          []string
 	Overrides         map[string]map[string]string
 	dir               string
 	stateDir          string
@@ -45,6 +57,9 @@ func Load(dir string) (*Config, error) {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.OTLPPort = n
 		}
+	}
+	if v := c.Overrides["agent"]["otlp-bind"]; v != "" {
+		c.OTLPBind = splitList(v)
 	}
 	id, err := loadIdentity(dir)
 	if err != nil {

@@ -65,23 +65,43 @@ type otlpAny struct {
 	BoolValue   *bool           `json:"boolValue"`
 }
 
-func (a *Agent) serveOTLP(ctx context.Context, port int) {
+func (a *Agent) serveOTLP(ctx context.Context, port int, binds []string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", a.handleOTLPTraces)
 	srv := &http.Server{Handler: mux, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
-	if err != nil {
-		log.Printf("otlp: cannot listen on 127.0.0.1:%d: %v", port, err)
+
+	hosts := []string{"127.0.0.1"}
+	for _, b := range binds {
+		if b = strings.TrimSpace(b); b != "" && b != "127.0.0.1" {
+			hosts = append(hosts, b)
+		}
+	}
+	bound := 0
+	for _, h := range hosts {
+		addr := net.JoinHostPort(h, strconv.Itoa(port))
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Printf("otlp: cannot listen on %s: %v", addr, err)
+			continue
+		}
+		bound++
+		scope := "loopback"
+		if h != "127.0.0.1" {
+			scope = "container bridge"
+		}
+		log.Printf("otlp: accepting spans on http://%s/v1/traces (%s, JSON)", addr, scope)
+		go func(l net.Listener) { _ = srv.Serve(l) }(ln)
+	}
+	if bound == 0 {
 		return
 	}
-	log.Printf("otlp: accepting spans on http://127.0.0.1:%d/v1/traces (loopback, JSON)", port)
 	go func() {
 		<-ctx.Done()
 		sc, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sc)
 	}()
-	_ = srv.Serve(ln)
+	<-ctx.Done()
 }
 
 func (a *Agent) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {

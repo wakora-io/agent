@@ -116,7 +116,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		go a.serveCustomMetrics(ctx, a.cfg.CustomMetricsPort)
 	}
 	if a.cfg.OTLPPort > 0 {
-		go a.serveOTLP(ctx, a.cfg.OTLPPort)
+		go a.serveOTLP(ctx, a.cfg.OTLPPort, a.cfg.OTLPBind)
 	}
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)

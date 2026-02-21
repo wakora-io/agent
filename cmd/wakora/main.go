@@ -62,6 +62,7 @@ func main() {
 	baseline := flag.Bool("baseline", false, "safe baseline (Speed 1): metrics/discovery/heartbeat only, pushed definitions are not executed")
 	customPort := flag.Int("custom-metrics-port", 0, "loopback port for app custom-metric ingest (app.* only), 0 = off")
 	otlpPort := flag.Int("otlp-port", 0, "loopback port for OTLP/HTTP JSON span ingest (APM layer-2), 0 = off")
+	otlpBind := flag.String("otlp-bind", "", "extra OTLP bind addresses beyond loopback (comma-separated, e.g. a docker bridge gateway for container apps)")
 	flag.Parse()
 
 	if *showVersion {
@@ -91,6 +92,9 @@ func main() {
 	}
 	if *otlpPort > 0 {
 		cfg.OTLPPort = *otlpPort
+	}
+	if *otlpBind != "" {
+		cfg.OTLPBind = append(cfg.OTLPBind, strings.Split(*otlpBind, ",")...)
 	}
 	if *endpoint != "" {
 		cfg.Endpoint = *endpoint
