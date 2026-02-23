@@ -84,7 +84,11 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 	}
 	bundleDir := filepath.Join(stateDir, "apm", bundle)
 	if _, err := os.Stat(bundleDir); err != nil {
-		o.Facts["otelStage"] = "artifact required: " + bundle + " (OTel .NET auto-instrumentation bundle)"
+		if p.Options["autoprovision"] == "1" && Provision != nil {
+			o.Facts["otelStage"] = Provision.Ensure(bundle, true)
+		} else {
+			o.Facts["otelStage"] = "artifact required: " + bundle + " (OTel .NET auto-instrumentation bundle)"
+		}
 		return
 	}
 	endpoint := p.Options["otelEndpoint"]

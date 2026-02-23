@@ -220,7 +220,11 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 	}
 	soPath := filepath.Join(stateDir, "apm", artifact)
 	if _, err := os.Stat(soPath); err != nil {
-		o.Facts["otelStage"] = "artifact required: " + artifact
+		if p.Options["autoprovision"] == "1" && Provision != nil {
+			o.Facts["otelStage"] = Provision.Ensure(artifact, false)
+		} else {
+			o.Facts["otelStage"] = "artifact required: " + artifact
+		}
 		return
 	}
 	if err := preflightExtension(st.preBin, soPath); err != nil {

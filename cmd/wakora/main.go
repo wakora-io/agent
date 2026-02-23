@@ -20,10 +20,12 @@ import (
 	"golang.org/x/term"
 
 	"wakora.io/agent/internal/agent"
+	"wakora.io/agent/internal/apm"
 	"wakora.io/agent/internal/bootstrap"
 	"wakora.io/agent/internal/buffer"
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
+	"wakora.io/agent/internal/defs"
 	"wakora.io/agent/internal/logfile"
 	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
@@ -148,6 +150,7 @@ func main() {
 	}
 
 	_ = os.MkdirAll(cfg.StateDir(), 0o700)
+	defs.Provision = apm.NewProvisioner(relURL, httpc, pubKey, cfg.StateDir())
 	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20, *spoolAge), pubKey)
 
 	if *test {
