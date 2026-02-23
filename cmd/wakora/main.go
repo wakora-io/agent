@@ -149,7 +149,8 @@ func main() {
 		return
 	}
 
-	_ = os.MkdirAll(cfg.StateDir(), 0o700)
+	_ = os.MkdirAll(cfg.StateDir(), 0o755)
+	_ = os.Chmod(cfg.StateDir(), 0o755)
 	defs.Provision = apm.NewProvisioner(relURL, httpc, pubKey, cfg.StateDir())
 	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20, *spoolAge), pubKey)
 

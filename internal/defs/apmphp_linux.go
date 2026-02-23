@@ -4,6 +4,7 @@ package defs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -315,6 +316,9 @@ func preflightExtension(bin, soPath string) error {
 }
 
 func preflightPrepend(soPath, prependPath string) error {
+	if err := worldAccessible(prependPath); err != nil {
+		return err
+	}
 	cli := phpCLIBinary()
 	if cli == "" {
 		return nil
@@ -325,6 +329,28 @@ func preflightPrepend(soPath, prependPath string) error {
 		"-d", "extension="+soPath,
 		"-d", "auto_prepend_file="+prependPath,
 		"-r", ";").Run()
+}
+
+func worldAccessible(path string) error {
+	cur := string(os.PathSeparator)
+	for _, part := range strings.Split(filepath.Clean(path), string(os.PathSeparator)) {
+		if part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		fi, err := os.Stat(cur)
+		if err != nil {
+			return err
+		}
+		if fi.IsDir() {
+			if fi.Mode().Perm()&0o005 != 0o005 {
+				return fmt.Errorf("%s mode %o blocks php workers (needs o+rx)", cur, fi.Mode().Perm())
+			}
+		} else if fi.Mode().Perm()&0o004 == 0 {
+			return fmt.Errorf("%s mode %o blocks php workers (needs o+r)", cur, fi.Mode().Perm())
+		}
+	}
+	return nil
 }
 
 func detectLibc(bin string) string {
