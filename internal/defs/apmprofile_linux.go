@@ -66,18 +66,22 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 	}
 
 	folded := map[string]uint32{}
+	owners := map[string]uint32{}
 	var total, hits uint32
 	interval := time.Second / time.Duration(rate)
 	deadline := time.Now().Add(time.Duration(windowSec) * time.Second)
 	for time.Now().Before(deadline) {
 		for _, s := range samplers {
 			total++
-			frames, err := s.Sample()
+			frames, owner, err := s.Sample()
 			if err != nil || len(frames) == 0 {
 				continue
 			}
 			hits++
 			folded[strings.Join(frames, ";")]++
+			if owner != "" {
+				owners[owner]++
+			}
 		}
 		time.Sleep(interval)
 	}
@@ -98,6 +102,28 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 		protocol.MetricPoint{Name: prefix + "busy_pct", Value: float64(int(busy*10+0.5)) / 10},
 		protocol.MetricPoint{Name: prefix + "unique_stacks", Value: float64(len(folded))},
 	)
+	if hits > 0 {
+		for _, ow := range topOwners(owners, 15) {
+			pct := float64(owners[ow]) / float64(hits) * 100
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{
+				Name:  prefix + "owner_pct",
+				Value: float64(int(pct*10+0.5)) / 10,
+				Tags:  map[string]string{"owner": ow},
+			})
+		}
+	}
+}
+
+func topOwners(owners map[string]uint32, max int) []string {
+	keys := make([]string, 0, len(owners))
+	for k := range owners {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return owners[keys[i]] > owners[keys[j]] })
+	if len(keys) > max {
+		keys = keys[:max]
+	}
+	return keys
 }
 
 func detectPHPMinor(pid int) string {

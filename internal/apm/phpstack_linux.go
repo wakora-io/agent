@@ -21,22 +21,30 @@ type phpOffsets struct {
 	funcType             uint64
 	funcName             uint64
 	funcScope            uint64
+	funcFilename         uint64
 	zstrLen              uint64
 	zstrVal              uint64
 	ceName               uint64
 }
 
 var phpOffsetTable = map[string]phpOffsets{
-	"8.3": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, zstrLen: 16, zstrVal: 24, ceName: 8},
-	"8.2": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, zstrLen: 16, zstrVal: 24, ceName: 8},
+	"8.4": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 168, zstrLen: 16, zstrVal: 24, ceName: 8},
+	"8.3": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 144, zstrLen: 16, zstrVal: 24, ceName: 8},
+	"8.2": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 152, zstrLen: 16, zstrVal: 24, ceName: 8},
+	"8.1": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 144, zstrLen: 16, zstrVal: 24, ceName: 8},
 }
 
-const maxStackDepth = 256
+const (
+	maxStackDepth   = 256
+	zendUserFuncTag = 2
+	ownerCacheCap   = 4096
+)
 
 type PHPSampler struct {
-	pid int
-	eg  uint64
-	off phpOffsets
+	pid    int
+	eg     uint64
+	off    phpOffsets
+	owners map[uint64]string
 }
 
 func ProfileSupported() (bool, string) {
@@ -63,7 +71,7 @@ func NewPHPSampler(pid int, versionShort string) (*PHPSampler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &PHPSampler{pid: pid, eg: eg, off: off}, nil
+	return &PHPSampler{pid: pid, eg: eg, off: off, owners: map[uint64]string{}}, nil
 }
 
 func executorGlobalsAddr(pid int, exe string) (uint64, error) {
@@ -195,12 +203,13 @@ func printableName(b []byte) bool {
 	return true
 }
 
-func (s *PHPSampler) Sample() ([]string, error) {
+func (s *PHPSampler) Sample() ([]string, string, error) {
 	ed, err := s.readPtr(s.eg + s.off.egCurrentExecuteData)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var frames []string
+	firstUser, firstOwned := "", ""
 	for depth := 0; ed != 0 && depth < maxStackDepth; depth++ {
 		fn, err := s.readPtr(ed + s.off.edFunc)
 		if err != nil {
@@ -208,6 +217,16 @@ func (s *PHPSampler) Sample() ([]string, error) {
 		}
 		if fn != 0 {
 			frames = append(frames, s.frameName(fn))
+			if firstOwned == "" {
+				if o := s.frameOwner(fn); o != "" {
+					if firstUser == "" {
+						firstUser = o
+					}
+					if OwnedFrame(o) {
+						firstOwned = o
+					}
+				}
+			}
 		}
 		prev, err := s.readPtr(ed + s.off.edPrev)
 		if err != nil {
@@ -216,12 +235,21 @@ func (s *PHPSampler) Sample() ([]string, error) {
 		ed = prev
 	}
 	if len(frames) == 0 {
-		return nil, nil
+		return nil, "", nil
 	}
 	for i, j := 0, len(frames)-1; i < j; i, j = i+1, j-1 {
 		frames[i], frames[j] = frames[j], frames[i]
 	}
-	return frames, nil
+	owner := firstOwned
+	if owner == "" {
+		owner = firstUser
+	}
+	return frames, owner, nil
+}
+
+func OwnedFrame(owner string) bool {
+	return strings.HasPrefix(owner, "plugin:") || strings.HasPrefix(owner, "theme:") ||
+		strings.HasPrefix(owner, "mu-plugin:")
 }
 
 func (s *PHPSampler) frameName(fn uint64) string {
@@ -238,4 +266,79 @@ func (s *PHPSampler) frameName(fn uint64) string {
 		}
 	}
 	return name
+}
+
+func (s *PHPSampler) frameOwner(fn uint64) string {
+	var tb [1]byte
+	if err := s.readMem(fn+s.off.funcType, tb[:]); err != nil || tb[0] != zendUserFuncTag {
+		return ""
+	}
+	filePtr, err := s.readPtr(fn + s.off.funcFilename)
+	if err != nil || filePtr == 0 {
+		return ""
+	}
+	if owner, ok := s.owners[filePtr]; ok {
+		return owner
+	}
+	owner := ClassifyWPPath(s.readZendPath(filePtr))
+	if len(s.owners) < ownerCacheCap {
+		s.owners[filePtr] = owner
+	}
+	return owner
+}
+
+func (s *PHPSampler) readZendPath(addr uint64) string {
+	var lb [8]byte
+	if err := s.readMem(addr+s.off.zstrLen, lb[:]); err != nil {
+		return ""
+	}
+	n := uint64(lb[0]) | uint64(lb[1])<<8 | uint64(lb[2])<<16 | uint64(lb[3])<<24
+	if n == 0 || n > 4096 {
+		return ""
+	}
+	buf := make([]byte, n)
+	if err := s.readMem(addr+s.off.zstrVal, buf); err != nil {
+		return ""
+	}
+	for _, c := range buf {
+		if c < 0x20 || c > 0x7e {
+			return ""
+		}
+	}
+	return string(buf)
+}
+
+func ClassifyWPPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	for _, kind := range []string{"plugins", "themes", "mu-plugins"} {
+		marker := "/wp-content/" + kind + "/"
+		i := strings.Index(path, marker)
+		if i < 0 {
+			continue
+		}
+		rest := path[i+len(marker):]
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			rest = rest[:j]
+		}
+		rest = strings.TrimSuffix(rest, ".php")
+		if rest == "" {
+			continue
+		}
+		label := "plugin"
+		if kind == "themes" {
+			label = "theme"
+		} else if kind == "mu-plugins" {
+			label = "mu-plugin"
+		}
+		return label + ":" + rest
+	}
+	if strings.Contains(path, "/wp-includes/") || strings.Contains(path, "/wp-admin/") ||
+		strings.HasSuffix(path, "/wp-load.php") || strings.HasSuffix(path, "/wp-settings.php") ||
+		strings.HasSuffix(path, "/wp-config.php") || strings.HasSuffix(path, "/index.php") ||
+		strings.HasSuffix(path, "/wp-blog-header.php") {
+		return "wp-core"
+	}
+	return "app"
 }
