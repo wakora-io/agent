@@ -80,9 +80,17 @@ func OtelArtifactName(r PHPRuntime) string {
 	return fmt.Sprintf("opentelemetry-%s-%s-%s-%s.so", r.VersionShort, r.ThreadTag(), r.Arch, r.Libc)
 }
 
-func OtelIni(soPath, serviceName, endpoint string) string {
+const PHPSDKBundle = "opentelemetry-php-sdk"
+
+func OtelIni(soPath, serviceName, endpoint, sdkDir string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "extension=%s\n", soPath)
+	if sdkDir != "" {
+		fmt.Fprintf(&b, "auto_prepend_file=%s/wakora-otel.php\n", sdkDir)
+		fmt.Fprintf(&b, "wakora.otel_service=%s\n", serviceName)
+		fmt.Fprintf(&b, "wakora.otel_endpoint=%s\n", endpoint)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "otel.service.name=%s\n", serviceName)
 	fmt.Fprintf(&b, "otel.exporter.otlp.endpoint=%s\n", endpoint)
 	b.WriteString("otel.traces.exporter=otlp\n")

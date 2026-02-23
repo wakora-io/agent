@@ -227,16 +227,34 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 		}
 		return
 	}
+	sdkDir := ""
+	if p.Options["sdk"] == "1" {
+		sdkDir = filepath.Join(stateDir, "apm", apm.PHPSDKBundle)
+		if !dirExists(sdkDir) {
+			if p.Options["autoprovision"] == "1" && Provision != nil {
+				o.Facts["otelStage"] = Provision.Ensure(apm.PHPSDKBundle, true)
+			} else {
+				o.Facts["otelStage"] = "artifact required: " + apm.PHPSDKBundle
+			}
+			return
+		}
+	}
 	if err := preflightExtension(st.preBin, soPath); err != nil {
 		o.Facts["otelStage"] = "preflight failed: " + err.Error()
 		return
+	}
+	if sdkDir != "" {
+		if err := preflightPrepend(soPath, sdkDir+"/wakora-otel.php"); err != nil {
+			o.Facts["otelStage"] = "sdk preflight failed: " + err.Error()
+			return
+		}
 	}
 	target := filepath.Join(st.iniDir, "90-wakora-otel.ini")
 	endpoint := p.Options["otelEndpoint"]
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:4318"
 	}
-	ini := apm.OtelIni(soPath, service, endpoint)
+	ini := apm.OtelIni(soPath, service, endpoint, sdkDir)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
 	change := apm.StagedChange{
 		ID:         stageID,
@@ -294,6 +312,19 @@ func preflightExtension(bin, soPath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	return exec.CommandContext(ctx, bin, "-d", "extension="+soPath, "-v").Run()
+}
+
+func preflightPrepend(soPath, prependPath string) error {
+	cli := phpCLIBinary()
+	if cli == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, cli,
+		"-d", "extension="+soPath,
+		"-d", "auto_prepend_file="+prependPath,
+		"-r", ";").Run()
 }
 
 func detectLibc(bin string) string {
