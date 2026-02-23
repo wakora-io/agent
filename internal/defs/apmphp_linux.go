@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,60 +60,129 @@ func runAPMPhp(o *Outcome, service string, p protocol.Probe, stateDir string) {
 	if module == "" {
 		module = "opentelemetry"
 	}
-	var st *sapiTarget
-	var errmsg string
 	if p.Options["sapi"] == "apache" {
-		st, errmsg = resolveApacheSAPI(p, module)
-	} else {
-		st, errmsg = resolveFPMSAPI(p, module)
+		st, errmsg := resolveApacheSAPI(p, module)
+		if st == nil {
+			o.Check.Status = "fail"
+			o.Check.Error = errmsg
+			return
+		}
+		runPHPTargets(o, service, p, stateDir, []*sapiTarget{st}, "apache")
+		return
 	}
-	if st == nil {
+	targets, errmsg := resolveFPMTargets(p, module)
+	if len(targets) == 0 {
 		o.Check.Status = "fail"
 		o.Check.Error = errmsg
 		return
 	}
-
-	o.Check.Status = "ok"
-	o.Check.Target = st.checkName
-	prefix := "svc." + service + "."
-	instrumented := 0.0
-	if st.loaded {
-		instrumented = 1
-	}
-	o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + "instrumented", Value: instrumented})
-	sapi := p.Options["sapi"]
-	if sapi == "" {
-		sapi = "fpm"
-	}
-	o.Facts = map[string]string{
-		"phpVersion":   st.rt.Version,
-		"threadSafety": st.rt.ThreadTag(),
-		"arch":         st.rt.Arch,
-		"libc":         st.rt.Libc,
-		"sapi":         sapi,
-		"otelArtifact": apm.OtelArtifactName(st.rt),
-	}
-
-	stageID := "apmphp-" + service
-	if st.loaded {
-		o.Facts["otelStage"] = "active"
-		if apm.StagedState(stateDir, stageID) == "pending_activation" {
-			_ = apm.MarkActivated(stateDir, stageID)
-			o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{"service": service, "layer": "otel-spans", "sapi": sapi}))
-		}
-		return
-	}
-	if p.Options["autostage"] != "1" {
-		return
-	}
-	stageOtel(o, service, p, stateDir, st, stageID)
+	runPHPTargets(o, service, p, stateDir, targets, "fpm")
 }
 
-func resolveFPMSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
-	bin := phpFpmBinary(p.Options)
-	if bin == "" {
+func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string, targets []*sapiTarget, sapi string) {
+	primary := targets[0]
+	o.Check.Status = "ok"
+	names := make([]string, 0, len(targets))
+	for _, st := range targets {
+		names = append(names, st.checkName)
+	}
+	o.Check.Target = strings.Join(names, ",")
+	o.Facts = map[string]string{
+		"phpVersion":   primary.rt.Version,
+		"threadSafety": primary.rt.ThreadTag(),
+		"arch":         primary.rt.Arch,
+		"libc":         primary.rt.Libc,
+		"sapi":         sapi,
+		"otelArtifact": apm.OtelArtifactName(primary.rt),
+	}
+
+	prefix := "svc." + service + "."
+	for _, st := range targets {
+		minor := st.rt.VersionShort
+		instrumented := 0.0
+		if st.loaded {
+			instrumented = 1
+		}
+		o.Metrics = append(o.Metrics, protocol.MetricPoint{
+			Name: prefix + "instrumented", Value: instrumented,
+			Tags: map[string]string{"php": minor},
+		})
+		stageID := "apmphp-" + service
+		stageKey := "otelStage"
+		if len(targets) > 1 {
+			stageID += "-" + minor
+			stageKey = "stage." + minor
+			o.Facts["artifact."+minor] = apm.OtelArtifactName(st.rt)
+		}
+		if st.loaded {
+			o.Facts[stageKey] = "active"
+			if apm.StagedState(stateDir, stageID) == "pending_activation" {
+				_ = apm.MarkActivated(stateDir, stageID)
+				o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{
+					"service": service, "layer": "otel-spans", "sapi": sapi, "php": minor,
+				}))
+			}
+			continue
+		}
+		if p.Options["autostage"] != "1" {
+			continue
+		}
+		stageOtel(o, service, p, stateDir, st, stageID, stageKey)
+	}
+}
+
+func resolveFPMTargets(p protocol.Probe, module string) ([]*sapiTarget, string) {
+	var bins []string
+	if b := p.Options["binary"]; b != "" {
+		bins = []string{b}
+	} else {
+		bins = runningFPMBinaries()
+		if len(bins) == 0 {
+			if b := phpFpmBinary(nil); b != "" {
+				bins = []string{b}
+			}
+		}
+	}
+	if len(bins) == 0 {
 		return nil, "php-fpm binary not found"
 	}
+	var targets []*sapiTarget
+	var lastErr string
+	for _, bin := range bins {
+		st, errmsg := fpmTarget(bin, module, p.Options)
+		if st == nil {
+			lastErr = errmsg
+			continue
+		}
+		targets = append(targets, st)
+	}
+	if len(targets) == 0 {
+		return nil, lastErr
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].rt.VersionShort > targets[j].rt.VersionShort })
+	return targets, ""
+}
+
+func runningFPMBinaries() []string {
+	out, err := exec.Command("pgrep", "-f", "php-fpm: master").Output()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var bins []string
+	for _, f := range strings.Fields(string(out)) {
+		exe, err := os.Readlink("/proc/" + f + "/exe")
+		if err != nil || seen[exe] {
+			continue
+		}
+		seen[exe] = true
+		bins = append(bins, exe)
+	}
+	sort.Strings(bins)
+	return bins
+}
+
+func fpmTarget(bin, module string, opts map[string]string) (*sapiTarget, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	info, err := exec.CommandContext(ctx, bin, "-i").Output()
@@ -127,10 +197,21 @@ func resolveFPMSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
 		rt:        rt,
 		loaded:    apm.ModuleLoaded(string(modules), module),
 		iniDir:    rt.ScanDir,
-		reloadCmd: reloadCommand(initSystem(), fpmServiceName(p.Options)),
+		reloadCmd: reloadCommand(initSystem(), fpmUnitFor(bin, opts)),
 		checkName: bin,
 		preBin:    bin,
 	}, ""
+}
+
+func fpmUnitFor(bin string, opts map[string]string) string {
+	if s := opts["fpmService"]; s != "" {
+		return s
+	}
+	base := filepath.Base(bin)
+	if rest, ok := strings.CutPrefix(base, "php-fpm"); ok && strings.Contains(rest, ".") {
+		return "php" + rest + "-fpm"
+	}
+	return base
 }
 
 func resolveApacheSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
@@ -213,18 +294,18 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
-func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st *sapiTarget, stageID string) {
+func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st *sapiTarget, stageID, stageKey string) {
 	artifact := apm.OtelArtifactName(st.rt)
 	if artifact == "" {
-		o.Facts["otelStage"] = "blocked: incomplete runtime fingerprint"
+		o.Facts[stageKey] = "blocked: incomplete runtime fingerprint"
 		return
 	}
 	soPath := filepath.Join(stateDir, "apm", artifact)
 	if _, err := os.Stat(soPath); err != nil {
 		if p.Options["autoprovision"] == "1" && Provision != nil {
-			o.Facts["otelStage"] = Provision.Ensure(artifact, false)
+			o.Facts[stageKey] = Provision.Ensure(artifact, false)
 		} else {
-			o.Facts["otelStage"] = "artifact required: " + artifact
+			o.Facts[stageKey] = "artifact required: " + artifact
 		}
 		return
 	}
@@ -234,21 +315,21 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 			sdkDir = filepath.Join(stateDir, "apm", bundle)
 			if !dirExists(sdkDir) {
 				if p.Options["autoprovision"] == "1" && Provision != nil {
-					o.Facts["otelStage"] = Provision.Ensure(bundle, true)
+					o.Facts[stageKey] = Provision.Ensure(bundle, true)
 				} else {
-					o.Facts["otelStage"] = "artifact required: " + bundle
+					o.Facts[stageKey] = "artifact required: " + bundle
 				}
 				return
 			}
 		}
 	}
 	if err := preflightExtension(st.preBin, soPath); err != nil {
-		o.Facts["otelStage"] = "preflight failed: " + err.Error()
+		o.Facts[stageKey] = "preflight failed: " + err.Error()
 		return
 	}
 	if sdkDir != "" {
 		if err := preflightPrepend(soPath, sdkDir+"/wakora-otel.php"); err != nil {
-			o.Facts["otelStage"] = "sdk preflight failed: " + err.Error()
+			o.Facts[stageKey] = "sdk preflight failed: " + err.Error()
 			return
 		}
 	}
@@ -269,14 +350,15 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 	}
 	staged, isNew, err := apm.Stage(stateDir, change, []byte(ini))
 	if err != nil {
-		o.Facts["otelStage"] = "stage failed: " + err.Error()
+		o.Facts[stageKey] = "stage failed: " + err.Error()
 		return
 	}
-	o.Facts["otelStage"] = staged.State
+	o.Facts[stageKey] = staged.State
 	if isNew {
 		o.Events = append(o.Events, apmEvent("action_required", map[string]string{
 			"service": service, "change": "otel-spans", "impact": "reload",
 			"command": staged.Command, "stagedPath": staged.StagedPath, "target": target,
+			"php": st.rt.VersionShort,
 		}))
 	}
 }
