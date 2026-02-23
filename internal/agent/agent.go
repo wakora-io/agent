@@ -58,7 +58,10 @@ type Agent struct {
 	spans             chan []protocol.Span
 	profiles          chan defs.Outcome
 	profiling         map[string]bool
+	updateKick        chan struct{}
 }
+
+func (a *Agent) SetUpdateKick(ch chan struct{}) { a.updateKick = ch }
 
 type listenerCounts struct {
 	total, severe uint64
@@ -1318,6 +1321,13 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 			}
 			a.key.Store(c.Key)
 			log.Print("per-server key rotated")
+		case "updateNow":
+			if a.updateKick != nil {
+				select {
+				case a.updateKick <- struct{}{}:
+				default:
+				}
+			}
 		}
 	}
 }

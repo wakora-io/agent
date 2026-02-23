@@ -187,7 +187,9 @@ func main() {
 
 	run := func(ctx context.Context) error {
 		if relURL != "" {
-			go autoUpdate(ctx, relURL, httpc, *updateEvery)
+			updateKick := make(chan struct{}, 1)
+			a.SetUpdateKick(updateKick)
+			go autoUpdate(ctx, relURL, httpc, *updateEvery, updateKick)
 		}
 		return a.Run(ctx, client, *interval, *heartbeat, *discoveryEvery, *discoveryCheck)
 	}
@@ -328,7 +330,7 @@ func runUpdateOnce(relURL string, httpc *http.Client) {
 	restartService()
 }
 
-func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every time.Duration) {
+func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every time.Duration, kick <-chan struct{}) {
 	u := update.New(relURL, httpc)
 	exe, err := os.Executable()
 	if err != nil {
@@ -353,6 +355,8 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every ti
 	select {
 	case <-ctx.Done():
 		return
+	case <-kick:
+		check()
 	case <-time.After(90 * time.Second):
 		check()
 	}
@@ -362,6 +366,8 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every ti
 		select {
 		case <-ctx.Done():
 			return
+		case <-kick:
+			check()
 		case <-t.C:
 			check()
 		}
