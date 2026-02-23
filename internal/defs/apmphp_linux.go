@@ -230,14 +230,16 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 	}
 	sdkDir := ""
 	if p.Options["sdk"] == "1" {
-		sdkDir = filepath.Join(stateDir, "apm", apm.PHPSDKBundle)
-		if !dirExists(sdkDir) {
-			if p.Options["autoprovision"] == "1" && Provision != nil {
-				o.Facts["otelStage"] = Provision.Ensure(apm.PHPSDKBundle, true)
-			} else {
-				o.Facts["otelStage"] = "artifact required: " + apm.PHPSDKBundle
+		if bundle := apm.PHPSDKBundleFor(st.rt.VersionShort); bundle != "" {
+			sdkDir = filepath.Join(stateDir, "apm", bundle)
+			if !dirExists(sdkDir) {
+				if p.Options["autoprovision"] == "1" && Provision != nil {
+					o.Facts["otelStage"] = Provision.Ensure(bundle, true)
+				} else {
+					o.Facts["otelStage"] = "artifact required: " + bundle
+				}
+				return
 			}
-			return
 		}
 	}
 	if err := preflightExtension(st.preBin, soPath); err != nil {

@@ -13,12 +13,15 @@ case "$ARCH" in
 esac
 
 for ver in 8.1 8.2 8.3 8.4; do
-  for libc in glibc musl; do
-    img="php:$ver-cli"
-    [ "$libc" = musl ] && img="php:$ver-cli-alpine"
-    name="opentelemetry-$ver-nts-$ARCH-$libc.so"
-    docker run --rm --security-opt apparmor=unconfined \
-      -v "$HERE":/in:ro -v "$OUT":/out "$img" sh /in/inner-php.sh "$EXTVER" "$name"
-    echo "built $name (ext $EXTVER, $img)"
+  for ts in nts zts; do
+    for libc in glibc musl; do
+      img="php:$ver-cli"
+      [ "$ts" = zts ] && img="php:$ver-zts"
+      [ "$libc" = musl ] && img="$img-alpine"
+      name="opentelemetry-$ver-$ts-$ARCH-$libc.so"
+      docker run --rm --security-opt apparmor=unconfined \
+        -v "$HERE":/in:ro -v "$OUT":/out "$img" sh /in/inner-php.sh "$EXTVER" "$name"
+      echo "built $name (ext $EXTVER, $img)"
+    done
   done
 done

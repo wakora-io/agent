@@ -82,6 +82,16 @@ func OtelArtifactName(r PHPRuntime) string {
 
 const PHPSDKBundle = "opentelemetry-php-sdk"
 
+func PHPSDKBundleFor(versionShort string) string {
+	switch {
+	case versionShort == "8.1":
+		return PHPSDKBundle + "81"
+	case versionShort >= "8.2" && strings.HasPrefix(versionShort, "8."):
+		return PHPSDKBundle
+	}
+	return ""
+}
+
 func OtelIni(soPath, serviceName, endpoint, sdkDir string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "extension=%s\n", soPath)
