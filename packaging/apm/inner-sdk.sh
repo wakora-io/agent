@@ -3,10 +3,10 @@ set -e
 VARIANT="${1:-}"
 OUTNAME="opentelemetry-php-sdk$VARIANT"
 MINID=80200
-PKGS="open-telemetry/opentelemetry-auto-pdo open-telemetry/opentelemetry-auto-mysqli"
+PKGS="open-telemetry/opentelemetry-auto-pdo open-telemetry/opentelemetry-auto-mysqli open-telemetry/opentelemetry-auto-curl"
 if [ "$VARIANT" = "81" ]; then
   MINID=80100
-  PKGS="open-telemetry/opentelemetry-auto-mysqli"
+  PKGS=""
 fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q >/dev/null
@@ -24,7 +24,6 @@ COMPOSER_ALLOW_SUPERUSER=1 composer require --no-interaction \
   open-telemetry/exporter-otlp \
   guzzlehttp/guzzle \
   open-telemetry/opentelemetry-auto-wordpress \
-  open-telemetry/opentelemetry-auto-curl \
   $PKGS
 sed "s/PHP_VERSION_ID < 80200/PHP_VERSION_ID < $MINID/" /in/wakora-otel.php > /build/wakora-otel.php
 php -l /build/wakora-otel.php >/dev/null
