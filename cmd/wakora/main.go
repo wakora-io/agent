@@ -333,7 +333,11 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every ti
 	}
 	check := func() {
 		latest, err := u.LatestVersion()
-		if err != nil || latest == buildinfo.Version {
+		if err != nil {
+			log.Printf("update check failed: %v", err)
+			return
+		}
+		if latest == buildinfo.Version {
 			return
 		}
 		if err := u.Apply(exe); err != nil {
