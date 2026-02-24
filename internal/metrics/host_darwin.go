@@ -47,7 +47,7 @@ func memPoints() []Point {
 			pts = append(pts, Point{Name: "host.swap.used_pct", Value: float64(swapUsed) / float64(swapTotal) * 100})
 		}
 	}
-	return pts
+	return append(pts, vmMemPoints(total)...)
 }
 
 func uptimePoints() []Point {
@@ -95,10 +95,6 @@ func diskPoints() []Point {
 	}
 	return pts
 }
-
-func (c *Collector) cpuPoints() []Point { return nil }
-
-func (c *Collector) netPoints(time.Time) []Point { return nil }
 
 func cstr(b []byte) string {
 	for i, c := range b {
