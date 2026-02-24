@@ -249,6 +249,7 @@ func (a *Agent) sendMetrics(conn transport.Conn) error {
 	a.seq++
 	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, batch)
 	if err != nil {
+		log.Printf("encode metrics failed: %v", err)
 		return nil
 	}
 	if err := conn.Send(msg); err != nil {
@@ -360,6 +361,7 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 		Timestamp: time.Now().Unix(),
 	})
 	if err != nil {
+		log.Printf("encode heartbeat failed: %v", err)
 		return nil
 	}
 	return conn.Send(msg)
@@ -1226,6 +1228,7 @@ func (a *Agent) sendCheck(conn transport.Conn, check protocol.CheckResult) error
 	a.seq++
 	msg, err := protocol.Encode(protocol.TypeCheck, a.seq, check)
 	if err != nil {
+		log.Printf("encode check failed: %v", err)
 		return nil
 	}
 	return conn.Send(msg)
