@@ -1,7 +1,9 @@
 package update
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,9 +19,10 @@ import (
 type Updater struct {
 	baseURL string
 	client  *http.Client
+	pubKey  string
 }
 
-func New(baseURL string, client *http.Client) *Updater {
+func New(baseURL string, client *http.Client, pubKey string) *Updater {
 	c := &http.Client{Timeout: time.Minute}
 	if client != nil {
 		c.Transport = client.Transport
@@ -26,7 +30,28 @@ func New(baseURL string, client *http.Client) *Updater {
 	return &Updater{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		client:  c,
+		pubKey:  pubKey,
 	}
+}
+
+func revNum(v string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(v, "r"))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func Newer(latest, current string) bool {
+	ln, lok := revNum(latest)
+	if !lok {
+		return false
+	}
+	cn, cok := revNum(current)
+	if !cok {
+		return true
+	}
+	return ln > cn
 }
 
 func (u *Updater) LatestVersion() (string, error) {
@@ -55,6 +80,9 @@ func (u *Updater) Apply(target string) error {
 	if hex.EncodeToString(sum[:]) != fields[0] {
 		return errors.New("update: checksum mismatch")
 	}
+	if err := u.verifySignature(asset, bin); err != nil {
+		return err
+	}
 
 	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, ".wakora-*")
@@ -78,6 +106,28 @@ func (u *Updater) Apply(target string) error {
 	if err := replaceBinary(name, target); err != nil {
 		os.Remove(name)
 		return err
+	}
+	return nil
+}
+
+func (u *Updater) verifySignature(asset string, bin []byte) error {
+	if u.pubKey == "" {
+		return errors.New("update: no publisher key built in, refusing unsigned binary")
+	}
+	pub, err := base64.StdEncoding.DecodeString(u.pubKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return errors.New("update: invalid publisher key")
+	}
+	sigBody, err := u.get(asset + ".sig")
+	if err != nil {
+		return fmt.Errorf("update: signature unavailable: %w", err)
+	}
+	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigBody)))
+	if err != nil {
+		return errors.New("update: malformed signature")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pub), bin, sig) {
+		return errors.New("update: binary signature invalid")
 	}
 	return nil
 }

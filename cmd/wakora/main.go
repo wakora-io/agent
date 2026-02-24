@@ -145,7 +145,7 @@ func main() {
 	}
 
 	if *doUpd {
-		runUpdateOnce(relURL, httpc)
+		runUpdateOnce(relURL, httpc, pubKey)
 		return
 	}
 
@@ -190,7 +190,7 @@ func main() {
 		if relURL != "" {
 			updateKick := make(chan struct{}, 1)
 			a.SetUpdateKick(updateKick)
-			go autoUpdate(ctx, relURL, httpc, *updateEvery, updateKick)
+			go autoUpdate(ctx, relURL, httpc, pubKey, *updateEvery, updateKick)
 		}
 		if cfg.Key == "" {
 			log.Print("no identity yet - idle until registered; run: wakora --key <TEAMKEY>")
@@ -330,17 +330,21 @@ func waitForIdentity(ctx context.Context, cfg *config.Config) bool {
 	}
 }
 
-func runUpdateOnce(relURL string, httpc *http.Client) {
+func runUpdateOnce(relURL string, httpc *http.Client, pubKey string) {
 	if relURL == "" {
 		log.Fatal("update: no release url; use --update-url or --endpoint")
 	}
-	u := update.New(relURL, httpc)
+	u := update.New(relURL, httpc, pubKey)
 	latest, err := u.LatestVersion()
 	if err != nil {
 		log.Fatal(err)
 	}
 	if latest == buildinfo.Version {
 		log.Printf("already up to date (%s)", buildinfo.Version)
+		return
+	}
+	if !update.Newer(latest, buildinfo.Version) {
+		log.Printf("release %s is not newer than %s, skipping (no downgrade)", latest, buildinfo.Version)
 		return
 	}
 	exe, err := os.Executable()
@@ -354,8 +358,8 @@ func runUpdateOnce(relURL string, httpc *http.Client) {
 	restartService()
 }
 
-func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every time.Duration, kick <-chan struct{}) {
-	u := update.New(relURL, httpc)
+func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey string, every time.Duration, kick <-chan struct{}) {
+	u := update.New(relURL, httpc, pubKey)
 	exe, err := os.Executable()
 	if err != nil {
 		return
@@ -366,7 +370,7 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, every ti
 			log.Printf("update check failed: %v", err)
 			return
 		}
-		if latest == buildinfo.Version {
+		if !update.Newer(latest, buildinfo.Version) {
 			return
 		}
 		if err := u.Apply(exe); err != nil {

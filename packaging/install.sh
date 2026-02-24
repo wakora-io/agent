@@ -2,6 +2,7 @@
 set -eu
 
 BASE="https://get.wakora.io"
+PUBKEY="__WAKORA_PUBKEY__"
 KEY=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -13,7 +14,8 @@ done
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "wakora installer needs root; re-running with sudo" >&2
-  exec sudo -E sh -c "$(cat)" -- ${KEY:+--key "$KEY"}
+  export KEY
+  exec sudo -E sh -c 'curl -fsSL '"$BASE"'/install.sh | sh -s -- ${KEY:+--key "$KEY"}'
 fi
 
 OS="$(uname -s)"
@@ -43,6 +45,20 @@ GOT="$($SHACMD "$TMP" | cut -d' ' -f1)"
 if [ "$WANT" != "$GOT" ]; then
   echo "checksum mismatch (want $WANT got $GOT)" >&2
   rm -f "$TMP"; exit 1
+fi
+
+if [ -n "$PUBKEY" ] && [ "$PUBKEY" != "__WAKORA_PUBKEY__" ] && command -v openssl >/dev/null 2>&1; then
+  if curl -fsSL "$BASE/bin/$ASSET.sig" -o "$TMP.sig" 2>/dev/null && [ -s "$TMP.sig" ]; then
+    printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA%s\n-----END PUBLIC KEY-----\n' "$PUBKEY" > "$TMP.pem"
+    openssl base64 -d -A -in "$TMP.sig" -out "$TMP.sigbin" 2>/dev/null || true
+    if openssl pkeyutl -verify -pubin -inkey "$TMP.pem" -rawin -in "$TMP" -sigfile "$TMP.sigbin" >/dev/null 2>&1; then
+      echo "signature verified"
+    else
+      echo "binary signature INVALID - aborting" >&2
+      rm -f "$TMP" "$TMP.sig" "$TMP.pem" "$TMP.sigbin"; exit 1
+    fi
+    rm -f "$TMP.sig" "$TMP.pem" "$TMP.sigbin"
+  fi
 fi
 
 install -m 0755 "$TMP" /usr/local/bin/wakora
