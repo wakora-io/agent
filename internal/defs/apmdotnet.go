@@ -20,6 +20,23 @@ func apmEvent(kind string, detail map[string]string) protocol.AgentEvent {
 	return protocol.AgentEvent{Kind: kind, Detail: string(raw)}
 }
 
+func stagedArtifactSha(stateDir, stageID string) string {
+	data, err := os.ReadFile(filepath.Join(stateDir, "staged", stageID+".staged"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "; wakora-artifact-sha "); ok {
+			return strings.TrimSpace(rest)
+		}
+		if rest, ok := strings.CutPrefix(line, "# wakora-artifact-sha "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
 func RunAPMDotnet(service string, p protocol.Probe, stateDir string) Outcome {
 	o := Outcome{Check: protocol.CheckResult{
 		CheckID:   service + "/" + p.Name,
@@ -63,11 +80,21 @@ func runAPMDotnet(o *Outcome, service string, p protocol.Probe, stateDir string)
 	}
 
 	stageID := "apmdotnet-" + service
+	autoprov := p.Options["autoprovision"] == "1" && Provision != nil
 	if loaded {
 		o.Facts["otelStage"] = "active"
 		if apm.StagedState(stateDir, stageID) == "pending_activation" {
 			_ = apm.MarkActivated(stateDir, stageID)
 			o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{"service": service, "layer": "dotnet-otel", "host": host}))
+		}
+		if autoprov && p.Options["autostage"] == "1" {
+			if Provision.NeedsRefresh(bundle) {
+				Provision.Ensure(bundle, true)
+				o.Facts["otelStage"] = "active (fetching new signed build)"
+			} else if sha := Provision.LocalSha(bundle); sha != "" && sha != stagedArtifactSha(stateDir, stageID) {
+				stageDotnet(o, service, p, stateDir, bundle, nativeSub, host, stageID)
+				o.Facts["otelStage"] = "active (new build staged; restart to apply)"
+			}
 		}
 		return
 	}
@@ -82,13 +109,18 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 		o.Facts["otelStage"] = "blocked: unknown os/arch"
 		return
 	}
+	autoprov := p.Options["autoprovision"] == "1" && Provision != nil
 	bundleDir := filepath.Join(stateDir, "apm", bundle)
 	if _, err := os.Stat(bundleDir); err != nil {
-		if p.Options["autoprovision"] == "1" && Provision != nil {
+		if autoprov {
 			o.Facts["otelStage"] = Provision.Ensure(bundle, true)
 		} else {
 			o.Facts["otelStage"] = "artifact required: " + bundle + " (OTel .NET auto-instrumentation bundle)"
 		}
+		return
+	}
+	if autoprov && Provision.NeedsRefresh(bundle) {
+		o.Facts["otelStage"] = "refreshing: " + Provision.Ensure(bundle, true)
 		return
 	}
 	endpoint := p.Options["otelEndpoint"]
@@ -100,19 +132,23 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 		native = filepath.Join(bundleDir, "win-x64", "OpenTelemetry.AutoInstrumentation.Native.dll")
 	}
 	env := apm.DotnetEnv(bundleDir, native, service, endpoint)
+	sha := ""
+	if autoprov {
+		sha = Provision.LocalSha(bundle)
+	}
 
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
 	var content, command string
 	switch host {
 	case "iis":
-		content = iisEnvScript(env)
+		content = iisEnvScript(env, sha)
 		command = "powershell -ExecutionPolicy Bypass -Command \"& ([scriptblock]::Create((Get-Content -Raw '" + stagedPath + "')))\""
 	default:
 		unit := p.Options["unit"]
 		if unit == "" {
 			unit = "kestrel"
 		}
-		content = systemdDropin(env)
+		content = systemdDropin(env, sha)
 		dst := "/etc/systemd/system/" + unit + ".service.d/10-wakora-otel.conf"
 		command = "mkdir -p /etc/systemd/system/" + unit + ".service.d && cp " +
 			stagedPath + " " + dst +
@@ -134,9 +170,12 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 	}
 }
 
-func systemdDropin(env map[string]string) string {
+func systemdDropin(env map[string]string, sha string) string {
 	var b strings.Builder
 	b.WriteString("[Service]\n")
+	if sha != "" {
+		fmt.Fprintf(&b, "# wakora-artifact-sha %s\n", sha)
+	}
 	for _, k := range dotnetEnvOrder {
 		if v := env[k]; v != "" {
 			fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", k, v)
@@ -145,9 +184,12 @@ func systemdDropin(env map[string]string) string {
 	return b.String()
 }
 
-func iisEnvScript(env map[string]string) string {
+func iisEnvScript(env map[string]string, sha string) string {
 	var b strings.Builder
 	b.WriteString("# Wakora APM: set $env:WAKORA_POOL to your app pool before running (defaults to DefaultAppPool)\n")
+	if sha != "" {
+		fmt.Fprintf(&b, "# wakora-artifact-sha %s\n", sha)
+	}
 	b.WriteString("$pool = $env:WAKORA_POOL; if (-not $pool) { $pool = 'DefaultAppPool' }\n")
 	b.WriteString("Import-Module WebAdministration\n")
 	const filter = "system.applicationHost/applicationPools/add[@name='$pool']/environmentVariables"

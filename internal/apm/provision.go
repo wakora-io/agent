@@ -36,7 +36,13 @@ type Provisioner struct {
 	active  map[string]bool
 	lastErr map[string]string
 	lastTry map[string]time.Time
+
+	manMu    sync.Mutex
+	manCache []byte
+	manAt    time.Time
 }
+
+const manifestTTL = 10 * time.Minute
 
 type manifestArtifact struct {
 	Name   string `json:"name"`
@@ -113,11 +119,38 @@ func (p *Provisioner) fetch(name string, unpack bool) error {
 		return err
 	}
 	if unpack {
-		err := p.unpackFile(name, tmp)
+		if err := p.unpackFile(name, tmp); err != nil {
+			os.Remove(tmp)
+			return err
+		}
 		os.Remove(tmp)
+	} else if err := os.Rename(tmp, filepath.Join(p.dir, name)); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(p.dir, name))
+	_ = os.WriteFile(p.shaMarker(name), []byte(art.Sha256), 0o644)
+	return nil
+}
+
+func (p *Provisioner) shaMarker(name string) string {
+	return filepath.Join(p.dir, "."+name+".sha")
+}
+
+func (p *Provisioner) LocalSha(name string) string {
+	b, err := os.ReadFile(p.shaMarker(name))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// NeedsRefresh reports whether the channel manifest carries a different sha than the
+// locally provisioned artifact (a new signed build was published). Manifest is cached.
+func (p *Provisioner) NeedsRefresh(name string) bool {
+	art, err := p.lookup(name)
+	if err != nil || art.Sha256 == "" {
+		return false
+	}
+	return p.LocalSha(name) != art.Sha256
 }
 
 func (p *Provisioner) download(path, dst, wantSha string) error {
@@ -147,8 +180,23 @@ func (p *Provisioner) download(path, dst, wantSha string) error {
 	return nil
 }
 
-func (p *Provisioner) lookup(name string) (*manifestArtifact, error) {
+func (p *Provisioner) manifest() ([]byte, error) {
+	p.manMu.Lock()
+	defer p.manMu.Unlock()
+	if p.manCache != nil && time.Since(p.manAt) < manifestTTL {
+		return p.manCache, nil
+	}
 	raw, err := p.getSmall("/apm/manifest.signed.json")
+	if err != nil {
+		return nil, err
+	}
+	p.manCache = raw
+	p.manAt = time.Now()
+	return raw, nil
+}
+
+func (p *Provisioner) lookup(name string) (*manifestArtifact, error) {
+	raw, err := p.manifest()
 	if err != nil {
 		return nil, err
 	}

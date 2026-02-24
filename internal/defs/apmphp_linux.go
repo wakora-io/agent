@@ -122,6 +122,16 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 					"service": service, "layer": "otel-spans", "sapi": sapi, "php": minor,
 				}))
 			}
+			if p.Options["autostage"] == "1" && p.Options["autoprovision"] == "1" && Provision != nil {
+				artifact := apm.OtelArtifactName(st.rt)
+				if Provision.NeedsRefresh(artifact) {
+					Provision.Ensure(artifact, false)
+					o.Facts[stageKey] = "active (fetching new signed build)"
+				} else if sha := Provision.LocalSha(artifact); sha != "" && sha != stagedArtifactSha(stateDir, stageID) {
+					stageOtel(o, service, p, stateDir, st, stageID, stageKey)
+					o.Facts[stageKey] = "active (new build staged; reload to apply)"
+				}
+			}
 			continue
 		}
 		if p.Options["autostage"] != "1" {
@@ -300,13 +310,18 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 		o.Facts[stageKey] = "blocked: incomplete runtime fingerprint"
 		return
 	}
+	autoprov := p.Options["autoprovision"] == "1" && Provision != nil
 	soPath := filepath.Join(stateDir, "apm", artifact)
 	if _, err := os.Stat(soPath); err != nil {
-		if p.Options["autoprovision"] == "1" && Provision != nil {
+		if autoprov {
 			o.Facts[stageKey] = Provision.Ensure(artifact, false)
 		} else {
 			o.Facts[stageKey] = "artifact required: " + artifact
 		}
+		return
+	}
+	if autoprov && Provision.NeedsRefresh(artifact) {
+		o.Facts[stageKey] = "refreshing: " + Provision.Ensure(artifact, false)
 		return
 	}
 	sdkDir := ""
@@ -314,12 +329,17 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 		if bundle := apm.PHPSDKBundleFor(st.rt.VersionShort); bundle != "" {
 			sdkDir = filepath.Join(stateDir, "apm", bundle)
 			if !dirExists(sdkDir) {
-				if p.Options["autoprovision"] == "1" && Provision != nil {
+				if autoprov {
 					o.Facts[stageKey] = Provision.Ensure(bundle, true)
 				} else {
 					o.Facts[stageKey] = "artifact required: " + bundle
 				}
 				return
+			}
+			// SDK is arch-independent PHP loaded via auto_prepend_file (re-read every request),
+			// so a refreshed bundle takes effect without a reload - no re-stage needed.
+			if autoprov && Provision.NeedsRefresh(bundle) {
+				_ = Provision.Ensure(bundle, true)
 			}
 		}
 	}
@@ -338,7 +358,11 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:4318"
 	}
-	ini := apm.OtelIni(soPath, service, endpoint, sdkDir)
+	artifactSha := ""
+	if autoprov {
+		artifactSha = Provision.LocalSha(artifact)
+	}
+	ini := apm.OtelIni(soPath, service, endpoint, sdkDir, artifactSha)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
 	change := apm.StagedChange{
 		ID:         stageID,

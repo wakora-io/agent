@@ -115,8 +115,11 @@ func splitMinor(versionShort string) (major, minor int, ok bool) {
 	return major, minor, true
 }
 
-func OtelIni(soPath, serviceName, endpoint, sdkDir string) string {
+func OtelIni(soPath, serviceName, endpoint, sdkDir, artifactSha string) string {
 	var b strings.Builder
+	if artifactSha != "" {
+		fmt.Fprintf(&b, "; wakora-artifact-sha %s\n", artifactSha)
+	}
 	fmt.Fprintf(&b, "extension=%s\n", soPath)
 	if sdkDir != "" {
 		fmt.Fprintf(&b, "auto_prepend_file=%s/wakora-otel.php\n", sdkDir)
