@@ -99,6 +99,10 @@ func (a *Agent) Key() string {
 	return v
 }
 
+func (a *Agent) RefreshIdentity() {
+	a.key.Store(a.cfg.Key)
+}
+
 func (a *Agent) collect() protocol.MetricsBatch {
 	ts, pts := a.metrics.Collect()
 	points := make([]protocol.MetricPoint, len(pts))

@@ -70,6 +70,16 @@ func Load(dir string) (*Config, error) {
 	return c, nil
 }
 
+func (c *Config) ReloadIdentity() error {
+	id, err := loadIdentity(c.dir)
+	if err != nil {
+		return err
+	}
+	c.ServerID = id.uuid
+	c.Key = id.key
+	return nil
+}
+
 func (c *Config) RingPath() string {
 	return filepath.Join(c.stateDir, "buffer.jsonl")
 }

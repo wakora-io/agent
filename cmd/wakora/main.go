@@ -162,7 +162,7 @@ func main() {
 	if cfg.Endpoint == "" {
 		log.Fatal("no gateway endpoint built into this binary; use --endpoint (dev)")
 	}
-	if cfg.Key == "" {
+	if cfg.Key == "" && !underServiceManager() && term.IsTerminal(int(os.Stderr.Fd())) {
 		log.Fatal("no identity; register with: wakora --key <TEAMKEY>")
 	}
 
@@ -191,6 +191,14 @@ func main() {
 			updateKick := make(chan struct{}, 1)
 			a.SetUpdateKick(updateKick)
 			go autoUpdate(ctx, relURL, httpc, *updateEvery, updateKick)
+		}
+		if cfg.Key == "" {
+			log.Print("no identity yet - idle until registered; run: wakora --key <TEAMKEY>")
+			if !waitForIdentity(ctx, cfg) {
+				return nil
+			}
+			a.RefreshIdentity()
+			log.Print("identity registered, starting")
 		}
 		return a.Run(ctx, client, *interval, *heartbeat, *discoveryEvery, *discoveryCheck)
 	}
@@ -305,6 +313,21 @@ func deriveURL(endpoint, path string) string {
 		scheme = "https"
 	}
 	return scheme + "://" + u.Host + path
+}
+
+func waitForIdentity(ctx context.Context, cfg *config.Config) bool {
+	t := time.NewTicker(15 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-t.C:
+			if err := cfg.ReloadIdentity(); err == nil && cfg.Key != "" {
+				return true
+			}
+		}
+	}
 }
 
 func runUpdateOnce(relURL string, httpc *http.Client) {
