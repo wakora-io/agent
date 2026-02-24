@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -160,7 +161,11 @@ func describeEvent(ev uintptr) string {
 	}
 	msg = strings.Join(strings.Fields(msg), " ")
 	if len(msg) > errorMessageCap {
-		msg = msg[:errorMessageCap] + "…"
+		cut := errorMessageCap
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + "…"
 	}
 	out := e.System.Provider.Name + "#" + e.System.EventID
 	if ts := e.System.TimeCreated.SystemTime; len(ts) >= 19 {
