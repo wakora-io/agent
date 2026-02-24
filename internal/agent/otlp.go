@@ -17,6 +17,7 @@ import (
 const (
 	otlpMaxSpansPerReq = 2000
 	otlpMaxAttrs       = 24
+	otlpMaxResAttrs    = 8
 	otlpMaxStrLen      = 512
 )
 
@@ -155,10 +156,14 @@ func convertOTLP(exp otlpExport) []protocol.Span {
 	var out []protocol.Span
 	for _, rs := range exp.ResourceSpans {
 		service := ""
+		res := make(map[string]string, otlpMaxResAttrs)
 		for _, kv := range rs.Resource.Attributes {
 			if kv.Key == "service.name" {
 				service = anyToString(kv.Value)
-				break
+				continue
+			}
+			if keepResourceAttr(kv.Key) && len(res) < otlpMaxResAttrs {
+				res[trim(kv.Key)] = trim(anyToString(kv.Value))
 			}
 		}
 		for _, ss := range rs.ScopeSpans {
@@ -182,12 +187,34 @@ func convertOTLP(exp otlpExport) []protocol.Span {
 					StartNano:    start,
 					DurationNano: dur,
 					Status:       spanStatus(sp.Status.Code),
-					Attrs:        convertAttrs(sp.Attributes),
+					Attrs:        mergeResourceAttrs(convertAttrs(sp.Attributes), res),
 				})
 			}
 		}
 	}
 	return out
+}
+
+func keepResourceAttr(key string) bool {
+	return key != "" && !strings.HasPrefix(key, "telemetry.") && !strings.HasPrefix(key, "service.instance")
+}
+
+func mergeResourceAttrs(attrs, res map[string]string) map[string]string {
+	if len(res) == 0 {
+		return attrs
+	}
+	if attrs == nil {
+		attrs = make(map[string]string, len(res))
+	}
+	for k, v := range res {
+		if len(attrs) >= otlpMaxAttrs {
+			break
+		}
+		if _, ok := attrs[k]; !ok {
+			attrs[k] = v
+		}
+	}
+	return attrs
 }
 
 func convertAttrs(kvs []otlpKV) map[string]string {

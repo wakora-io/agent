@@ -11,6 +11,7 @@ $wakoraCfg = static function (string $key, string $fallback): string {
     return is_string($v) && $v !== '' ? $v : $fallback;
 };
 putenv('OTEL_PHP_AUTOLOAD_ENABLED=true');
+putenv('OTEL_RESOURCE_ATTRIBUTES=php.version=' . PHP_VERSION . ',php.sapi=' . PHP_SAPI);
 putenv('OTEL_SERVICE_NAME=' . $wakoraCfg('wakora.otel_service', 'php-app'));
 putenv('OTEL_EXPORTER_OTLP_ENDPOINT=' . $wakoraCfg('wakora.otel_endpoint', 'http://127.0.0.1:4318'));
 putenv('OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf');

@@ -20,11 +20,15 @@ func convertOTLPProto(body []byte) ([]protocol.Span, error) {
 	var out []protocol.Span
 	for _, rs := range req.ResourceSpans {
 		service := ""
+		res := make(map[string]string, otlpMaxResAttrs)
 		if rs.Resource != nil {
 			for _, kv := range rs.Resource.Attributes {
 				if kv.Key == "service.name" {
 					service = anyPbString(kv.Value)
-					break
+					continue
+				}
+				if keepResourceAttr(kv.Key) && len(res) < otlpMaxResAttrs {
+					res[trim(kv.Key)] = trim(anyPbString(kv.Value))
 				}
 			}
 		}
@@ -47,7 +51,7 @@ func convertOTLPProto(body []byte) ([]protocol.Span, error) {
 					StartNano:    sp.StartTimeUnixNano,
 					DurationNano: dur,
 					Status:       spanStatusPb(sp.Status),
-					Attrs:        convertAttrsPb(sp.Attributes),
+					Attrs:        mergeResourceAttrs(convertAttrsPb(sp.Attributes), res),
 				})
 			}
 		}
