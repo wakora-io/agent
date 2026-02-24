@@ -15,6 +15,8 @@ const (
 	sustain    = 3
 	adoptAfter = 30
 	cooldown   = 15 * time.Minute
+	seriesTTL  = 2 * time.Hour
+	sweepEvery = 30 * time.Minute
 )
 
 type Anomaly struct {
@@ -32,11 +34,13 @@ type state struct {
 	samples  int
 	breaches int
 	lastFire time.Time
+	lastSeen time.Time
 }
 
 type Detector struct {
-	mu     sync.Mutex
-	states map[string]*state
+	mu        sync.Mutex
+	states    map[string]*state
+	lastSweep time.Time
 }
 
 func New() *Detector {
@@ -46,12 +50,14 @@ func New() *Detector {
 func (d *Detector) Observe(metric string, tags map[string]string, value float64, now time.Time) *Anomaly {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.sweep(now)
 	key := seriesKey(metric, tags)
 	s := d.states[key]
 	if s == nil {
 		s = &state{mean: value}
 		d.states[key] = s
 	}
+	s.lastSeen = now
 
 	if s.samples >= minSamples {
 		sigma := math.Sqrt(s.variance)
@@ -84,6 +90,18 @@ func (d *Detector) Observe(metric string, tags map[string]string, value float64,
 	s.variance = (1 - alpha) * (s.variance + alpha*delta*delta)
 	s.samples++
 	return nil
+}
+
+func (d *Detector) sweep(now time.Time) {
+	if now.Sub(d.lastSweep) < sweepEvery {
+		return
+	}
+	d.lastSweep = now
+	for k, s := range d.states {
+		if now.Sub(s.lastSeen) > seriesTTL {
+			delete(d.states, k)
+		}
+	}
 }
 
 func seriesKey(metric string, tags map[string]string) string {

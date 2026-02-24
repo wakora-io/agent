@@ -21,6 +21,9 @@ IOSchedulingPriority=7
 
 NoNewPrivileges=no
 ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/etc/wakora /var/lib/wakora /var/log/wakora
+ProtectControlGroups=yes
 
 [Install]
 WantedBy=multi-user.target

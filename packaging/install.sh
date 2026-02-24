@@ -94,6 +94,9 @@ OOMScoreAdjust=500
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/etc/wakora /var/lib/wakora /var/log/wakora
+ProtectControlGroups=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -104,4 +107,4 @@ else
   echo "no systemd/launchd; run /usr/local/bin/wakora under your init (openrc/sysvinit templates in agent/packaging/)" >&2
 fi
 
-echo "done - host will appear in the console within ~1 min"
+echo "Done! Host will appear in the console within ~1 minute"

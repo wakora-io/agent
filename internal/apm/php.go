@@ -2,6 +2,7 @@ package apm
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -83,13 +84,35 @@ func OtelArtifactName(r PHPRuntime) string {
 const PHPSDKBundle = "opentelemetry-php-sdk"
 
 func PHPSDKBundleFor(versionShort string) string {
+	major, minor, ok := splitMinor(versionShort)
+	if !ok {
+		return ""
+	}
 	switch {
-	case versionShort == "8.1":
+	case major == 8 && minor == 1:
 		return PHPSDKBundle + "81"
-	case versionShort >= "8.2" && strings.HasPrefix(versionShort, "8."):
+	case major == 8 && minor >= 2:
+		return PHPSDKBundle
+	case major >= 9:
 		return PHPSDKBundle
 	}
 	return ""
+}
+
+func splitMinor(versionShort string) (major, minor int, ok bool) {
+	parts := strings.SplitN(versionShort, ".", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
 }
 
 func OtelIni(soPath, serviceName, endpoint, sdkDir string) string {

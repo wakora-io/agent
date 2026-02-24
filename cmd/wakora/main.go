@@ -109,6 +109,7 @@ func main() {
 	if *publisherKey != "" {
 		pubKey = *publisherKey
 	}
+	secret.InitSeed(*configDir)
 	httpc := transport.PinnedClient(pin)
 
 	if *key != "" || len(overrides) > 0 {
