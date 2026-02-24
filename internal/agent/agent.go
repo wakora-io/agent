@@ -59,9 +59,63 @@ type Agent struct {
 	profiles          chan defs.Outcome
 	profiling         map[string]bool
 	updateKick        chan struct{}
+
+	pmu     sync.Mutex
+	pending map[uint64][]byte
 }
 
+const pendingCap = 8192
+
 func (a *Agent) SetUpdateKick(ch chan struct{}) { a.updateKick = ch }
+
+type trackedConn struct {
+	inner transport.Conn
+	a     *Agent
+}
+
+func (t *trackedConn) Send(m protocol.Message) error {
+	if m.Seq != 0 {
+		t.a.trackPending(m)
+	}
+	return t.inner.Send(m)
+}
+func (t *trackedConn) Recv() (protocol.Message, error) { return t.inner.Recv() }
+func (t *trackedConn) Ping(ctx context.Context) error  { return t.inner.Ping(ctx) }
+func (t *trackedConn) Close() error                    { return t.inner.Close() }
+
+func (a *Agent) trackPending(m protocol.Message) {
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return
+	}
+	a.pmu.Lock()
+	if len(a.pending) < pendingCap {
+		a.pending[m.Seq] = raw
+	}
+	a.pmu.Unlock()
+}
+
+func (a *Agent) ackPending(seq uint64) {
+	a.pmu.Lock()
+	delete(a.pending, seq)
+	a.pmu.Unlock()
+}
+
+func (a *Agent) spoolPending() {
+	a.pmu.Lock()
+	pend := a.pending
+	a.pending = map[uint64][]byte{}
+	a.pmu.Unlock()
+	n := 0
+	for _, raw := range pend {
+		if a.ring.Append(raw) == nil {
+			n++
+		}
+	}
+	if n > 0 {
+		log.Printf("connection lost: %d unacked message(s) spooled for replay", n)
+	}
+}
 
 type listenerCounts struct {
 	total, severe uint64
@@ -89,6 +143,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		spans:             make(chan []protocol.Span, 64),
 		profiles:          make(chan defs.Outcome, 8),
 		profiling:         map[string]bool{},
+		pending:           map[uint64][]byte{},
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -128,6 +183,8 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
 		defer a.connected.Store(false)
+		conn = &trackedConn{inner: conn, a: a}
+		defer a.spoolPending()
 		a.drainSpool(conn)
 		if err := a.sendHeartbeat(conn); err != nil {
 			return err
@@ -1290,6 +1347,8 @@ func (a *Agent) mergeServiceFacts(service string, facts map[string]string) (bool
 
 func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {
 	switch m.Type {
+	case protocol.TypeAck:
+		a.ackPending(m.Seq)
 	case protocol.TypeConfig:
 		var set protocol.DefinitionSet
 		if err := json.Unmarshal(m.Payload, &set); err != nil {
