@@ -196,7 +196,11 @@ func convertOTLP(exp otlpExport) []protocol.Span {
 }
 
 func keepResourceAttr(key string) bool {
-	return key != "" && !strings.HasPrefix(key, "telemetry.") && !strings.HasPrefix(key, "service.instance")
+	switch key {
+	case "process.runtime.name", "process.runtime.version", "service.version", "deployment.environment":
+		return true
+	}
+	return strings.HasPrefix(key, "php.")
 }
 
 func mergeResourceAttrs(attrs, res map[string]string) map[string]string {
