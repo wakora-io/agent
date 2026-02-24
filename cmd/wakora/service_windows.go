@@ -19,6 +19,19 @@ const serviceName = "wakora"
 
 func init() { update.CleanupOld() }
 
+var selfStop = make(chan struct{}, 1)
+
+func requestSelfStop() bool {
+	if !underServiceManager() {
+		return false
+	}
+	select {
+	case selfStop <- struct{}{}:
+	default:
+	}
+	return true
+}
+
 func underServiceManager() bool {
 	is, err := svc.IsWindowsService()
 	return err == nil && is
@@ -56,6 +69,14 @@ func (w *wakoraService) Execute(args []string, r <-chan svc.ChangeRequest, s cha
 				}
 				return false, 0
 			}
+		case <-selfStop:
+			s <- svc.Status{State: svc.StopPending}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+			}
+			return false, 0
 		case <-done:
 			return false, 0
 		}
@@ -86,9 +107,35 @@ func runServiceCmd(args []string) {
 		if err := controlService(args[0]); err != nil {
 			log.Fatalf("%s: %v", args[0], err)
 		}
+	case "await-restart":
+		if err := awaitRestart(); err != nil {
+			log.Fatalf("await-restart: %v", err)
+		}
 	default:
 		log.Fatalf("unknown service command %q", args[0])
 	}
+}
+
+func awaitRestart() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := s.Query()
+		if err == nil && st.State == svc.Stopped {
+			return s.Start()
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("service did not reach stopped state in time")
 }
 
 func installService() error {
