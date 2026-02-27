@@ -105,10 +105,14 @@ func foldKey(stack []int, frameName func(int) string) string {
 }
 
 // ParseDotnetTracePS extracts candidate pids from `dotnet-trace ps` output, keeping
-// only lines whose process name/path matches the pattern (empty = any).
+// only lines whose process name/path matches the pattern (empty = any). The tool's
+// own ephemeral process is never a target.
 func ParseDotnetTracePS(out, pattern string) []int {
 	var pids []int
 	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "dotnet-trace") {
+			continue
+		}
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
