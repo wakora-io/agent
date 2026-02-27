@@ -100,6 +100,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runKeepalived(&o, service, p)
 	case "virsh":
 		runVirsh(&o, service, p, timeout)
+	case "k8s":
+		runK8s(&o, service, p, timeout)
 	case "wineventlog":
 		runEventLog(&o, service, p)
 	case "iis":
