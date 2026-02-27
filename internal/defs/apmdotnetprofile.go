@@ -70,9 +70,11 @@ func runAPMDotnetProfile(o *Outcome, service string, p protocol.Probe, stateDir 
 	defer os.RemoveAll(tmpDir)
 	traceFile := filepath.Join(tmpDir, "cpu.nettrace")
 
+	// explicit provider instead of --profile cpu-sampling: profile names changed
+	// across dotnet-trace releases (2026 builds reject the old name)
 	collect := exec.Command(toolPath, "collect",
 		"--process-id", strconv.Itoa(pid),
-		"--profile", "cpu-sampling",
+		"--providers", "Microsoft-DotNETCore-SampleProfiler",
 		"--duration", "00:00:00:"+twoDigits(windowSec),
 		"--output", traceFile)
 	collect.Env = dotnetToolEnv(tmpDir)
