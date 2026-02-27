@@ -92,7 +92,7 @@ func runAPMDotnetProfile(o *Outcome, service string, p protocol.Probe, stateDir 
 		o.Check.Error = "speedscope output missing: " + err.Error()
 		return
 	}
-	folded, totalMs, err := apm.FoldSpeedscope(data)
+	folded, totalMs, threads, err := apm.FoldSpeedscope(data)
 	if err != nil {
 		o.Check.Status = "fail"
 		o.Check.Error = "speedscope parse: " + err.Error()
@@ -110,13 +110,11 @@ func runAPMDotnetProfile(o *Outcome, service string, p protocol.Probe, stateDir 
 	busy := 0.0
 	if windowSec > 0 {
 		busy = totalMs / float64(windowSec*1000) * 100
-		if busy > 100 {
-			busy = 100
-		}
 	}
 	o.Metrics = append(o.Metrics,
 		protocol.MetricPoint{Name: prefix + "busy_pct", Value: float64(int(busy*10+0.5)) / 10},
 		protocol.MetricPoint{Name: prefix + "unique_stacks", Value: float64(len(folded))},
+		protocol.MetricPoint{Name: prefix + "threads", Value: float64(threads)},
 	)
 	o.Facts = map[string]string{"profileStage": "active", "pid": strconv.Itoa(pid)}
 }

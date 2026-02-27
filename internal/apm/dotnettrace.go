@@ -39,10 +39,10 @@ const (
 	stackDepthCap  = 64
 )
 
-func FoldSpeedscope(data []byte) (map[string]uint32, float64, error) {
+func FoldSpeedscope(data []byte) (map[string]uint32, float64, int, error) {
 	var f speedscopeFile
 	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	frameName := func(i int) string {
 		if i < 0 || i >= len(f.Shared.Frames) {
@@ -57,18 +57,23 @@ func FoldSpeedscope(data []byte) (map[string]uint32, float64, error) {
 	}
 	folded := map[string]uint32{}
 	totalMs := 0.0
+	threads := 0
 	for _, p := range f.Profiles {
 		if p.Type != "evented" {
 			continue
 		}
+		threads++
 		var stack []int
 		prevAt := 0.0
 		for _, e := range p.Events {
 			if len(stack) > 0 && e.At > prevAt {
-				dur := e.At - prevAt
-				totalMs += dur
-				if len(folded) < foldedStackCap || folded[foldKey(stack, frameName)] > 0 {
-					folded[foldKey(stack, frameName)] += uint32(dur + 0.5)
+				key := foldKey(stack, frameName)
+				if key != "" {
+					dur := e.At - prevAt
+					totalMs += dur
+					if len(folded) < foldedStackCap || folded[key] > 0 {
+						folded[key] += uint32(dur + 0.5)
+					}
 				}
 			}
 			prevAt = e.At
@@ -87,7 +92,17 @@ func FoldSpeedscope(data []byte) (map[string]uint32, float64, error) {
 			delete(folded, k)
 		}
 	}
-	return folded, totalMs, nil
+	return folded, totalMs, threads, nil
+}
+
+func syntheticFrame(name string) bool {
+	switch {
+	case strings.HasPrefix(name, "Process64 "), strings.HasPrefix(name, "Process32 "),
+		strings.HasPrefix(name, "Thread ("), name == "Threads",
+		name == "(Non-Activities)", name == "(Activities)":
+		return true
+	}
+	return false
 }
 
 func foldKey(stack []int, frameName func(int) string) string {
@@ -95,9 +110,13 @@ func foldKey(stack []int, frameName func(int) string) string {
 	if len(s) > stackDepthCap {
 		s = s[len(s)-stackDepthCap:]
 	}
-	names := make([]string, len(s))
-	for i, fr := range s {
-		names[i] = frameName(fr)
+	names := make([]string, 0, len(s))
+	for _, fr := range s {
+		name := frameName(fr)
+		if len(names) == 0 && syntheticFrame(name) {
+			continue
+		}
+		names = append(names, name)
 	}
 	return strings.Join(names, ";")
 }
