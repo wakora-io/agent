@@ -3,6 +3,37 @@ kind: Namespace
 metadata:
   name: wakora
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wakora-agent
+  namespace: wakora
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: wakora-agent-readonly
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: wakora-agent-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: wakora-agent-readonly
+subjects:
+  - kind: ServiceAccount
+    name: wakora-agent
+    namespace: wakora
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -17,11 +48,32 @@ spec:
       labels:
         app: wakora-agent
     spec:
+      serviceAccountName: wakora-agent
       hostPID: true
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       tolerations:
         - operator: Exists
+      initContainers:
+        - name: enroll
+          image: wakora/agent:latest
+          securityContext:
+            readOnlyRootFilesystem: true
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ ! -f /etc/wakora/identity ] && [ -f /var/run/wakora-enroll/teamkey ]; then
+                /usr/local/bin/wakora --key "$(cat /var/run/wakora-enroll/teamkey)"
+              fi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/wakora
+            - name: teamkey
+              mountPath: /var/run/wakora-enroll
+              readOnly: true
       containers:
         - name: agent
           image: wakora/agent:latest
@@ -32,28 +84,11 @@ spec:
             limits:
               cpu: 300m
               memory: 256Mi
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              if [ ! -f /etc/wakora/identity ] && [ -n "$WAKORA_TEAMKEY" ]; then
-                /usr/local/bin/wakora --key "$WAKORA_TEAMKEY"
-              fi
-              exec /usr/local/bin/wakora
-          env:
-            - name: WAKORA_TEAMKEY
-              valueFrom:
-                secretKeyRef:
-                  name: wakora-key
-                  key: teamkey
-                  optional: true
           volumeMounts:
             - name: config
               mountPath: /etc/wakora
             - name: state
               mountPath: /var/lib/wakora
-            - name: kubeconfig
-              mountPath: /etc/rancher/k3s
-              readOnly: true
       volumes:
         - name: config
           hostPath:
@@ -63,7 +98,10 @@ spec:
           hostPath:
             path: /var/lib/wakora
             type: DirectoryOrCreate
-        - name: kubeconfig
-          hostPath:
-            path: /etc/rancher/k3s
-            type: DirectoryOrCreate
+        - name: teamkey
+          secret:
+            secretName: wakora-key
+            optional: true
+            items:
+              - key: teamkey
+                path: teamkey

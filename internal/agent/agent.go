@@ -312,9 +312,6 @@ func (a *Agent) sendMetrics(conn transport.Conn) error {
 		return nil
 	}
 	if err := conn.Send(msg); err != nil {
-		if raw, e := json.Marshal(msg); e == nil {
-			_ = a.ring.Append(raw)
-		}
 		return err
 	}
 	return a.observePoints(conn, batch.Points)

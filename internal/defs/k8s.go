@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -28,33 +29,22 @@ var k8sKubeconfigCandidates = []string{
 	"/var/lib/k0s/pki/admin.conf",
 }
 
+const k8sServiceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+
 type kubeClient struct {
 	base   string
+	token  string
 	client *http.Client
 }
 
 func runK8s(o *Outcome, service string, p protocol.Probe, timeout time.Duration) {
-	path := p.Path
-	if path == "" {
-		for _, c := range k8sKubeconfigCandidates {
-			if _, err := os.Stat(c); err == nil {
-				path = c
-				break
-			}
-		}
-	}
-	if path == "" {
-		o.Check.Status = "fail"
-		o.Check.Error = "no kubeconfig found (set probe path)"
-		return
-	}
-	o.Check.Target = path
-	kc, err := newKubeClient(path, timeout)
+	kc, source, err := connectKube(p.Path, timeout)
 	if err != nil {
 		o.Check.Status = "fail"
 		o.Check.Error = err.Error()
 		return
 	}
+	o.Check.Target = source
 
 	version := kc.version()
 	nodes, nodesReady, kubelet, err := kc.nodes()
@@ -165,6 +155,58 @@ func sortedKeysByCount(m map[string]int) []string {
 	return keys
 }
 
+func connectKube(explicitPath string, timeout time.Duration) (*kubeClient, string, error) {
+	if kc, err := inClusterKubeClient(timeout); err == nil {
+		return kc, "in-cluster serviceaccount", nil
+	}
+	path := explicitPath
+	if path == "" {
+		for _, c := range k8sKubeconfigCandidates {
+			if _, err := os.Stat(c); err == nil {
+				path = c
+				break
+			}
+		}
+	}
+	if path == "" {
+		return nil, "", fmt.Errorf("no in-cluster token and no kubeconfig found (set probe path)")
+	}
+	kc, err := newKubeClient(path, timeout)
+	if err != nil {
+		return nil, "", err
+	}
+	return kc, path, nil
+}
+
+func inClusterKubeClient(timeout time.Duration) (*kubeClient, error) {
+	host := os.Getenv("KUBERNETES_SERVICE_HOST")
+	port := os.Getenv("KUBERNETES_SERVICE_PORT")
+	if host == "" || port == "" {
+		return nil, fmt.Errorf("not in cluster")
+	}
+	token, err := os.ReadFile(k8sServiceAccountDir + "/token")
+	if err != nil {
+		return nil, err
+	}
+	ca, err := os.ReadFile(k8sServiceAccountDir + "/ca.crt")
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("serviceaccount ca.crt unparseable")
+	}
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	cfg := &tls.Config{RootCAs: pool}
+	return &kubeClient{
+		base:   "https://" + net.JoinHostPort(host, port),
+		token:  strings.TrimSpace(string(token)),
+		client: &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: cfg}},
+	}, nil
+}
+
 func newKubeClient(kubeconfig string, timeout time.Duration) (*kubeClient, error) {
 	raw, err := os.ReadFile(kubeconfig)
 	if err != nil {
@@ -177,23 +219,21 @@ func newKubeClient(kubeconfig string, timeout time.Duration) (*kubeClient, error
 	if cert == nil || key == nil {
 		return nil, fmt.Errorf("kubeconfig %s: no inline client cert (token auth not supported)", kubeconfig)
 	}
+	if ca == nil {
+		return nil, fmt.Errorf("kubeconfig %s: no certificate-authority-data (refusing to skip server verification)", kubeconfig)
+	}
 	pair, err := tls.X509KeyPair(cert, key)
 	if err != nil {
 		return nil, err
 	}
-	cfg := &tls.Config{Certificates: []tls.Certificate{pair}}
-	if ca != nil {
-		pool := x509.NewCertPool()
-		if pool.AppendCertsFromPEM(ca) {
-			cfg.RootCAs = pool
-		}
-	}
-	if cfg.RootCAs == nil {
-		cfg.InsecureSkipVerify = true
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("kubeconfig %s: certificate-authority-data unparseable", kubeconfig)
 	}
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{pair}, RootCAs: pool}
 	return &kubeClient{
 		base:   strings.TrimRight(server, "/"),
 		client: &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: cfg}},
@@ -233,7 +273,14 @@ func parseKubeconfig(raw string) (server string, ca, cert, key []byte) {
 }
 
 func (kc *kubeClient) get(path string, out any) error {
-	resp, err := kc.client.Get(kc.base + path)
+	req, err := http.NewRequest(http.MethodGet, kc.base+path, nil)
+	if err != nil {
+		return err
+	}
+	if kc.token != "" {
+		req.Header.Set("Authorization", "Bearer "+kc.token)
+	}
+	resp, err := kc.client.Do(req)
 	if err != nil {
 		return err
 	}

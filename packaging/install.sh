@@ -48,18 +48,24 @@ if [ "$WANT" != "$GOT" ]; then
   rm -f "$TMP"; exit 1
 fi
 
-if [ -n "$PUBKEY" ] && [ "$PUBKEY" != "__WAKORA_PUBKEY__" ] && command -v openssl >/dev/null 2>&1; then
-  if curl -fsSL "$BASE/bin/$ASSET.sig" -o "$TMP.sig" 2>/dev/null && [ -s "$TMP.sig" ]; then
-    printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA%s\n-----END PUBLIC KEY-----\n' "$PUBKEY" > "$TMP.pem"
-    openssl base64 -d -A -in "$TMP.sig" -out "$TMP.sigbin" 2>/dev/null || true
-    if openssl pkeyutl -verify -pubin -inkey "$TMP.pem" -rawin -in "$TMP" -sigfile "$TMP.sigbin" >/dev/null 2>&1; then
-      echo "signature verified"
-    else
-      echo "binary signature INVALID - aborting" >&2
-      rm -f "$TMP" "$TMP.sig" "$TMP.pem" "$TMP.sigbin"; exit 1
-    fi
-    rm -f "$TMP.sig" "$TMP.pem" "$TMP.sigbin"
+if [ -n "$PUBKEY" ] && [ "$PUBKEY" != "__WAKORA_PUBKEY__" ]; then
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "openssl required to verify the signed binary but not found - aborting" >&2
+    rm -f "$TMP"; exit 1
   fi
+  if ! curl -fsSL "$BASE/bin/$ASSET.sig" -o "$TMP.sig" 2>/dev/null || [ ! -s "$TMP.sig" ]; then
+    echo "binary signature missing from channel - aborting" >&2
+    rm -f "$TMP" "$TMP.sig"; exit 1
+  fi
+  printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA%s\n-----END PUBLIC KEY-----\n' "$PUBKEY" > "$TMP.pem"
+  openssl base64 -d -A -in "$TMP.sig" -out "$TMP.sigbin" 2>/dev/null || true
+  if openssl pkeyutl -verify -pubin -inkey "$TMP.pem" -rawin -in "$TMP" -sigfile "$TMP.sigbin" >/dev/null 2>&1; then
+    echo "signature verified"
+  else
+    echo "binary signature INVALID - aborting" >&2
+    rm -f "$TMP" "$TMP.sig" "$TMP.pem" "$TMP.sigbin"; exit 1
+  fi
+  rm -f "$TMP.sig" "$TMP.pem" "$TMP.sigbin"
 fi
 
 install -m 0755 "$TMP" /usr/local/bin/wakora
