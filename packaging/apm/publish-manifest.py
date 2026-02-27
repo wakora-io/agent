@@ -10,7 +10,8 @@ meta = dict(kv.split("=", 1) for kv in sys.argv[1:])
 
 artifacts = []
 for f in sorted(os.listdir(apmDir)):
-    if not (f.endswith(".tar.gz") or f.endswith(".so")):
+    isTool = f.startswith("dotnet-trace-")
+    if not (f.endswith(".tar.gz") or f.endswith(".so") or isTool):
         continue
     p = os.path.join(apmDir, f)
     digest = hashlib.sha256(open(p, "rb").read()).hexdigest()

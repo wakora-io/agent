@@ -674,7 +674,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
-			if p.Type == "apmprofile" {
+			if p.Type == "apmprofile" || p.Type == "apmdotnetprofile" {
 				a.startProfile(d.Service, p)
 				continue
 			}
@@ -1141,7 +1141,12 @@ func (a *Agent) startProfile(service string, p protocol.Probe) {
 	a.profiling[service] = true
 	a.mu.Unlock()
 	go func() {
-		o := defs.RunAPMProfile(service, p)
+		var o defs.Outcome
+		if p.Type == "apmdotnetprofile" {
+			o = defs.RunAPMDotnetProfile(service, p, a.cfg.StateDir())
+		} else {
+			o = defs.RunAPMProfile(service, p)
+		}
 		a.mu.Lock()
 		a.profiling[service] = false
 		a.mu.Unlock()
@@ -1160,6 +1165,11 @@ func (a *Agent) emitProfile(conn transport.Conn, o defs.Outcome) error {
 	}
 	if err := a.sendProbeMetrics(conn, o.Metrics); err != nil {
 		return err
+	}
+	if len(o.Facts) > 0 {
+		if svc, _, ok := strings.Cut(o.Check.CheckID, "/"); ok {
+			_, _ = a.mergeServiceFacts(svc, o.Facts)
+		}
 	}
 	if len(o.ProfileStacks) > 0 {
 		pb := o.ProfileMeta
