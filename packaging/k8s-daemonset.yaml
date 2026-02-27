@@ -1,7 +1,3 @@
-# Wakora agent as a DaemonSet: one agent per node, host visibility.
-# Registration: create the secret once per cluster with your team key -
-#   kubectl -n wakora create secret generic wakora-key --from-literal=teamkey=wkt_...
-# The agent registers on first start and persists identity in the hostPath dir.
 apiVersion: v1
 kind: Namespace
 metadata:
