@@ -39,8 +39,6 @@ const (
 	stackDepthCap  = 64
 )
 
-// FoldSpeedscope turns a dotnet-trace speedscope export (evented profiles, one per
-// thread) into folded stacks weighted by milliseconds spent with that exact stack.
 func FoldSpeedscope(data []byte) (map[string]uint32, float64, error) {
 	var f speedscopeFile
 	if err := json.Unmarshal(data, &f); err != nil {
@@ -104,9 +102,6 @@ func foldKey(stack []int, frameName func(int) string) string {
 	return strings.Join(names, ";")
 }
 
-// ParseDotnetTracePS extracts candidate pids from `dotnet-trace ps` output, keeping
-// only lines whose process name/path matches the pattern (empty = any). The tool's
-// own ephemeral process is never a target.
 func ParseDotnetTracePS(out, pattern string) []int {
 	var pids []int
 	for _, line := range strings.Split(out, "\n") {

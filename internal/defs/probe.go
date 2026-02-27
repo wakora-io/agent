@@ -192,7 +192,6 @@ func runFile(o *Outcome, service string, p protocol.Probe) {
 	if p.Age {
 		mtime := fi.ModTime()
 		if fi.IsDir() {
-			// backup dirs hold rotated artifacts; freshness = the newest one
 			if newest, ok := newestFileIn(p.Path); ok {
 				mtime = newest
 			}
@@ -224,8 +223,6 @@ func runFile(o *Outcome, service string, p protocol.Probe) {
 	}
 }
 
-// dir mtimes count too: borg/restic repos mutate a subdir (data/, snapshots/)
-// per backup while the top-level files stay put
 func newestFileIn(dir string) (time.Time, bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

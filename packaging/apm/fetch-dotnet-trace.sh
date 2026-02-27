@@ -1,8 +1,4 @@
 #!/bin/bash
-# Redistribute the official dotnet-trace single-file binaries into the signed APM
-# channel. aka.ms serves the latest diagnostics release from the MS CDN over HTTPS;
-# no upstream checksum file exists for these links, so integrity for the fleet is
-# anchored by OUR signed manifest (sha256 computed at publish, ed25519 on .81).
 set -euo pipefail
 OUT="$1"
 mkdir -p "$OUT"
@@ -23,8 +19,6 @@ for name in "${!MAP[@]}"; do
   chmod 0755 "$OUT/$name"
 done
 
-# --version smoke: self-contained singles still need base libs; invariant
-# globalization avoids an ICU requirement on the runner
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 if ! "$OUT/dotnet-trace-linux-glibc-amd64" --version | head -1 > "$OUT/dotnet-trace.version"; then

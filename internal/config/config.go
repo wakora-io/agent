@@ -62,12 +62,9 @@ func Load(dir string) (*Config, error) {
 		c.OTLPBind = splitList(v)
 	}
 	id, err := loadIdentity(dir)
-	if err != nil {
-		return nil, err
-	}
 	c.ServerID = id.uuid
 	c.Key = id.key
-	return c, nil
+	return c, err
 }
 
 func (c *Config) ReloadIdentity() error {

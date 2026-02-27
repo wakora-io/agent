@@ -72,6 +72,8 @@ func main() {
 		return
 	}
 
+	secret.InitSeed(*configDir)
+
 	if args := flag.Args(); len(args) > 0 && args[0] == "secret" {
 		runSecret(*configDir, args[1:])
 		return
@@ -84,7 +86,10 @@ func main() {
 
 	cfg, err := config.Load(*configDir)
 	if err != nil {
-		log.Fatal(err)
+		if !underServiceManager() {
+			log.Fatal(err)
+		}
+		log.Printf("%v - idle until re-registered", err)
 	}
 	if *baseline {
 		cfg.Baseline = true
@@ -109,7 +114,6 @@ func main() {
 	if *publisherKey != "" {
 		pubKey = *publisherKey
 	}
-	secret.InitSeed(*configDir)
 	httpc := transport.PinnedClient(pin)
 
 	if *key != "" || len(overrides) > 0 {

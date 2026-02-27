@@ -18,9 +18,6 @@ const (
 	dotnetProfileMaxStacks = 200
 )
 
-// RunAPMDotnetProfile captures a CPU flamegraph of a running .NET process via the
-// provisioned dotnet-trace tool (EventPipe SampleProfiler): collect a short window
-// into a nettrace, convert to speedscope, fold stacks by self-time.
 func RunAPMDotnetProfile(service string, p protocol.Probe, stateDir string) Outcome {
 	o := Outcome{Check: protocol.CheckResult{
 		CheckID:   service + "/" + p.Name,
@@ -70,8 +67,6 @@ func runAPMDotnetProfile(o *Outcome, service string, p protocol.Probe, stateDir 
 	defer os.RemoveAll(tmpDir)
 	traceFile := filepath.Join(tmpDir, "cpu.nettrace")
 
-	// explicit provider instead of --profile cpu-sampling: profile names changed
-	// across dotnet-trace releases (2026 builds reject the old name)
 	collect := exec.Command(toolPath, "collect",
 		"--process-id", strconv.Itoa(pid),
 		"--providers", "Microsoft-DotNETCore-SampleProfiler",
@@ -141,9 +136,6 @@ func dotnetTargetPid(toolPath, pattern string) int {
 	return 0
 }
 
-// dotnet-trace is a self-contained .NET tool: point runtime scratch paths at the
-// temp dir so it never writes under the agent's own HOME/state. TMPDIR must stay
-// untouched on linux - the EventPipe diagnostic sockets it discovers live in /tmp.
 func dotnetToolEnv(tmpDir string) []string {
 	env := append(os.Environ(),
 		"DOTNET_CLI_TELEMETRY_OPTOUT=1",
