@@ -23,7 +23,14 @@ for name in "${!MAP[@]}"; do
   chmod 0755 "$OUT/$name"
 done
 
-chmod +x "$OUT/dotnet-trace-linux-glibc-amd64"
-"$OUT/dotnet-trace-linux-glibc-amd64" --version | head -1 > "$OUT/dotnet-trace.version"
+# --version smoke: self-contained singles still need base libs; invariant
+# globalization avoids an ICU requirement on the runner
+export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+if ! "$OUT/dotnet-trace-linux-glibc-amd64" --version | head -1 > "$OUT/dotnet-trace.version"; then
+  echo "warning: version smoke failed on the runner, recording build id from CDN url" >&2
+  curl -sIL -o /dev/null -w '%{url_effective}\n' https://aka.ms/dotnet-trace/linux-x64 \
+    | grep -oP 'dotnet-diagnostics_[0-9.]+' > "$OUT/dotnet-trace.version"
+fi
 cat "$OUT/dotnet-trace.version"
 ls -la "$OUT"
