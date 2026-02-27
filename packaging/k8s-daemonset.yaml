@@ -1,0 +1,73 @@
+# Wakora agent as a DaemonSet: one agent per node, host visibility.
+# Registration: create the secret once per cluster with your team key -
+#   kubectl -n wakora create secret generic wakora-key --from-literal=teamkey=wkt_...
+# The agent registers on first start and persists identity in the hostPath dir.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wakora
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: wakora-agent
+  namespace: wakora
+spec:
+  selector:
+    matchLabels:
+      app: wakora-agent
+  template:
+    metadata:
+      labels:
+        app: wakora-agent
+    spec:
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: agent
+          image: wakora/agent:latest
+          securityContext:
+            capabilities:
+              add: ["SYS_PTRACE"]
+          resources:
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ ! -f /etc/wakora/identity ] && [ -n "$WAKORA_TEAMKEY" ]; then
+                /usr/local/bin/wakora --key "$WAKORA_TEAMKEY"
+              fi
+              exec /usr/local/bin/wakora
+          env:
+            - name: WAKORA_TEAMKEY
+              valueFrom:
+                secretKeyRef:
+                  name: wakora-key
+                  key: teamkey
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/wakora
+            - name: state
+              mountPath: /var/lib/wakora
+            - name: kubeconfig
+              mountPath: /etc/rancher/k3s
+              readOnly: true
+      volumes:
+        - name: config
+          hostPath:
+            path: /etc/wakora
+            type: DirectoryOrCreate
+        - name: state
+          hostPath:
+            path: /var/lib/wakora
+            type: DirectoryOrCreate
+        - name: kubeconfig
+          hostPath:
+            path: /etc/rancher/k3s
+            type: DirectoryOrCreate
