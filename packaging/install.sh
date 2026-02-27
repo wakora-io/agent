@@ -24,7 +24,8 @@ case "$OS" in
   Linux)
     case "$ARCH" in
       x86_64|amd64) ASSET="wakora" ;;
-      *) echo "unsupported linux arch: $ARCH (only amd64 published)" >&2; exit 1 ;;
+      aarch64|arm64) ASSET="wakora-linux-arm64" ;;
+      *) echo "unsupported linux arch: $ARCH (amd64/arm64 published)" >&2; exit 1 ;;
     esac
     SHACMD="sha256sum" ;;
   Darwin)

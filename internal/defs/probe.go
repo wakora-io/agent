@@ -40,6 +40,8 @@ var execAllowlist = map[string]bool{
 	"vsftpd": true, "pveversion": true, "qm": true, "pct": true, "pvesm": true,
 	"mongosh": true, "mongo": true, "systemctl": true,
 	"varnishstat": true, "unbound-control": true, "exim": true, "exim4": true,
+	"pmgsh": true, "pmgversion": true,
+	"restic": true, "borg": true,
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {
@@ -170,35 +172,78 @@ func runFile(o *Outcome, service string, p protocol.Probe) {
 		o.Check.Error = "file path not set"
 		return
 	}
-	data, err := os.ReadFile(p.Path)
-	exists := 1.0
+	fi, err := os.Stat(p.Path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			o.Check.Status = "fail"
 			o.Check.Error = err.Error()
 			return
 		}
-		exists = 0
-		data = nil
+		o.Check.Status = "ok"
+		o.Metrics = append(o.Metrics, protocol.MetricPoint{
+			Name: "svc." + service + "." + p.Name + ".exists", Value: 0,
+		})
+		return
+	}
+	o.Check.Status = "ok"
+	o.Metrics = append(o.Metrics, protocol.MetricPoint{
+		Name: "svc." + service + "." + p.Name + ".exists", Value: 1,
+	})
+	if p.Age {
+		mtime := fi.ModTime()
+		if fi.IsDir() {
+			// backup dirs hold rotated artifacts; freshness = the newest one
+			if newest, ok := newestFileIn(p.Path); ok {
+				mtime = newest
+			}
+		}
+		o.Metrics = append(o.Metrics, protocol.MetricPoint{
+			Name: "svc." + service + "." + p.Name + ".age_sec", Value: time.Since(mtime).Seconds(),
+		})
+	}
+	if fi.IsDir() || (len(p.Metrics) == 0 && len(p.Facts) == 0 && !p.Hash) {
+		return
+	}
+	data, err := os.ReadFile(p.Path)
+	if err != nil {
+		o.Check.Status = "fail"
+		o.Check.Error = err.Error()
+		return
 	}
 	if len(data) > 1<<20 {
 		data = data[:1<<20]
 	}
-	o.Check.Status = "ok"
-	o.Metrics = append(o.Metrics, protocol.MetricPoint{
-		Name: "svc." + service + "." + p.Name + ".exists", Value: exists,
-	})
-	if exists == 1 {
-		applyMetricRules(o, p.Metrics, data)
-		applyFactRules(o, p.Facts, data)
-		if p.Hash {
-			sum := sha256.Sum256(data)
-			if o.Facts == nil {
-				o.Facts = map[string]string{}
-			}
-			o.Facts[p.Name+"Sha256"] = hex.EncodeToString(sum[:])
+	applyMetricRules(o, p.Metrics, data)
+	applyFactRules(o, p.Facts, data)
+	if p.Hash {
+		sum := sha256.Sum256(data)
+		if o.Facts == nil {
+			o.Facts = map[string]string{}
+		}
+		o.Facts[p.Name+"Sha256"] = hex.EncodeToString(sum[:])
+	}
+}
+
+// dir mtimes count too: borg/restic repos mutate a subdir (data/, snapshots/)
+// per backup while the top-level files stay put
+func newestFileIn(dir string) (time.Time, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var newest time.Time
+	found := false
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+			found = true
 		}
 	}
+	return newest, found
 }
 
 func applyMetricRules(o *Outcome, rules []protocol.ParseRule, body []byte) {

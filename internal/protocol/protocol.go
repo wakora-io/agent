@@ -172,6 +172,7 @@ type Probe struct {
 	Path         string            `json:"path,omitempty"`
 	PathFrom     string            `json:"pathFrom,omitempty"`
 	Hash         bool              `json:"hash,omitempty"`
+	Age          bool              `json:"age,omitempty"`
 	Counters     []Counter         `json:"counters,omitempty"`
 	Target       string            `json:"target,omitempty"`
 	Get          []OID             `json:"get,omitempty"`

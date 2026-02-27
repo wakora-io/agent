@@ -28,6 +28,7 @@ func Collect() []Fact {
 	facts = append(facts, netFacts()...)
 	facts = append(facts, initFact())
 	facts = append(facts, capFacts()...)
+	facts = append(facts, cronJobs()...)
 	return facts
 }
 
@@ -349,6 +350,111 @@ func parseApkDB(data string) []Fact {
 	}
 	commit()
 	return sortedFacts("package", agg)
+}
+
+type cronInfo struct {
+	Schedule string `json:"schedule"`
+	User     string `json:"user,omitempty"`
+	Source   string `json:"source"`
+}
+
+const cronJobCap = 300
+
+func cronJobs() []Fact {
+	agg := map[string]*cronInfo{}
+	parseCrontab(agg, "/etc/crontab", "", true)
+	if entries, err := os.ReadDir("/etc/cron.d"); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				parseCrontab(agg, filepath.Join("/etc/cron.d", e.Name()), "", true)
+			}
+		}
+	}
+	for _, spool := range []string{"/var/spool/cron/crontabs", "/var/spool/cron"} {
+		entries, err := os.ReadDir(spool)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				parseCrontab(agg, filepath.Join(spool, e.Name()), e.Name(), false)
+			}
+		}
+		break
+	}
+	for _, p := range []struct{ dir, sched string }{
+		{"/etc/cron.hourly", "@hourly"}, {"/etc/cron.daily", "@daily"},
+		{"/etc/cron.weekly", "@weekly"}, {"/etc/cron.monthly", "@monthly"},
+	} {
+		entries, err := os.ReadDir(p.dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			addCronEntry(agg, "root", filepath.Join(p.dir, e.Name()), p.sched, p.dir)
+		}
+	}
+	return sortedFacts("cronjob", agg)
+}
+
+func parseCrontab(agg map[string]*cronInfo, path, spoolUser string, hasUserField bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		sched, user, cmd, ok := parseCronLine(line, spoolUser, hasUserField)
+		if ok {
+			addCronEntry(agg, user, cmd, sched, path)
+		}
+	}
+}
+
+func parseCronLine(line, spoolUser string, hasUserField bool) (sched, user, cmd string, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return
+	}
+	f := strings.Fields(line)
+	schedLen := 5
+	if strings.HasPrefix(f[0], "@") {
+		schedLen = 1
+	}
+	if strings.ContainsRune(f[0], '=') {
+		return
+	}
+	need := schedLen + 1
+	if hasUserField {
+		need++
+	}
+	if len(f) < need {
+		return
+	}
+	sched = strings.Join(f[:schedLen], " ")
+	rest := f[schedLen:]
+	if hasUserField {
+		user, rest = rest[0], rest[1:]
+	} else {
+		user = spoolUser
+	}
+	cmd = strings.Join(rest, " ")
+	return sched, user, cmd, true
+}
+
+func addCronEntry(agg map[string]*cronInfo, user, cmd, sched, source string) {
+	if len(agg) >= cronJobCap {
+		return
+	}
+	if len(cmd) > 200 {
+		cmd = cmd[:200]
+	}
+	key := user + ":" + cmd
+	if agg[key] == nil {
+		agg[key] = &cronInfo{Schedule: sched, User: user, Source: source}
+	}
 }
 
 type unitInfo struct {

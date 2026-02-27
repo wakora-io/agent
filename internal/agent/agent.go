@@ -66,6 +66,8 @@ type Agent struct {
 
 const pendingCap = 8192
 
+var probeTick = 15 * time.Second
+
 func (a *Agent) SetUpdateKick(ch chan struct{}) { a.updateKick = ch }
 
 type trackedConn struct {
@@ -218,7 +220,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		defer dt.Stop()
 		dc := time.NewTicker(discoveryCheck)
 		defer dc.Stop()
-		pt := time.NewTicker(15 * time.Second)
+		pt := time.NewTicker(probeTick)
 		defer pt.Stop()
 		for {
 			select {

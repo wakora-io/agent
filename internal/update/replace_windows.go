@@ -2,9 +2,16 @@
 
 package update
 
-import "os"
+import (
+	"os"
+	"runtime"
+)
 
 func assetNames() (bin, sum string) {
+	if runtime.GOARCH != "amd64" {
+		base := "/wakora-windows-" + runtime.GOARCH + ".exe"
+		return base, base + ".sha256"
+	}
 	return "/wakora.exe", "/wakora.exe.sha256"
 }
 
