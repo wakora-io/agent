@@ -32,6 +32,9 @@ var phpOffsetTable = map[string]phpOffsets{
 	"8.3": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 144, zstrLen: 16, zstrVal: 24, ceName: 8},
 	"8.2": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 152, zstrLen: 16, zstrVal: 24, ceName: 8},
 	"8.1": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 144, zstrLen: 16, zstrVal: 24, ceName: 8},
+	"8.0": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 144, zstrLen: 16, zstrVal: 24, ceName: 8},
+	"7.4": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 136, zstrLen: 16, zstrVal: 24, ceName: 8},
+	"7.3": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 128, zstrLen: 16, zstrVal: 24, ceName: 8},
 }
 
 const (

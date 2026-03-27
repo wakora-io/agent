@@ -99,6 +99,11 @@ func PHPSDKBundleFor(versionShort string) string {
 	return ""
 }
 
+func OtelSupported(versionShort string) bool {
+	major, _, ok := splitMinor(versionShort)
+	return ok && major >= 8
+}
+
 func splitMinor(versionShort string) (major, minor int, ok bool) {
 	parts := strings.SplitN(versionShort, ".", 2)
 	if len(parts) != 2 {

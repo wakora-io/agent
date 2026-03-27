@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"wakora.io/agent/internal/protocol"
@@ -95,8 +96,21 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 		return hosts[i].Port < hosts[j].Port
 	})
-	for _, h := range hosts {
-		r := probeVhost(service, h, timeout)
+	results := make([]vhostResult, len(hosts))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, h := range hosts {
+		wg.Add(1)
+		go func(i int, h vhost) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = probeVhost(service, h, timeout)
+		}(i, h)
+	}
+	wg.Wait()
+	for i, h := range hosts {
+		r := results[i]
 		o.Extra = append(o.Extra, r.check)
 
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
@@ -292,13 +306,15 @@ func apacheEnvLogDir(path string) string {
 	return v
 }
 
-var nginxServerRe = regexp.MustCompile(`^server\s*\{?`)
+var nginxServerRe = regexp.MustCompile(`^server\s*(\{|$)`)
 
 func parseNginxVhosts(out []byte) []vhost {
 	var hosts []vhost
 	depth := 0
 	inServer := false
+	braceOpen := false
 	entryDepth := 0
+	carry := ""
 	var names []string
 	var listens []vhost
 
@@ -328,40 +344,73 @@ func parseNginxVhosts(out []byte) []vhost {
 		}
 		if !inServer && nginxServerRe.MatchString(trimmed) {
 			inServer = true
+			braceOpen = false
 			entryDepth = depth
+			carry = ""
 		}
 		if inServer {
-			if strings.HasPrefix(trimmed, "server_name ") {
-				for _, n := range strings.Fields(strings.TrimSuffix(strings.TrimPrefix(trimmed, "server_name "), ";")) {
-					names = append(names, strings.TrimSuffix(n, ";"))
-				}
+			stmts, tail := splitNginxStatements(carry + " " + trimmed)
+			for _, st := range stmts {
+				applyNginxDirective(st, &names, &listens)
 			}
-			if strings.HasPrefix(trimmed, "listen ") {
-				fields := strings.Fields(strings.TrimSuffix(strings.TrimPrefix(trimmed, "listen "), ";"))
-				if len(fields) > 0 {
-					addr := fields[0]
-					if i := strings.LastIndexByte(addr, ':'); i >= 0 {
-						addr = addr[i+1:]
-					}
-					if port, err := strconv.Atoi(addr); err == nil && port > 0 {
-						ssl := false
-						for _, f := range fields[1:] {
-							if f == "ssl" {
-								ssl = true
-							}
-						}
-						listens = append(listens, vhost{Port: port, SSL: ssl})
-					}
-				}
+			carry = ""
+			if f := strings.Fields(tail); len(f) > 0 && (f[0] == "server_name" || f[0] == "listen") {
+				carry = tail
+			}
+			if strings.IndexByte(trimmed, '{') >= 0 {
+				braceOpen = true
 			}
 		}
 		depth += strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
-		if inServer && depth <= entryDepth {
+		if inServer && braceOpen && depth <= entryDepth {
 			flush()
 			inServer = false
+			carry = ""
 		}
 	}
 	return dedupeVhosts(hosts)
+}
+
+func splitNginxStatements(line string) ([]string, string) {
+	var stmts []string
+	start := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case ';', '{', '}':
+			if s := strings.TrimSpace(line[start:i]); s != "" {
+				stmts = append(stmts, s)
+			}
+			start = i + 1
+		}
+	}
+	return stmts, strings.TrimSpace(line[start:])
+}
+
+func applyNginxDirective(stmt string, names *[]string, listens *[]vhost) {
+	fields := strings.Fields(stmt)
+	if len(fields) < 2 {
+		return
+	}
+	switch fields[0] {
+	case "server_name":
+		*names = append(*names, fields[1:]...)
+	case "listen":
+		addr := fields[1]
+		if i := strings.LastIndexByte(addr, ':'); i >= 0 {
+			addr = addr[i+1:]
+		}
+		port, err := strconv.Atoi(addr)
+		if err != nil || port <= 0 {
+			return
+		}
+		ssl := false
+		for _, f := range fields[2:] {
+			if f == "ssl" {
+				ssl = true
+			}
+		}
+		*listens = append(*listens, vhost{Port: port, SSL: ssl})
+	}
 }
 
 var (

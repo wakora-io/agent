@@ -305,6 +305,10 @@ func fileExists(p string) bool {
 }
 
 func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st *sapiTarget, stageID, stageKey string) {
+	if !apm.OtelSupported(st.rt.VersionShort) {
+		o.Facts[stageKey] = "php " + st.rt.VersionShort + " unsupported for otel (needs >= 8.0)"
+		return
+	}
 	artifact := apm.OtelArtifactName(st.rt)
 	if artifact == "" {
 		o.Facts[stageKey] = "blocked: incomplete runtime fingerprint"

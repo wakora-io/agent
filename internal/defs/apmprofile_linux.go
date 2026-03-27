@@ -32,17 +32,28 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 		o.Check.Error = "no php-fpm worker processes found"
 		return
 	}
-	version := p.Options["phpVersion"]
-	if version == "" {
-		version = detectPHPMinor(pids[0])
-	}
-	if version == "" {
-		o.Check.Status = "fail"
-		o.Check.Error = "could not determine php version (set options.phpVersion)"
-		return
-	}
+	forced := p.Options["phpVersion"]
+	verByExe := map[string]string{}
 	var samplers []*apm.PHPSampler
+	seen := map[string]bool{}
 	for _, pid := range pids {
+		version := forced
+		if version == "" {
+			exe, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+			if err != nil {
+				continue
+			}
+			v, ok := verByExe[exe]
+			if !ok {
+				v = detectPHPMinorPid(pid)
+				verByExe[exe] = v
+			}
+			version = v
+		}
+		if version == "" {
+			continue
+		}
+		seen[version] = true
 		s, err := apm.NewPHPSampler(pid, version)
 		if err != nil {
 			continue
@@ -50,8 +61,13 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 		samplers = append(samplers, s)
 	}
 	if len(samplers) == 0 {
+		versions := make([]string, 0, len(seen))
+		for v := range seen {
+			versions = append(versions, v)
+		}
+		sort.Strings(versions)
 		o.Check.Status = "fail"
-		o.Check.Error = "no attachable php-fpm workers (php " + version + " offsets or symbol)"
+		o.Check.Error = "no attachable php-fpm workers (php " + strings.Join(versions, ",") + " offsets or symbol)"
 		return
 	}
 
@@ -126,12 +142,8 @@ func topOwners(owners map[string]uint32, max int) []string {
 	return keys
 }
 
-func detectPHPMinor(pid int) string {
-	exe, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
-	if err != nil {
-		return ""
-	}
-	out, err := exec.Command(exe, "-n", "-v").Output()
+func detectPHPMinorPid(pid int) string {
+	out, err := exec.Command("/proc/"+strconv.Itoa(pid)+"/exe", "-n", "-v").Output()
 	if err != nil {
 		return ""
 	}
