@@ -11,6 +11,7 @@ const (
 	TypeConfig    MessageType = "config"
 	TypeCommand   MessageType = "command"
 	TypeCheck     MessageType = "check"
+	TypeChecks    MessageType = "checks"
 	TypeEvent     MessageType = "event"
 	TypeSpans     MessageType = "spans"
 	TypeProfile   MessageType = "profile"
@@ -229,6 +230,12 @@ type CheckResult struct {
 	LatencyMs float64 `json:"latencyMs"`
 	Error     string  `json:"error,omitempty"`
 	Timestamp int64   `json:"ts"`
+}
+
+type CheckBatch struct {
+	ServerID string        `json:"serverId"`
+	Hostname string        `json:"hostname,omitempty"`
+	Checks   []CheckResult `json:"checks"`
 }
 
 func Encode(t MessageType, seq uint64, v any) (Message, error) {

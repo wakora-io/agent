@@ -97,7 +97,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		return hosts[i].Port < hosts[j].Port
 	})
 	results := make([]vhostResult, len(hosts))
-	sem := make(chan struct{}, 8)
+	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
 	for i, h := range hosts {
 		wg.Add(1)

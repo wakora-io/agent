@@ -695,16 +695,29 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			default:
 				o = defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			}
-			for _, check := range append([]protocol.CheckResult{o.Check}, o.Extra...) {
-				check.ServerID = a.cfg.ServerID
-				check.Hostname = a.cfg.Hostname
+			checks := append([]protocol.CheckResult{o.Check}, o.Extra...)
+			for i := range checks {
+				checks[i].ServerID = a.cfg.ServerID
+				checks[i].Hostname = a.cfg.Hostname
+			}
+			if len(checks) == 1 {
 				a.seq++
-				msg, err := protocol.Encode(protocol.TypeCheck, a.seq, check)
-				if err != nil {
-					continue
+				if msg, err := protocol.Encode(protocol.TypeCheck, a.seq, checks[0]); err == nil {
+					if err := conn.Send(msg); err != nil {
+						return err
+					}
 				}
-				if err := conn.Send(msg); err != nil {
-					return err
+			} else {
+				a.seq++
+				msg, err := protocol.Encode(protocol.TypeChecks, a.seq, protocol.CheckBatch{
+					ServerID: a.cfg.ServerID,
+					Hostname: a.cfg.Hostname,
+					Checks:   checks,
+				})
+				if err == nil {
+					if err := conn.Send(msg); err != nil {
+						return err
+					}
 				}
 			}
 			if len(o.Metrics) > 0 {
