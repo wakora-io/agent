@@ -187,10 +187,10 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		defer a.connected.Store(false)
 		conn = &trackedConn{inner: conn, a: a}
 		defer a.spoolPending()
-		a.drainSpool(conn)
 		if err := a.sendHeartbeat(conn); err != nil {
 			return err
 		}
+		a.drainSpool(conn)
 		if err := a.sendMetrics(conn); err != nil {
 			return err
 		}

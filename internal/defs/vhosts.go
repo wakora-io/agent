@@ -167,16 +167,17 @@ func probeVhost(service string, h vhost, timeout time.Duration) vhostResult {
 		return r
 	}
 	req.Host = hostHeader
+	tr := &http.Transport{DisableKeepAlives: true}
+	if scheme == "https" {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, ServerName: hostHeader}
+	}
+	defer tr.CloseIdleConnections()
 	client := &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}
-	if scheme == "https" {
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: hostHeader},
-		}
 	}
 	start := time.Now()
 	resp, err := client.Do(req)

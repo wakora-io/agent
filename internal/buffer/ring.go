@@ -122,19 +122,38 @@ func (r *Ring) Drain(fn func([]byte) error) error {
 		}
 		return err
 	}
+	var sent int64
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
 	for sc.Scan() {
 		line := sc.Bytes()
+		lineLen := int64(len(line)) + 1
 		if r.stale(line) {
+			sent += lineLen
 			continue
 		}
 		_, payload, _ := splitStamp(line)
 		if err := fn(payload); err != nil {
 			f.Close()
+			r.dropPrefix(sent)
 			return err
 		}
+		sent += lineLen
 	}
 	f.Close()
 	return os.Remove(r.path)
+}
+
+func (r *Ring) dropPrefix(offset int64) {
+	if offset <= 0 {
+		return
+	}
+	data, err := os.ReadFile(r.path)
+	if err != nil || offset >= int64(len(data)) {
+		if err == nil {
+			_ = os.Remove(r.path)
+		}
+		return
+	}
+	_ = os.WriteFile(r.path, data[offset:], 0o600)
 }
