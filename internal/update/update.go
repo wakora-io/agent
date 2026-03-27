@@ -23,7 +23,7 @@ type Updater struct {
 }
 
 func New(baseURL string, client *http.Client, pubKey string) *Updater {
-	c := &http.Client{Timeout: time.Minute}
+	c := &http.Client{Timeout: 10 * time.Minute}
 	if client != nil {
 		c.Transport = client.Transport
 	}
