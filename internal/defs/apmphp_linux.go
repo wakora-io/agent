@@ -30,7 +30,7 @@ func phpFpmBinary(opts map[string]string) string {
 		return opts["binary"]
 	}
 	candidates := []string{"php-fpm"}
-	for _, v := range []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4"} {
+	for _, v := range []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4", "7.3", "7.2"} {
 		short := strings.ReplaceAll(v, ".", "")
 		candidates = append(candidates, "php-fpm"+v, "php-fpm"+short, "php"+short+"-php-fpm")
 	}
@@ -44,7 +44,7 @@ func phpFpmBinary(opts map[string]string) string {
 
 func phpCLIBinary() string {
 	candidates := []string{"php"}
-	for _, v := range []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4"} {
+	for _, v := range []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4", "7.3", "7.2"} {
 		candidates = append(candidates, "php"+v)
 	}
 	for _, c := range candidates {
@@ -306,7 +306,7 @@ func fileExists(p string) bool {
 
 func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st *sapiTarget, stageID, stageKey string) {
 	if !apm.OtelSupported(st.rt.VersionShort) {
-		o.Facts[stageKey] = "php " + st.rt.VersionShort + " unsupported for otel (needs >= 8.0)"
+		o.Facts[stageKey] = "php " + st.rt.VersionShort + " unsupported for otel (sdk needs >= 8.1)"
 		return
 	}
 	artifact := apm.OtelArtifactName(st.rt)

@@ -100,8 +100,7 @@ func PHPSDKBundleFor(versionShort string) string {
 }
 
 func OtelSupported(versionShort string) bool {
-	major, _, ok := splitMinor(versionShort)
-	return ok && major >= 8
+	return PHPSDKBundleFor(versionShort) != ""
 }
 
 func splitMinor(versionShort string) (major, minor int, ok bool) {
