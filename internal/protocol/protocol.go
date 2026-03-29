@@ -200,6 +200,7 @@ type Probe struct {
 	Targets      []string          `json:"targets,omitempty"`
 	ExpectBody   string            `json:"expectBody,omitempty"`
 	Prom         []PromRule        `json:"prom,omitempty"`
+	IntervalSec  int               `json:"intervalSec,omitempty"`
 }
 
 type Definition struct {

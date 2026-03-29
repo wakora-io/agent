@@ -130,6 +130,7 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 		o.Check.Error = err.Error()
 		return
 	}
+	req.Header.Set("User-Agent", probeUserAgent)
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {

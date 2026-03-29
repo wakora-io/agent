@@ -22,10 +22,13 @@ import (
 	"wakora.io/agent/internal/protocol"
 )
 
+const probeUserAgent = "Wakora-Monitor/1.0 (+https://wakora.io)"
+
 type vhost struct {
-	Name string
-	Port int
-	SSL  bool
+	Name    string
+	Port    int
+	SSL     bool
+	Primary bool
 }
 
 func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Duration) {
@@ -100,6 +103,9 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
 	for i, h := range hosts {
+		if !h.Primary {
+			continue
+		}
 		wg.Add(1)
 		go func(i int, h vhost) {
 			defer wg.Done()
@@ -111,11 +117,13 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	wg.Wait()
 	for i, h := range hosts {
 		r := results[i]
-		o.Extra = append(o.Extra, r.check)
-
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
 		payload, _ := json.Marshal(map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL})
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
+		if !h.Primary {
+			continue
+		}
+		o.Extra = append(o.Extra, r.check)
 
 		tags := map[string]string{"vhost": h.Name, "port": strconv.Itoa(h.Port)}
 		if r.check.Status == "ok" {
@@ -167,6 +175,7 @@ func probeVhost(service string, h vhost, timeout time.Duration) vhostResult {
 		return r
 	}
 	req.Host = hostHeader
+	req.Header.Set("User-Agent", probeUserAgent)
 	tr := &http.Transport{DisableKeepAlives: true}
 	if scheme == "https" {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, ServerName: hostHeader}
@@ -326,9 +335,9 @@ func parseNginxVhosts(out []byte) []vhost {
 		if len(names) == 0 {
 			names = []string{"_"}
 		}
-		for _, n := range names {
+		for i, n := range names {
 			for _, l := range listens {
-				hosts = append(hosts, vhost{Name: n, Port: l.Port, SSL: l.SSL})
+				hosts = append(hosts, vhost{Name: n, Port: l.Port, SSL: l.SSL, Primary: i == 0})
 			}
 		}
 		names, listens = nil, nil
@@ -432,16 +441,16 @@ func parseApacheVhosts(out []byte) []vhost {
 		}
 		if m := apacheSingleRe.FindStringSubmatch(line); m != nil {
 			port, _ := strconv.Atoi(m[1])
-			hosts = append(hosts, vhost{Name: m[2], Port: port, SSL: port == 443})
+			hosts = append(hosts, vhost{Name: m[2], Port: port, SSL: port == 443, Primary: true})
 			continue
 		}
 		if m := apacheNameRe.FindStringSubmatch(line); m != nil {
 			port, _ := strconv.Atoi(m[1])
-			hosts = append(hosts, vhost{Name: m[2], Port: port, SSL: port == 443})
+			hosts = append(hosts, vhost{Name: m[2], Port: port, SSL: port == 443, Primary: true})
 			continue
 		}
 		if m := apacheDefaultRe.FindStringSubmatch(line); m != nil && curPort > 0 {
-			hosts = append(hosts, vhost{Name: m[1], Port: curPort, SSL: curPort == 443})
+			hosts = append(hosts, vhost{Name: m[1], Port: curPort, SSL: curPort == 443, Primary: true})
 		}
 	}
 	return dedupeVhosts(hosts)

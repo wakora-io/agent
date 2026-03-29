@@ -115,7 +115,7 @@ func probeExternal(url string, expectStatus int, bodyRe *regexp.Regexp, timeout 
 		r.note = err.Error()
 		return r
 	}
-	req.Header.Set("User-Agent", "wakora-agent/ext-check")
+	req.Header.Set("User-Agent", probeUserAgent)
 
 	var dnsStart, connectStart, tlsStart, start time.Time
 	trace := &httptrace.ClientTrace{

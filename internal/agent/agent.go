@@ -603,25 +603,46 @@ func (a *Agent) refreshActive() {
 	a.active = active
 }
 
-func (a *Agent) runDueProbes(conn transport.Conn) error {
-	a.mu.Lock()
-	var due []protocol.Definition
-	now := time.Now()
-	for _, d := range a.active {
-		interval := time.Duration(d.IntervalSec) * time.Second
-		if interval <= 0 {
-			interval = time.Minute
+type dueRun struct {
+	def    protocol.Definition
+	probes []protocol.Probe
+}
+
+func selectDueProbes(active []protocol.Definition, lastRun map[string]time.Time, now time.Time) []dueRun {
+	var due []dueRun
+	for _, d := range active {
+		defInterval := time.Duration(d.IntervalSec) * time.Second
+		if defInterval <= 0 {
+			defInterval = time.Minute
 		}
-		if now.Sub(a.lastRun[d.Service]) >= interval {
-			a.lastRun[d.Service] = now
-			due = append(due, d)
+		var ready []protocol.Probe
+		for _, p := range d.Probes {
+			interval := defInterval
+			if p.IntervalSec > 0 {
+				interval = time.Duration(p.IntervalSec) * time.Second
+			}
+			key := d.Service + "/" + p.Name
+			if now.Sub(lastRun[key]) >= interval {
+				lastRun[key] = now
+				ready = append(ready, p)
+			}
+		}
+		if len(ready) > 0 {
+			due = append(due, dueRun{def: d, probes: ready})
 		}
 	}
+	return due
+}
+
+func (a *Agent) runDueProbes(conn transport.Conn) error {
+	a.mu.Lock()
+	due := selectDueProbes(a.active, a.lastRun, time.Now())
 	a.mu.Unlock()
 
 	factsChanged := false
-	for _, d := range due {
-		for _, p := range d.Probes {
+	for _, run := range due {
+		d := run.def
+		for _, p := range run.probes {
 			if p.Type == "logtail" {
 				if err := a.runLogtail(conn, d.Service, p); err != nil {
 					return err
@@ -1074,7 +1095,11 @@ func (a *Agent) runTraps(conn transport.Conn, service string, p protocol.Probe) 
 		a.mu.Lock()
 		for _, ev := range events {
 			for _, svc := range targets[ev.Source] {
-				delete(a.lastRun, svc)
+				for key := range a.lastRun {
+					if strings.HasPrefix(key, svc+"/") {
+						delete(a.lastRun, key)
+					}
+				}
 				log.Printf("trap %s from %s: confirming poll of %s scheduled", ev.Name, ev.Source, svc)
 			}
 		}
