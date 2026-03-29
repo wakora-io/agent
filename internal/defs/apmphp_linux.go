@@ -134,6 +134,11 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 					stageOtel(o, service, p, stateDir, st, stageID, stageKey)
 					o.Facts[stageKey] = "active (new build staged; reload to apply)"
 				}
+				if p.Options["sdk"] == "1" {
+					if bundle := apm.PHPSDKBundleFor(minor); bundle != "" && Provision.NeedsRefresh(bundle) {
+						Provision.Ensure(bundle, true)
+					}
+				}
 			}
 			continue
 		}
