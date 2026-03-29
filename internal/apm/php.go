@@ -13,6 +13,7 @@ type PHPRuntime struct {
 	Arch         string
 	Libc         string
 	ScanDir      string
+	IniDir       string
 }
 
 func ParsePHPInfo(out string) PHPRuntime {
@@ -31,6 +32,12 @@ func ParsePHPInfo(out string) PHPRuntime {
 		if v, ok := cutInfo(line, "Scan this dir for additional .ini files"); ok && rt.ScanDir == "" {
 			if v != "(none)" {
 				rt.ScanDir = firstPath(v)
+			}
+			continue
+		}
+		if v, ok := cutInfo(line, "Configuration File (php.ini) Path"); ok && rt.IniDir == "" {
+			if v != "(none)" {
+				rt.IniDir = firstPath(v)
 			}
 			continue
 		}

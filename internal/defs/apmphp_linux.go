@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -17,12 +18,14 @@ import (
 )
 
 type sapiTarget struct {
-	rt        apm.PHPRuntime
-	loaded    bool
-	iniDir    string
-	reloadCmd string
-	checkName string
-	preBin    string
+	rt           apm.PHPRuntime
+	loaded       bool
+	iniDir       string
+	reloadCmd    string
+	checkName    string
+	preBin       string
+	basedirPools int
+	basedirTotal int
 }
 
 func phpFpmBinary(opts map[string]string) string {
@@ -70,7 +73,7 @@ func runAPMPhp(o *Outcome, service string, p protocol.Probe, stateDir string) {
 		runPHPTargets(o, service, p, stateDir, []*sapiTarget{st}, "apache")
 		return
 	}
-	targets, errmsg := resolveFPMTargets(p, module)
+	targets, errmsg := resolveFPMTargets(p, module, filepath.Join(stateDir, "apm"))
 	if len(targets) == 0 {
 		o.Check.Status = "fail"
 		o.Check.Error = errmsg
@@ -141,7 +144,7 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 	}
 }
 
-func resolveFPMTargets(p protocol.Probe, module string) ([]*sapiTarget, string) {
+func resolveFPMTargets(p protocol.Probe, module, apmDir string) ([]*sapiTarget, string) {
 	var bins []string
 	if b := p.Options["binary"]; b != "" {
 		bins = []string{b}
@@ -159,7 +162,7 @@ func resolveFPMTargets(p protocol.Probe, module string) ([]*sapiTarget, string) 
 	var targets []*sapiTarget
 	var lastErr string
 	for _, bin := range bins {
-		st, errmsg := fpmTarget(bin, module, p.Options)
+		st, errmsg := fpmTarget(bin, module, p.Options, apmDir)
 		if st == nil {
 			lastErr = errmsg
 			continue
@@ -192,7 +195,7 @@ func runningFPMBinaries() []string {
 	return bins
 }
 
-func fpmTarget(bin, module string, opts map[string]string) (*sapiTarget, string) {
+func fpmTarget(bin, module string, opts map[string]string, apmDir string) (*sapiTarget, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	info, err := exec.CommandContext(ctx, bin, "-i").Output()
@@ -203,14 +206,58 @@ func fpmTarget(bin, module string, opts map[string]string) (*sapiTarget, string)
 	rt.Arch = apm.Arch()
 	rt.Libc = detectLibc(bin)
 	modules, _ := exec.CommandContext(ctx, bin, "-m").Output()
+	restricted, total := openBasedirPools(fpmPoolDir(rt.IniDir), apmDir)
 	return &sapiTarget{
-		rt:        rt,
-		loaded:    apm.ModuleLoaded(string(modules), module),
-		iniDir:    rt.ScanDir,
-		reloadCmd: reloadCommand(initSystem(), fpmUnitFor(bin, opts)),
-		checkName: bin,
-		preBin:    bin,
+		rt:           rt,
+		loaded:       apm.ModuleLoaded(string(modules), module),
+		iniDir:       rt.ScanDir,
+		reloadCmd:    reloadCommand(initSystem(), fpmUnitFor(bin, opts)),
+		checkName:    bin,
+		preBin:       bin,
+		basedirPools: restricted,
+		basedirTotal: total,
 	}, ""
+}
+
+func fpmPoolDir(iniDir string) string {
+	if iniDir != "" {
+		if d := filepath.Join(iniDir, "pool.d"); dirExists(d) {
+			return d
+		}
+	}
+	if dirExists("/etc/php-fpm.d") {
+		return "/etc/php-fpm.d"
+	}
+	return ""
+}
+
+var basedirRe = regexp.MustCompile(`(?m)^\s*php_(?:admin_)?value\[open_basedir\]\s*=\s*(\S+)`)
+
+func openBasedirPools(poolDir, apmDir string) (restricted, total int) {
+	if poolDir == "" {
+		return 0, 0
+	}
+	entries, err := os.ReadDir(poolDir)
+	if err != nil {
+		return 0, 0
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".conf") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(poolDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		total++
+		for _, m := range basedirRe.FindAllSubmatch(data, -1) {
+			if !basedirCovers(string(m[1]), apmDir) {
+				restricted++
+				break
+			}
+		}
+	}
+	return restricted, total
 }
 
 func fpmUnitFor(bin string, opts map[string]string) string {
@@ -307,6 +354,12 @@ func fileExists(p string) bool {
 func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st *sapiTarget, stageID, stageKey string) {
 	if !apm.OtelSupported(st.rt.VersionShort) {
 		o.Facts[stageKey] = "php " + st.rt.VersionShort + " unsupported for otel (sdk needs >= 8.1)"
+		return
+	}
+	if st.basedirPools > 0 {
+		o.Facts[stageKey] = fmt.Sprintf(
+			"blocked: %d of %d pools restrict open_basedir, a version-wide prepend would 500 them; allow %s in those pools and the agent re-stages on the next cycle",
+			st.basedirPools, st.basedirTotal, filepath.Join(stateDir, "apm"))
 		return
 	}
 	artifact := apm.OtelArtifactName(st.rt)
@@ -441,6 +494,16 @@ func preflightPrepend(soPath, prependPath string) error {
 		"-d", "extension="+soPath,
 		"-d", "auto_prepend_file="+prependPath,
 		"-r", ";").Run()
+}
+
+func basedirCovers(list, dir string) bool {
+	for _, p := range strings.Split(list, ":") {
+		p = strings.TrimRight(p, "/")
+		if p != "" && strings.HasPrefix(dir+"/", p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func worldAccessible(path string) error {
