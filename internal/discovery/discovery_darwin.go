@@ -22,8 +22,26 @@ func Collect() []Fact {
 	facts = append(facts, packages()...)
 	facts = append(facts, units()...)
 	facts = append(facts, netFacts()...)
+	facts = append(facts, hostFact())
 	facts = append(facts, Fact{Kind: "init", Key: "launchd", Payload: "{}"})
 	return facts
+}
+
+func osDetails() map[string]string {
+	out, err := exec.Command("sw_vers", "-productVersion").Output()
+	if err != nil {
+		return map[string]string{"platform": "macos"}
+	}
+	version := strings.TrimSpace(string(out))
+	pretty := "macOS"
+	if version != "" {
+		pretty = "macOS " + version
+	}
+	return map[string]string{
+		"platform": "macos",
+		"version":  version,
+		"pretty":   pretty,
+	}
 }
 
 func ChangeSignal() string {

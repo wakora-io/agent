@@ -3,6 +3,7 @@ package discovery
 import (
 	"encoding/json"
 	"net"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -63,6 +64,17 @@ func primaryIP() string {
 		}
 	}
 	return ""
+}
+
+func hostFact() Fact {
+	kv := map[string]string{"os": runtime.GOOS, "arch": runtime.GOARCH}
+	for k, v := range osDetails() {
+		if v != "" {
+			kv[k] = v
+		}
+	}
+	payload, _ := json.Marshal(kv)
+	return Fact{Kind: "host", Key: "os", Payload: string(payload)}
 }
 
 func CountByKind(facts []Fact) map[string]int {

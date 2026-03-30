@@ -23,7 +23,23 @@ func Collect() []Fact {
 	facts = append(facts, services()...)
 	facts = append(facts, packages()...)
 	facts = append(facts, netFacts()...)
+	facts = append(facts, hostFact())
 	return facts
+}
+
+func osDetails() map[string]string {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion`, registry.QUERY_VALUE)
+	if err != nil {
+		return nil
+	}
+	defer k.Close()
+	pretty, _, _ := k.GetStringValue("ProductName")
+	version, _, _ := k.GetStringValue("DisplayVersion")
+	return map[string]string{
+		"platform": "windows",
+		"version":  version,
+		"pretty":   pretty,
+	}
 }
 
 func ChangeSignal() string {

@@ -26,10 +26,31 @@ func Collect() []Fact {
 	facts = append(facts, packages()...)
 	facts = append(facts, units()...)
 	facts = append(facts, netFacts()...)
+	facts = append(facts, hostFact())
 	facts = append(facts, initFact())
 	facts = append(facts, capFacts()...)
 	facts = append(facts, cronJobs()...)
 	return facts
+}
+
+func osDetails() map[string]string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return nil
+	}
+	fields := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		fields[k] = strings.Trim(strings.TrimSpace(v), `"`)
+	}
+	return map[string]string{
+		"platform": fields["ID"],
+		"version":  fields["VERSION_ID"],
+		"pretty":   fields["PRETTY_NAME"],
+	}
 }
 
 func capFacts() []Fact {
