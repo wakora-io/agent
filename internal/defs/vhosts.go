@@ -99,13 +99,44 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 		return hosts[i].Port < hosts[j].Port
 	})
+
+	var primaries []int
+	for i, h := range hosts {
+		if h.Primary {
+			primaries = append(primaries, i)
+		}
+	}
+	window := vhostCursors.window(service, len(primaries), vhostBudget)
+	if len(primaries) > vhostBudget {
+		o.Check.Target = fmt.Sprintf("%s vhosts (%d of %d per cycle)", p.Command, len(window), len(primaries))
+	}
+	probed := map[int]bool{}
+	for _, wi := range window {
+		probed[primaries[wi]] = true
+	}
+
+	// pace the probes across the interval instead of a burst: a portfolio of hundreds
+	// of WordPress sites gets a steady trickle, not a php-fpm wave every cycle
+	spacing := time.Duration(0)
+	if n := len(window); n > 0 && p.IntervalSec > 0 {
+		spacing = time.Duration(p.IntervalSec) * time.Second * 3 / 4 / time.Duration(n)
+		if spacing > vhostMaxSpacing {
+			spacing = vhostMaxSpacing
+		}
+	}
+
 	results := make([]vhostResult, len(hosts))
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
+	started := 0
 	for i, h := range hosts {
-		if !h.Primary {
+		if !probed[i] {
 			continue
 		}
+		if started > 0 && spacing > 0 {
+			time.Sleep(spacing)
+		}
+		started++
 		wg.Add(1)
 		go func(i int, h vhost) {
 			defer wg.Done()
@@ -120,7 +151,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
 		payload, _ := json.Marshal(map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL})
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
-		if !h.Primary {
+		if !probed[i] {
 			continue
 		}
 		o.Extra = append(o.Extra, r.check)
@@ -142,6 +173,43 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			)
 		}
 	}
+}
+
+const (
+	vhostBudget     = 100
+	vhostMaxSpacing = 5 * time.Second
+)
+
+type vhostCursorSet struct {
+	mu      sync.Mutex
+	cursors map[string]int
+}
+
+var vhostCursors = &vhostCursorSet{cursors: map[string]int{}}
+
+// window returns the positions (into the primaries list) to probe this cycle:
+// everything when the portfolio fits the budget, otherwise a rotating slice so
+// every site still gets probed, just at a proportionally longer effective interval
+func (s *vhostCursorSet) window(service string, n, budget int) []int {
+	if n <= 0 {
+		return nil
+	}
+	if n <= budget {
+		out := make([]int, n)
+		for i := range out {
+			out[i] = i
+		}
+		return out
+	}
+	s.mu.Lock()
+	start := s.cursors[service] % n
+	s.cursors[service] = (start + budget) % n
+	s.mu.Unlock()
+	out := make([]int, 0, budget)
+	for i := 0; i < budget; i++ {
+		out = append(out, (start+i)%n)
+	}
+	return out
 }
 
 type vhostResult struct {

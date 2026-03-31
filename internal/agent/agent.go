@@ -58,6 +58,8 @@ type Agent struct {
 	spans             chan []protocol.Span
 	profiles          chan defs.Outcome
 	profiling         map[string]bool
+	vhostDone         chan probeDone
+	vhostBusy         map[string]bool
 	updateKick        chan struct{}
 
 	pmu     sync.Mutex
@@ -145,6 +147,8 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		spans:             make(chan []protocol.Span, 64),
 		profiles:          make(chan defs.Outcome, 8),
 		profiling:         map[string]bool{},
+		vhostDone:         make(chan probeDone, 8),
+		vhostBusy:         map[string]bool{},
 		pending:           map[uint64][]byte{},
 	}
 	a.key.Store(cfg.Key)
@@ -297,6 +301,16 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			case o := <-a.profiles:
 				if err := a.emitProfile(conn, o); err != nil {
 					return err
+				}
+			case d := <-a.vhostDone:
+				ch, err := a.emitOutcome(conn, d.service, d.service+"/"+d.probe.Name, d.o)
+				if err != nil {
+					return err
+				}
+				if ch {
+					if err := a.sendDiscovery(conn); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -707,6 +721,10 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					p.Address = "127.0.0.1:" + port
 				}
 			}
+			if p.Type == "vhosts" {
+				a.startVhosts(d.Service, p)
+				continue
+			}
 			var o defs.Outcome
 			switch p.Type {
 			case "apmphp":
@@ -716,89 +734,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			default:
 				o = defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			}
-			checks := append([]protocol.CheckResult{o.Check}, o.Extra...)
-			for i := range checks {
-				checks[i].ServerID = a.cfg.ServerID
-				checks[i].Hostname = a.cfg.Hostname
+			ch, err := a.emitOutcome(conn, d.Service, d.Service+"/"+p.Name, o)
+			if err != nil {
+				return err
 			}
-			if len(checks) == 1 {
-				a.seq++
-				if msg, err := protocol.Encode(protocol.TypeCheck, a.seq, checks[0]); err == nil {
-					if err := conn.Send(msg); err != nil {
-						return err
-					}
-				}
-			} else {
-				a.seq++
-				msg, err := protocol.Encode(protocol.TypeChecks, a.seq, protocol.CheckBatch{
-					ServerID: a.cfg.ServerID,
-					Hostname: a.cfg.Hostname,
-					Checks:   checks,
-				})
-				if err == nil {
-					if err := conn.Send(msg); err != nil {
-						return err
-					}
-				}
-			}
-			if len(o.Metrics) > 0 {
-				a.seq++
-				mmsg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
-					ServerID:  a.cfg.ServerID,
-					Hostname:  a.cfg.Hostname,
-					Timestamp: o.Check.Timestamp,
-					Points:    o.Metrics,
-				})
-				if err == nil {
-					if err := conn.Send(mmsg); err != nil {
-						return err
-					}
-				}
-				if err := a.observePoints(conn, o.Metrics); err != nil {
-					return err
-				}
-			}
-			if len(o.Facts) > 0 {
-				ch, integrity := a.mergeServiceFacts(d.Service, o.Facts)
-				if ch {
-					factsChanged = true
-				}
-				if err := a.sendIntegrity(conn, d.Service, integrity); err != nil {
-					return err
-				}
-			}
-			if a.setProbeFacts(d.Service+"/"+p.Name, o.InvFacts) {
+			if ch {
 				factsChanged = true
-			}
-			for _, ev := range o.Events {
-				ev.ServerID = a.cfg.ServerID
-				ev.Hostname = a.cfg.Hostname
-				if ev.Timestamp == 0 {
-					ev.Timestamp = time.Now().Unix()
-				}
-				log.Printf("%s: %s", ev.Kind, ev.Detail)
-				a.seq++
-				emsg, err := protocol.Encode(protocol.TypeEvent, a.seq, ev)
-				if err != nil {
-					continue
-				}
-				if err := conn.Send(emsg); err != nil {
-					return err
-				}
-			}
-			if len(o.ProfileStacks) > 0 {
-				pb := o.ProfileMeta
-				pb.ServerID = a.cfg.ServerID
-				pb.Hostname = a.cfg.Hostname
-				pb.Timestamp = time.Now().Unix()
-				pb.Stacks = o.ProfileStacks
-				a.seq++
-				pmsg, err := protocol.Encode(protocol.TypeProfile, a.seq, pb)
-				if err == nil {
-					if err := conn.Send(pmsg); err != nil {
-						return err
-					}
-				}
 			}
 		}
 	}
@@ -806,6 +747,124 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 		return a.sendDiscovery(conn)
 	}
 	return nil
+}
+
+type probeDone struct {
+	service string
+	probe   protocol.Probe
+	o       defs.Outcome
+}
+
+// the paced vhost sweep of a big portfolio takes minutes by design - run it detached
+// so the 15s probe tick keeps serving every other check, and emit on completion
+func (a *Agent) startVhosts(service string, p protocol.Probe) {
+	key := service + "/" + p.Name
+	a.mu.Lock()
+	if a.vhostBusy[key] {
+		a.mu.Unlock()
+		return
+	}
+	a.vhostBusy[key] = true
+	a.mu.Unlock()
+	go func() {
+		o := defs.RunProbe(service, p)
+		a.mu.Lock()
+		a.vhostBusy[key] = false
+		a.mu.Unlock()
+		select {
+		case a.vhostDone <- probeDone{service: service, probe: p, o: o}:
+		default:
+		}
+	}()
+}
+
+func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o defs.Outcome) (bool, error) {
+	factsChanged := false
+	checks := append([]protocol.CheckResult{o.Check}, o.Extra...)
+	for i := range checks {
+		checks[i].ServerID = a.cfg.ServerID
+		checks[i].Hostname = a.cfg.Hostname
+	}
+	if len(checks) == 1 {
+		a.seq++
+		if msg, err := protocol.Encode(protocol.TypeCheck, a.seq, checks[0]); err == nil {
+			if err := conn.Send(msg); err != nil {
+				return false, err
+			}
+		}
+	} else {
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeChecks, a.seq, protocol.CheckBatch{
+			ServerID: a.cfg.ServerID,
+			Hostname: a.cfg.Hostname,
+			Checks:   checks,
+		})
+		if err == nil {
+			if err := conn.Send(msg); err != nil {
+				return false, err
+			}
+		}
+	}
+	if len(o.Metrics) > 0 {
+		a.seq++
+		mmsg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Timestamp: o.Check.Timestamp,
+			Points:    o.Metrics,
+		})
+		if err == nil {
+			if err := conn.Send(mmsg); err != nil {
+				return false, err
+			}
+		}
+		if err := a.observePoints(conn, o.Metrics); err != nil {
+			return false, err
+		}
+	}
+	if len(o.Facts) > 0 {
+		ch, integrity := a.mergeServiceFacts(service, o.Facts)
+		if ch {
+			factsChanged = true
+		}
+		if err := a.sendIntegrity(conn, service, integrity); err != nil {
+			return false, err
+		}
+	}
+	if a.setProbeFacts(probeKey, o.InvFacts) {
+		factsChanged = true
+	}
+	for _, ev := range o.Events {
+		ev.ServerID = a.cfg.ServerID
+		ev.Hostname = a.cfg.Hostname
+		if ev.Timestamp == 0 {
+			ev.Timestamp = time.Now().Unix()
+		}
+		log.Printf("%s: %s", ev.Kind, ev.Detail)
+		a.seq++
+		emsg, err := protocol.Encode(protocol.TypeEvent, a.seq, ev)
+		if err != nil {
+			continue
+		}
+		if err := conn.Send(emsg); err != nil {
+			return false, err
+		}
+	}
+	if len(o.ProfileStacks) > 0 {
+		pb := o.ProfileMeta
+		pb.ServerID = a.cfg.ServerID
+		pb.Hostname = a.cfg.Hostname
+		pb.Timestamp = time.Now().Unix()
+		pb.Stacks = o.ProfileStacks
+		a.seq++
+		pmsg, err := protocol.Encode(protocol.TypeProfile, a.seq, pb)
+		if err == nil {
+			if err := conn.Send(pmsg); err != nil {
+				return false, err
+			}
+		}
+	}
+	return factsChanged, nil
 }
 
 func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
