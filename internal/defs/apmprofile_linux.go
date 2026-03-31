@@ -3,6 +3,7 @@
 package defs
 
 import (
+	"math/rand"
 	"os"
 	"os/exec"
 	"sort"
@@ -18,6 +19,7 @@ const (
 	profileDefaultHz     = 200
 	profileDefaultWindow = 10
 	profileMaxStacks     = 200
+	profileMaxWorkers    = 24
 )
 
 func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
@@ -32,11 +34,18 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 		o.Check.Error = "no php-fpm worker processes found"
 		return
 	}
+	// random order so the capped attach set rotates across pools between windows
+	rand.Shuffle(len(pids), func(i, j int) { pids[i], pids[j] = pids[j], pids[i] })
 	forced := p.Options["phpVersion"]
 	verByExe := map[string]string{}
 	var samplers []*apm.PHPSampler
 	seen := map[string]bool{}
 	for _, pid := range pids {
+		// a big shared-hosting box runs hundreds of fpm workers; attaching to every
+		// one multiplies the sampling cost with no extra signal (idle workers dominate)
+		if len(samplers) >= profileMaxWorkers {
+			break
+		}
 		version := forced
 		if version == "" {
 			exe, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
@@ -84,15 +93,17 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 	folded := map[string]uint32{}
 	owners := map[string]uint32{}
 	var total, hits uint32
+	// hz is the TOTAL sampling budget per second, not per worker: one tick samples
+	// one worker round-robin, so cpu cost stays flat no matter the worker count
 	interval := time.Second / time.Duration(rate)
 	deadline := time.Now().Add(time.Duration(windowSec) * time.Second)
+	cursor := 0
 	for time.Now().Before(deadline) {
-		for _, s := range samplers {
-			total++
-			frames, owner, err := s.Sample()
-			if err != nil || len(frames) == 0 {
-				continue
-			}
+		s := samplers[cursor%len(samplers)]
+		cursor++
+		total++
+		frames, owner, err := s.Sample()
+		if err == nil && len(frames) > 0 {
 			hits++
 			folded[strings.Join(frames, ";")]++
 			if owner != "" {

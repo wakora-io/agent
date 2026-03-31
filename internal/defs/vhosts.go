@@ -2,8 +2,10 @@ package defs
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -58,47 +60,58 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		o.Check.Error = err.Error()
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
-	if len(out) > 2<<20 {
-		out = out[:2<<20]
+
+	// the config dump + statement parse over hundreds of vhosts is the expensive
+	// part of the sweep - reuse the parsed list until the config tree changes
+	sig := ""
+	if p.Command == "nginx" {
+		sig = configTreeSig("/etc/nginx")
 	}
-	if ctx.Err() != nil {
-		o.Check.Status = "fail"
-		o.Check.Error = "timeout"
-		return
-	}
-	if err != nil {
-		o.Check.Status = "fail"
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			msg = err.Error()
+	hosts, cached := vhostParseCache.get(service, sig)
+	if !cached {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
+		if len(out) > 2<<20 {
+			out = out[:2<<20]
 		}
-		if len(msg) > 200 {
-			msg = msg[:200]
+		if ctx.Err() != nil {
+			o.Check.Status = "fail"
+			o.Check.Error = "timeout"
+			return
 		}
-		o.Check.Error = msg
-		return
+		if err != nil {
+			o.Check.Status = "fail"
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			if len(msg) > 200 {
+				msg = msg[:200]
+			}
+			o.Check.Error = msg
+			return
+		}
+
+		if p.Command != "nginx" {
+			if logs := apacheAccessLogs(p.Command); len(logs) > 0 {
+				if o.Facts == nil {
+					o.Facts = map[string]string{}
+				}
+				o.Facts["accessLog"] = strings.Join(logs, ",")
+			}
+		}
+
+		hosts = parse(out)
+		sort.Slice(hosts, func(i, j int) bool {
+			if hosts[i].Name != hosts[j].Name {
+				return hosts[i].Name < hosts[j].Name
+			}
+			return hosts[i].Port < hosts[j].Port
+		})
+		vhostParseCache.put(service, sig, hosts)
 	}
 	o.Check.Status = "ok"
-
-	if p.Command != "nginx" {
-		if logs := apacheAccessLogs(p.Command); len(logs) > 0 {
-			if o.Facts == nil {
-				o.Facts = map[string]string{}
-			}
-			o.Facts["accessLog"] = strings.Join(logs, ",")
-		}
-	}
-
-	hosts := parse(out)
-	sort.Slice(hosts, func(i, j int) bool {
-		if hosts[i].Name != hosts[j].Name {
-			return hosts[i].Name < hosts[j].Name
-		}
-		return hosts[i].Port < hosts[j].Port
-	})
 
 	var primaries []int
 	for i, h := range hosts {
@@ -178,7 +191,69 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 const (
 	vhostBudget     = 100
 	vhostMaxSpacing = 5 * time.Second
+	vhostCacheMax   = 30 * time.Minute
 )
+
+type vhostParseEntry struct {
+	sig   string
+	when  time.Time
+	hosts []vhost
+}
+
+type vhostParseCacheSet struct {
+	mu      sync.Mutex
+	entries map[string]vhostParseEntry
+}
+
+var vhostParseCache = &vhostParseCacheSet{entries: map[string]vhostParseEntry{}}
+
+func (c *vhostParseCacheSet) get(service, sig string) ([]vhost, bool) {
+	if sig == "" {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[service]
+	if !ok || e.sig != sig || time.Since(e.when) > vhostCacheMax {
+		return nil, false
+	}
+	return e.hosts, true
+}
+
+func (c *vhostParseCacheSet) put(service, sig string, hosts []vhost) {
+	if sig == "" {
+		return
+	}
+	c.mu.Lock()
+	c.entries[service] = vhostParseEntry{sig: sig, when: time.Now(), hosts: hosts}
+	c.mu.Unlock()
+}
+
+// configTreeSig fingerprints a config tree by walking file names, sizes and
+// mtimes - cheap stat-only pass, no content reads
+func configTreeSig(root string) string {
+	h := sha256.New()
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		found = true
+		fmt.Fprintf(h, "%s|%d|%d\n", path, info.Size(), info.ModTime().UnixNano())
+		return nil
+	})
+	if !found {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 type vhostCursorSet struct {
 	mu      sync.Mutex
