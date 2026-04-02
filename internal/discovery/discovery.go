@@ -26,15 +26,68 @@ type packageInfo struct {
 }
 
 func netFacts() []Fact {
-	ip := primaryIP()
-	if ip == "" {
-		return nil
+	var facts []Fact
+	if ip := primaryIP(); ip != "" {
+		if payload, err := json.Marshal(map[string]string{"ip": ip}); err == nil {
+			facts = append(facts, Fact{Kind: "net", Key: "primary_ip", Payload: string(payload)})
+		}
 	}
-	payload, err := json.Marshal(map[string]string{"ip": ip})
+	for _, a := range allIPs() {
+		payload, err := json.Marshal(map[string]string{"ip": a.ip, "scope": a.scope})
+		if err != nil {
+			continue
+		}
+		facts = append(facts, Fact{Kind: "net", Key: "ip:" + a.ip, Payload: string(payload)})
+	}
+	return facts
+}
+
+type ipInfo struct {
+	ip    string
+	scope string
+}
+
+// allIPs lists every address on up interfaces except loopback and link-local;
+// private/ULA/CGN ranges are internal, the rest of global unicast is external
+func allIPs() []ipInfo {
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil
 	}
-	return []Fact{{Kind: "net", Key: "primary_ip", Payload: string(payload)}}
+	cgn := net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+	seen := map[string]bool{}
+	var out []ipInfo
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok || ipn.IP == nil {
+				continue
+			}
+			ip := ipn.IP
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+				continue
+			}
+			key := ip.String()
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			scope := "external"
+			if ip.IsPrivate() || cgn.Contains(ip) {
+				scope = "internal"
+			}
+			out = append(out, ipInfo{ip: key, scope: scope})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ip < out[j].ip })
+	return out
 }
 
 func primaryIP() string {
