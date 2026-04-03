@@ -29,7 +29,7 @@ func nginxBasedirPrepCommand(stateDir string, dirs []string) string {
 		globs[i] = d + "/*"
 	}
 	parts = append(parts,
-		`sed -i '/open_basedir/{\#`+apmDir+`#!s#\(open_basedir=[^";\\ ]*\)#\1:`+apmDir+`#g}' `+strings.Join(globs, " "),
+		`sed -i '/open_basedir/{\#`+apmDir+`#!s#\(open_basedir[[:space:]]*=[[:space:]]*\)\([^";\\ ]*\)#\1\2:`+apmDir+`#g}' `+strings.Join(globs, " "),
 		`nginx -t`,
 		`systemctl reload nginx`,
 	)
@@ -41,6 +41,7 @@ type basedirScanResult struct {
 	userIni    int
 	samples    []string
 	nginxDirs  []string
+	sampleLine string
 }
 
 type basedirScanCacheSet struct {
@@ -53,8 +54,9 @@ type basedirScanCacheSet struct {
 var basedirScanCache basedirScanCacheSet
 
 var (
-	basedirValRe = regexp.MustCompile(`open_basedir\s*=\s*"?([^";\s]+)`)
-	nginxRootRe  = regexp.MustCompile(`(?m)^\s*root\s+([^;\s]+)\s*;`)
+	basedirValRe  = regexp.MustCompile(`open_basedir\s*=\s*"?([^";\s]+)`)
+	basedirLineRe = regexp.MustCompile(`(?m)^.*open_basedir.*$`)
+	nginxRootRe   = regexp.MustCompile(`(?m)^\s*root\s+([^;\s]+)\s*;`)
 )
 
 func basedirOutsideScan(apmDir string) basedirScanResult {
@@ -107,6 +109,15 @@ func scanNginxBasedir(root, apmDir string) basedirScanResult {
 				dirs[filepath.Dir(real)] = true
 				if len(res.samples) < 3 {
 					res.samples = append(res.samples, real)
+				}
+				if res.sampleLine == "" {
+					if line := basedirLineRe.Find(data); line != nil {
+						s := strings.TrimSpace(string(line))
+						if len(s) > 160 {
+							s = s[:160]
+						}
+						res.sampleLine = s
+					}
 				}
 				break
 			}

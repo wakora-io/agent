@@ -117,6 +117,9 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 		if res.nginxFiles > 0 || res.userIni > 0 {
 			o.Facts["basedirOutside"] = fmt.Sprintf("nginx:%d user.ini:%d", res.nginxFiles, res.userIni)
 			o.Facts["basedirOutsideSample"] = strings.Join(res.samples, ", ")
+			if res.sampleLine != "" {
+				o.Facts["basedirOutsideLine"] = res.sampleLine
+			}
 		}
 		stageNginxBasedirPrep(o, service, stateDir, res)
 	}
