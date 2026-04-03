@@ -63,6 +63,66 @@ func runVirsh(o *Outcome, service string, p protocol.Probe, timeout time.Duratio
 		protocol.MetricPoint{Name: prefix + "domains", Value: total},
 		protocol.MetricPoint{Name: prefix + "running", Value: running},
 	)
+
+	poolOut, _ := exec.CommandContext(ctx, path, "-r", "pool-list", "--details").Output()
+	for pool, pv := range parseVirshPools(string(poolOut)) {
+		tags := map[string]string{"storage": pool}
+		if v, ok := pv["capacity"]; ok && v > 0 {
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + "storage.capacity_bytes", Value: v, Tags: tags})
+			if a, ok := pv["allocation"]; ok {
+				o.Metrics = append(o.Metrics,
+					protocol.MetricPoint{Name: prefix + "storage.used_bytes", Value: a, Tags: copyTags(tags)},
+					protocol.MetricPoint{Name: prefix + "storage.used_pct", Value: a / v * 100, Tags: copyTags(tags)},
+				)
+			}
+		}
+	}
+}
+
+func parseVirshPools(out string) map[string]map[string]float64 {
+	res := map[string]map[string]float64{}
+	unit := func(v, u string) (float64, bool) {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0, false
+		}
+		switch strings.ToUpper(strings.TrimSpace(u)) {
+		case "KIB":
+			f *= 1 << 10
+		case "MIB":
+			f *= 1 << 20
+		case "GIB":
+			f *= 1 << 30
+		case "TIB":
+			f *= 1 << 40
+		case "PIB":
+			f *= 1 << 50
+		case "B", "BYTES":
+		default:
+			return 0, false
+		}
+		return f, true
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 10 || f[0] == "Name" || strings.HasPrefix(f[0], "---") {
+			continue
+		}
+		if strings.ToLower(f[1]) != "running" {
+			continue
+		}
+		vals := map[string]float64{}
+		if v, ok := unit(f[4], f[5]); ok {
+			vals["capacity"] = v
+		}
+		if v, ok := unit(f[6], f[7]); ok {
+			vals["allocation"] = v
+		}
+		if len(vals) > 0 {
+			res[f[0]] = vals
+		}
+	}
+	return res
 }
 
 func parseVirshList(out string) map[string]string {
