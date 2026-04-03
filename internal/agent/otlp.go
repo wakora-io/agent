@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"wakora.io/agent/internal/config"
 	"wakora.io/agent/internal/protocol"
 )
 
@@ -64,6 +65,18 @@ type otlpAny struct {
 	IntValue    json.RawMessage `json:"intValue"`
 	DoubleValue *float64        `json:"doubleValue"`
 	BoolValue   *bool           `json:"boolValue"`
+}
+
+func (a *Agent) ensureOTLP(ctx context.Context, port int) {
+	if a.cfg.OTLPPort > 0 || !a.otlpAuto.CompareAndSwap(false, true) {
+		return
+	}
+	log.Printf("otlp: apm staging needs a span receiver, starting on 127.0.0.1:%d and persisting agent.otlp-port", port)
+	if err := config.WriteOverride(a.cfg.Dir(), "agent", "otlp-port", strconv.Itoa(port)); err != nil {
+		log.Printf("otlp: persist agent.otlp-port: %v", err)
+	}
+	a.cfg.OTLPPort = port
+	go a.serveOTLP(ctx, port, a.cfg.OTLPBind)
 }
 
 func (a *Agent) serveOTLP(ctx context.Context, port int, binds []string) {

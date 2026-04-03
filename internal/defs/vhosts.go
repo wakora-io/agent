@@ -63,8 +63,6 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		return
 	}
 
-	// the config dump + statement parse over hundreds of vhosts is the expensive
-	// part of the sweep - reuse the parsed list until the config tree changes
 	sig := ""
 	if p.Command == "nginx" {
 		sig = configTreeSig("/etc/nginx")
@@ -130,8 +128,6 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		probed[primaries[wi]] = true
 	}
 
-	// pace the probes across the interval instead of a burst: a portfolio of hundreds
-	// of WordPress sites gets a steady trickle, not a php-fpm wave every cycle
 	spacing := time.Duration(0)
 	if n := len(window); n > 0 && p.IntervalSec > 0 {
 		spacing = time.Duration(p.IntervalSec) * time.Second * 3 / 4 / time.Duration(n)
@@ -162,9 +158,6 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	}
 	wg.Wait()
 
-	// the local probe can't see a lapsed domain (it dials 127.0.0.1), so each
-	// probed primary also gets a resolver check: NXDOMAIN = the world lost this
-	// site even though it still serves locally
 	dnsNames := make([]string, 0, len(window))
 	seenName := map[string]bool{}
 	for _, pi := range primaries {
@@ -228,9 +221,6 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	}
 }
 
-// dnsProbeName normalizes a server_name for a resolver check, or returns ""
-// for names that can't meaningfully resolve: catch-alls, bare hostnames,
-// IP literals, wildcards/regexes and reserved-for-local TLDs
 func dnsProbeName(raw string) string {
 	n := strings.ToLower(strings.Trim(raw, "."))
 	if n == "" || n == "_" || n == "localhost" || !strings.Contains(n, ".") {
@@ -257,10 +247,6 @@ var vhostLookupHost = func(ctx context.Context, name string) error {
 	return err
 }
 
-// vhostDNSSweep resolves the names and reports only definitive answers:
-// true = resolves, false = authoritative NXDOMAIN. Transient failures
-// (timeouts, SERVFAIL, resolver down) report nothing, and five in a row
-// abandon the sweep - a dead resolver must not paint the portfolio dead
 func vhostDNSSweep(names []string, perLookup time.Duration) map[string]bool {
 	out := map[string]bool{}
 	if len(names) == 0 {
@@ -348,8 +334,6 @@ func (c *vhostParseCacheSet) put(service, sig string, hosts []vhost) {
 	c.mu.Unlock()
 }
 
-// configTreeSig fingerprints a config tree by walking file names, sizes and
-// mtimes - cheap stat-only pass, no content reads
 func configTreeSig(root string) string {
 	h := sha256.New()
 	found := false
@@ -381,9 +365,6 @@ type vhostCursorSet struct {
 
 var vhostCursors = &vhostCursorSet{cursors: map[string]int{}}
 
-// window returns the positions (into the primaries list) to probe this cycle:
-// everything when the portfolio fits the budget, otherwise a rotating slice so
-// every site still gets probed, just at a proportionally longer effective interval
 func (s *vhostCursorSet) window(service string, n, budget int) []int {
 	if n <= 0 {
 		return nil

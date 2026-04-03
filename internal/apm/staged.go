@@ -81,10 +81,6 @@ func StagedState(base, id string) string {
 	return c.State
 }
 
-// ResetStaged drops the staged files so the state machine re-arms: the next
-// Stage() of the same content is new again and re-raises action_required.
-// Used when an active change was deactivated externally (operator removed
-// the ini / env drop-in without telling us).
 func ResetStaged(base, id string) error {
 	dir := stagedDir(base)
 	for _, name := range []string{id + ".json", id + ".staged"} {

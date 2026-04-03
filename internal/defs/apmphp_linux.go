@@ -85,6 +85,15 @@ func runAPMPhp(o *Outcome, service string, p protocol.Probe, stateDir string) {
 
 func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string, targets []*sapiTarget, sapi string) {
 	primary := targets[0]
+	anyLoaded := false
+	for _, st := range targets {
+		if st.loaded {
+			anyLoaded = true
+		}
+	}
+	if anyLoaded || p.Options["autostage"] == "1" {
+		ensureOTLPFor(p.Options["otelEndpoint"])
+	}
 	o.Check.Status = "ok"
 	names := make([]string, 0, len(targets))
 	for _, st := range targets {
@@ -143,10 +152,6 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 			}
 			continue
 		}
-		// module gone while our state says active = the operator deactivated it
-		// externally (removed the ini, disabled the extension). Re-arm the state
-		// machine so stageOtel below raises a fresh action_required with commands.
-		// modOk guards against a failed `-m` exec masquerading as a deactivation.
 		if st.modOk && apm.StagedState(stateDir, stageID) == "active" {
 			_ = apm.ResetStaged(stateDir, stageID)
 			o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{
@@ -413,8 +418,6 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 				}
 				return
 			}
-			// SDK is arch-independent PHP loaded via auto_prepend_file (re-read every request),
-			// so a refreshed bundle takes effect without a reload - no re-stage needed.
 			if autoprov && Provision.NeedsRefresh(bundle) {
 				_ = Provision.Ensure(bundle, true)
 			}

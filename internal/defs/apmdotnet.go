@@ -62,6 +62,9 @@ func runAPMDotnet(o *Outcome, service string, p protocol.Probe, stateDir string)
 	}
 
 	loaded, pid, detectOk := dotnetInstrumented()
+	if loaded || p.Options["autostage"] == "1" {
+		ensureOTLPFor(p.Options["otelEndpoint"])
+	}
 	o.Check.Status = "ok"
 	o.Check.Target = "dotnet/" + host
 	instrumented := 0.0
@@ -98,9 +101,6 @@ func runAPMDotnet(o *Outcome, service string, p protocol.Probe, stateDir string)
 		}
 		return
 	}
-	// instrumentation gone while our state says active = deactivated externally;
-	// re-arm so the stage below raises a fresh action_required. detectOk keeps a
-	// stopped runtime (nothing to inspect) from counting as a deactivation.
 	if detectOk && apm.StagedState(stateDir, stageID) == "active" {
 		_ = apm.ResetStaged(stateDir, stageID)
 		o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{

@@ -61,6 +61,7 @@ type Agent struct {
 	vhostDone         chan probeDone
 	vhostBusy         map[string]bool
 	updateKick        chan struct{}
+	otlpAuto          atomic.Bool
 
 	pmu     sync.Mutex
 	pending map[uint64][]byte
@@ -186,6 +187,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 	if a.cfg.OTLPPort > 0 {
 		go a.serveOTLP(ctx, a.cfg.OTLPPort, a.cfg.OTLPBind)
 	}
+	defs.OTLPEnsure = func(port int) { a.ensureOTLP(ctx, port) }
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
 		defer a.connected.Store(false)
