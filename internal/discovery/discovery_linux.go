@@ -169,6 +169,9 @@ func processes() []Fact {
 			cmd = cmd[:300]
 		}
 		exe, _ := os.Readlink(filepath.Join("/proc", e.Name(), "exe"))
+		if cmd == "" && exe == "" {
+			continue
+		}
 		agg[name] = &procInfo{Count: 1, Pid: pid, Cmdline: cmd, Exe: exe}
 	}
 	return sortedFacts("process", agg)

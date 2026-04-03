@@ -47,8 +47,6 @@ type ipInfo struct {
 	scope string
 }
 
-// allIPs lists every address on up interfaces except loopback and link-local;
-// private/ULA/CGN ranges are internal, the rest of global unicast is external
 func allIPs() []ipInfo {
 	ifaces, err := net.Interfaces()
 	if err != nil {

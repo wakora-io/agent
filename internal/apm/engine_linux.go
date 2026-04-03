@@ -166,9 +166,6 @@ func (e *Engine) readLoop() {
 		port := binary.LittleEndian.Uint16(rec.RawSample[8:10])
 		status := binary.LittleEndian.Uint16(rec.RawSample[10:12])
 		kind := rec.RawSample[12]
-		// the BPF side caps downstream (kind 1) samples at 30s but not the http path:
-		// on a persistent socket a stale inflight entry can pair a response with a
-		// request from hours ago (seen live: p95 "3 hours"), so cap here for both kinds
 		if durNs > 30_000_000_000 {
 			continue
 		}
