@@ -73,24 +73,29 @@ func scanNginxBasedir(root, apmDir string) basedirScanResult {
 	var res basedirScanResult
 	docroots := map[string]bool{}
 	dirs := map[string]bool{}
+	seenReal := map[string]bool{}
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil || info.Size() > 1<<20 {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil || seenReal[real] {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		seenReal[real] = true
+		if fi, err := os.Stat(real); err != nil || fi.Size() > 1<<20 {
+			return nil
+		}
+		data, err := os.ReadFile(real)
 		if err != nil {
 			return nil
 		}
 		for _, m := range basedirValRe.FindAllSubmatch(data, -1) {
 			if !basedirCovers(string(m[1]), apmDir) {
 				res.nginxFiles++
-				dirs[filepath.Dir(path)] = true
+				dirs[filepath.Dir(real)] = true
 				if len(res.samples) < 3 {
-					res.samples = append(res.samples, path)
+					res.samples = append(res.samples, real)
 				}
 				break
 			}
