@@ -13,16 +13,27 @@ import (
 	"time"
 )
 
-func nginxBasedirPrepCommand(apmDir string, dirs []string) string {
+func nginxBasedirPrepCommand(stateDir string, dirs []string) string {
 	if len(dirs) == 0 || len(dirs) > 4 {
 		return ""
 	}
+	apmDir := filepath.Join(stateDir, "apm")
+	parts := []string{`B=` + filepath.Join(stateDir, "backups") + `/nginx-prep-$(date +%F-%H%M%S)`}
 	globs := make([]string, len(dirs))
 	for i, d := range dirs {
+		sub := strings.ReplaceAll(strings.Trim(d, "/"), "/", "_")
+		parts = append(parts,
+			`mkdir -p $B/`+sub,
+			`cp -a `+d+`/* $B/`+sub+`/`,
+		)
 		globs[i] = d + "/*"
 	}
-	return `sed -i.wakora-bak '/open_basedir/{\#` + apmDir + `#!s#\(open_basedir=[^";\\ ]*\)#\1:` + apmDir + `#g}' ` +
-		strings.Join(globs, " ") + ` && nginx -t && systemctl reload nginx`
+	parts = append(parts,
+		`sed -i '/open_basedir/{\#`+apmDir+`#!s#\(open_basedir=[^";\\ ]*\)#\1:`+apmDir+`#g}' `+strings.Join(globs, " "),
+		`nginx -t`,
+		`systemctl reload nginx`,
+	)
+	return strings.Join(parts, " && ")
 }
 
 type basedirScanResult struct {

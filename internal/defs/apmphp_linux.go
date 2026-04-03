@@ -517,7 +517,7 @@ func stageNginxBasedirPrep(o *Outcome, service, stateDir string, res basedirScan
 		_ = apm.ResetStaged(stateDir, prepID)
 		return
 	}
-	cmd := nginxBasedirPrepCommand(filepath.Join(stateDir, "apm"), res.nginxDirs)
+	cmd := nginxBasedirPrepCommand(stateDir, res.nginxDirs)
 	if cmd == "" {
 		return
 	}
