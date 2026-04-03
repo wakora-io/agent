@@ -20,6 +20,7 @@ import (
 type sapiTarget struct {
 	rt           apm.PHPRuntime
 	loaded       bool
+	modOk        bool
 	iniDir       string
 	reloadCmd    string
 	checkName    string
@@ -142,6 +143,16 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 			}
 			continue
 		}
+		// module gone while our state says active = the operator deactivated it
+		// externally (removed the ini, disabled the extension). Re-arm the state
+		// machine so stageOtel below raises a fresh action_required with commands.
+		// modOk guards against a failed `-m` exec masquerading as a deactivation.
+		if st.modOk && apm.StagedState(stateDir, stageID) == "active" {
+			_ = apm.ResetStaged(stateDir, stageID)
+			o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{
+				"service": service, "layer": "otel-spans", "sapi": sapi, "php": minor,
+			}))
+		}
 		if p.Options["autostage"] != "1" {
 			continue
 		}
@@ -210,11 +221,12 @@ func fpmTarget(bin, module string, opts map[string]string, apmDir string) (*sapi
 	rt := apm.ParsePHPInfo(string(info))
 	rt.Arch = apm.Arch()
 	rt.Libc = detectLibc(bin)
-	modules, _ := exec.CommandContext(ctx, bin, "-m").Output()
+	modules, merr := exec.CommandContext(ctx, bin, "-m").Output()
 	restricted, total := openBasedirPools(fpmPoolDir(rt.IniDir), apmDir)
 	return &sapiTarget{
 		rt:           rt,
-		loaded:       apm.ModuleLoaded(string(modules), module),
+		loaded:       merr == nil && apm.ModuleLoaded(string(modules), module),
+		modOk:        merr == nil,
 		iniDir:       rt.ScanDir,
 		reloadCmd:    reloadCommand(initSystem(), fpmUnitFor(bin, opts)),
 		checkName:    bin,
@@ -300,9 +312,11 @@ func resolveApacheSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
 	}
 
 	loaded := false
+	modOk := false
 	scan := exec.CommandContext(ctx, bin, "-m")
 	scan.Env = append(os.Environ(), "PHP_INI_SCAN_DIR="+iniDir)
 	if out, err := scan.Output(); err == nil {
+		modOk = true
 		loaded = apm.ModuleLoaded(string(out), module)
 	}
 
@@ -310,6 +324,7 @@ func resolveApacheSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
 	return &sapiTarget{
 		rt:        rt,
 		loaded:    loaded,
+		modOk:     modOk,
 		iniDir:    iniDir,
 		reloadCmd: reloadCommand(initSystem(), svc),
 		checkName: "mod_php (" + svc + ")",

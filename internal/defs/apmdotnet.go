@@ -61,7 +61,7 @@ func runAPMDotnet(o *Outcome, service string, p protocol.Probe, stateDir string)
 		}
 	}
 
-	loaded, pid := dotnetInstrumented()
+	loaded, pid, detectOk := dotnetInstrumented()
 	o.Check.Status = "ok"
 	o.Check.Target = "dotnet/" + host
 	instrumented := 0.0
@@ -97,6 +97,15 @@ func runAPMDotnet(o *Outcome, service string, p protocol.Probe, stateDir string)
 			}
 		}
 		return
+	}
+	// instrumentation gone while our state says active = deactivated externally;
+	// re-arm so the stage below raises a fresh action_required. detectOk keeps a
+	// stopped runtime (nothing to inspect) from counting as a deactivation.
+	if detectOk && apm.StagedState(stateDir, stageID) == "active" {
+		_ = apm.ResetStaged(stateDir, stageID)
+		o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{
+			"service": service, "layer": "dotnet-otel", "host": host,
+		}))
 	}
 	if p.Options["autostage"] != "1" {
 		return
@@ -210,13 +219,13 @@ var dotnetEnvOrder = []string{
 	"OTEL_EXPORTER_OTLP_ENDPOINT",
 }
 
-func iisPoolInstrumented() bool {
+func iisPoolInstrumented() (bool, bool) {
 	windir := os.Getenv("windir")
 	if windir == "" {
 		windir = `C:\Windows`
 	}
 	raw, err := os.ReadFile(filepath.Join(windir, "System32", "inetsrv", "config", "applicationHost.config"))
-	return err == nil && strings.Contains(string(raw), "OTEL_DOTNET_AUTO_HOME")
+	return err == nil && strings.Contains(string(raw), "OTEL_DOTNET_AUTO_HOME"), err == nil
 }
 
 func dotnetPlatform() (osTag, arch, nativeSub string) {
@@ -230,19 +239,20 @@ func dotnetPlatform() (osTag, arch, nativeSub string) {
 	return "linux-glibc", arch, "linux-x64"
 }
 
-func dotnetInstrumented() (bool, int) {
+func dotnetInstrumented() (loaded bool, pid int, detectOk bool) {
 	if runtime.GOOS == "windows" {
-		return iisPoolInstrumented(), 0
+		loaded, detectOk = iisPoolInstrumented()
+		return loaded, 0, detectOk
 	}
 	if runtime.GOOS != "linux" {
-		return false, 0
+		return false, 0, false
 	}
 	out, err := exec.Command("pgrep", "-f", "dotnet").Output()
 	if err != nil {
-		return false, 0
+		return false, 0, false
 	}
 	for _, f := range strings.Fields(string(out)) {
-		pid, err := strconv.Atoi(f)
+		p, err := strconv.Atoi(f)
 		if err != nil {
 			continue
 		}
@@ -251,8 +261,8 @@ func dotnetInstrumented() (bool, int) {
 			continue
 		}
 		if apm.DotnetEnvActive(strings.ReplaceAll(string(environ), "\x00", "\n")) {
-			return true, pid
+			return true, p, true
 		}
 	}
-	return false, 0
+	return false, 0, true
 }

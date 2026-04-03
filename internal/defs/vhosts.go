@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wakora.io/agent/internal/protocol"
@@ -159,6 +161,24 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}(i, h)
 	}
 	wg.Wait()
+
+	// the local probe can't see a lapsed domain (it dials 127.0.0.1), so each
+	// probed primary also gets a resolver check: NXDOMAIN = the world lost this
+	// site even though it still serves locally
+	dnsNames := make([]string, 0, len(window))
+	seenName := map[string]bool{}
+	for _, pi := range primaries {
+		if !probed[pi] {
+			continue
+		}
+		if n := dnsProbeName(hosts[pi].Name); n != "" && !seenName[n] {
+			seenName[n] = true
+			dnsNames = append(dnsNames, n)
+		}
+	}
+	dnsAlive := vhostDNSSweep(dnsNames, 3*time.Second)
+
+	dnsEmitted := map[string]bool{}
 	for i, h := range hosts {
 		r := results[i]
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
@@ -167,9 +187,29 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		if !probed[i] {
 			continue
 		}
-		o.Extra = append(o.Extra, r.check)
 
 		tags := map[string]string{"vhost": h.Name, "port": strconv.Itoa(h.Port)}
+		if alive, known := dnsAlive[dnsProbeName(h.Name)]; known {
+			if !alive {
+				if r.check.Error != "" {
+					r.check.Error += "; "
+				}
+				r.check.Error += "domain does not resolve (NXDOMAIN)"
+			}
+			if !dnsEmitted[h.Name] {
+				dnsEmitted[h.Name] = true
+				v := 0.0
+				if alive {
+					v = 1
+				}
+				o.Metrics = append(o.Metrics, protocol.MetricPoint{
+					Name: "svc." + service + ".vhost.dns_ok", Value: v,
+					Tags: map[string]string{"vhost": h.Name},
+				})
+			}
+		}
+		o.Extra = append(o.Extra, r.check)
+
 		if r.check.Status == "ok" {
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{
 				Name: "svc." + service + ".vhost.latency_ms", Value: r.check.LatencyMs, Tags: tags,
@@ -186,6 +226,85 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			)
 		}
 	}
+}
+
+// dnsProbeName normalizes a server_name for a resolver check, or returns ""
+// for names that can't meaningfully resolve: catch-alls, bare hostnames,
+// IP literals, wildcards/regexes and reserved-for-local TLDs
+func dnsProbeName(raw string) string {
+	n := strings.ToLower(strings.Trim(raw, "."))
+	if n == "" || n == "_" || n == "localhost" || !strings.Contains(n, ".") {
+		return ""
+	}
+	if net.ParseIP(n) != nil {
+		return ""
+	}
+	for _, c := range n {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '-') {
+			return ""
+		}
+	}
+	for _, suffix := range []string{".local", ".localhost", ".internal", ".lan", ".home", ".test", ".invalid"} {
+		if strings.HasSuffix(n, suffix) {
+			return ""
+		}
+	}
+	return n
+}
+
+var vhostLookupHost = func(ctx context.Context, name string) error {
+	_, err := net.DefaultResolver.LookupHost(ctx, name)
+	return err
+}
+
+// vhostDNSSweep resolves the names and reports only definitive answers:
+// true = resolves, false = authoritative NXDOMAIN. Transient failures
+// (timeouts, SERVFAIL, resolver down) report nothing, and five in a row
+// abandon the sweep - a dead resolver must not paint the portfolio dead
+func vhostDNSSweep(names []string, perLookup time.Duration) map[string]bool {
+	out := map[string]bool{}
+	if len(names) == 0 {
+		return out
+	}
+	var mu sync.Mutex
+	var misses atomic.Int32
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, name := range names {
+		if misses.Load() >= 5 {
+			break
+		}
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if misses.Load() >= 5 {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), perLookup)
+			defer cancel()
+			err := vhostLookupHost(ctx, name)
+			if err == nil {
+				misses.Store(0)
+				mu.Lock()
+				out[name] = true
+				mu.Unlock()
+				return
+			}
+			var de *net.DNSError
+			if errors.As(err, &de) && de.IsNotFound {
+				misses.Store(0)
+				mu.Lock()
+				out[name] = false
+				mu.Unlock()
+				return
+			}
+			misses.Add(1)
+		}(name)
+	}
+	wg.Wait()
+	return out
 }
 
 const (
