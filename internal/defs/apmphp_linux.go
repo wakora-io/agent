@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +24,11 @@ type sapiTarget struct {
 	modOk        bool
 	iniDir       string
 	reloadCmd    string
+	unit         string
+	testCmd      string
 	checkName    string
 	preBin       string
+	poolDir      string
 	basedirPools int
 	basedirTotal int
 }
@@ -227,15 +231,20 @@ func fpmTarget(bin, module string, opts map[string]string, apmDir string) (*sapi
 	rt.Arch = apm.Arch()
 	rt.Libc = detectLibc(bin)
 	modules, merr := exec.CommandContext(ctx, bin, "-m").Output()
-	restricted, total := openBasedirPools(fpmPoolDir(rt.IniDir), apmDir)
+	poolDir := fpmPoolDir(rt.IniDir)
+	restricted, total := openBasedirPools(poolDir, apmDir)
+	unit := fpmUnitFor(bin, opts)
 	return &sapiTarget{
 		rt:           rt,
 		loaded:       merr == nil && apm.ModuleLoaded(string(modules), module),
 		modOk:        merr == nil,
 		iniDir:       rt.ScanDir,
-		reloadCmd:    reloadCommand(initSystem(), fpmUnitFor(bin, opts)),
+		reloadCmd:    reloadCommand(initSystem(), unit),
+		unit:         unit,
+		testCmd:      bin + " -t",
 		checkName:    bin,
 		preBin:       bin,
+		poolDir:      poolDir,
 		basedirPools: restricted,
 		basedirTotal: total,
 	}, ""
@@ -326,12 +335,18 @@ func resolveApacheSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
 	}
 
 	svc := apacheServiceName(p.Options)
+	testCmd := "apache2ctl configtest"
+	if svc == "httpd" {
+		testCmd = "apachectl configtest"
+	}
 	return &sapiTarget{
 		rt:        rt,
 		loaded:    loaded,
 		modOk:     modOk,
 		iniDir:    iniDir,
 		reloadCmd: reloadCommand(initSystem(), svc),
+		unit:      svc,
+		testCmd:   testCmd,
 		checkName: "mod_php (" + svc + ")",
 		preBin:    bin,
 	}, ""
@@ -385,8 +400,10 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 		o.Facts[stageKey] = fmt.Sprintf(
 			"blocked: %d of %d pools restrict open_basedir, a version-wide prepend would 500 them; allow %s in those pools and the agent re-stages on the next cycle",
 			st.basedirPools, st.basedirTotal, filepath.Join(stateDir, "apm"))
+		stageBasedirPrep(o, service, stateDir, st, stageID)
 		return
 	}
+	_ = apm.ResetStaged(stateDir, stageID+"-prep")
 	artifact := apm.OtelArtifactName(st.rt)
 	if artifact == "" {
 		o.Facts[stageKey] = "blocked: incomplete runtime fingerprint"
@@ -444,13 +461,17 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 	}
 	ini := apm.OtelIni(soPath, service, endpoint, sdkDir, artifactSha)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
+	command := "cp " + stagedPath + " " + target + " && " + st.reloadCmd
+	if st.testCmd != "" {
+		command = "cp " + stagedPath + " " + target + " && " + st.testCmd + " && " + st.reloadCmd
+	}
 	change := apm.StagedChange{
 		ID:         stageID,
 		Service:    service,
 		Kind:       "otel-spans",
 		TargetPath: target,
 		Impact:     "reload",
-		Command:    "cp " + stagedPath + " " + target + " && " + st.reloadCmd,
+		Command:    command,
 	}
 	staged, isNew, err := apm.Stage(stateDir, change, []byte(ini))
 	if err != nil {
@@ -462,9 +483,33 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 		o.Events = append(o.Events, apmEvent("action_required", map[string]string{
 			"service": service, "change": "otel-spans", "impact": "reload",
 			"command": staged.Command, "stagedPath": staged.StagedPath, "target": target,
-			"php": st.rt.VersionShort,
+			"php": st.rt.VersionShort, "unit": st.unit, "test": st.testCmd,
 		}))
 	}
+}
+
+func stageBasedirPrep(o *Outcome, service, stateDir string, st *sapiTarget, stageID string) {
+	if st.poolDir == "" {
+		return
+	}
+	apmDir := filepath.Join(stateDir, "apm")
+	sed := "sed -i.wakora-bak '/open_basedir/{/wakora/!s#[[:space:]]*$#:" + apmDir + "#}' " + st.poolDir + "/*.conf"
+	change := apm.StagedChange{
+		ID:      stageID + "-prep",
+		Service: service,
+		Kind:    "otel-prep",
+		Impact:  "none",
+		Command: sed,
+	}
+	staged, isNew, err := apm.Stage(stateDir, change, []byte(sed))
+	if err != nil || !isNew {
+		return
+	}
+	o.Events = append(o.Events, apmEvent("action_required", map[string]string{
+		"service": service, "change": "otel-prep", "impact": "none",
+		"command": staged.Command, "target": st.poolDir,
+		"php": st.rt.VersionShort, "pools": strconv.Itoa(st.basedirPools),
+	}))
 }
 
 func reloadCommand(init, svc string) string {
