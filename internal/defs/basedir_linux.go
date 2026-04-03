@@ -7,14 +7,29 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+func nginxBasedirPrepCommand(apmDir string, dirs []string) string {
+	if len(dirs) == 0 || len(dirs) > 4 {
+		return ""
+	}
+	globs := make([]string, len(dirs))
+	for i, d := range dirs {
+		globs[i] = d + "/*"
+	}
+	return `sed -i.wakora-bak '/open_basedir/{\#` + apmDir + `#!s#\(open_basedir=[^";\\ ]*\)#\1:` + apmDir + `#g}' ` +
+		strings.Join(globs, " ") + ` && nginx -t && systemctl reload nginx`
+}
 
 type basedirScanResult struct {
 	nginxFiles int
 	userIni    int
 	samples    []string
+	nginxDirs  []string
 }
 
 type basedirScanCacheSet struct {
@@ -57,6 +72,7 @@ func basedirOutsideScan(apmDir string) basedirScanResult {
 func scanNginxBasedir(root, apmDir string) basedirScanResult {
 	var res basedirScanResult
 	docroots := map[string]bool{}
+	dirs := map[string]bool{}
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -72,6 +88,7 @@ func scanNginxBasedir(root, apmDir string) basedirScanResult {
 		for _, m := range basedirValRe.FindAllSubmatch(data, -1) {
 			if !basedirCovers(string(m[1]), apmDir) {
 				res.nginxFiles++
+				dirs[filepath.Dir(path)] = true
 				if len(res.samples) < 3 {
 					res.samples = append(res.samples, path)
 				}
@@ -85,6 +102,10 @@ func scanNginxBasedir(root, apmDir string) basedirScanResult {
 		}
 		return nil
 	})
+	for d := range dirs {
+		res.nginxDirs = append(res.nginxDirs, d)
+	}
+	sort.Strings(res.nginxDirs)
 	for dir := range docroots {
 		ini := filepath.Join(dir, ".user.ini")
 		fi, err := os.Stat(ini)

@@ -113,10 +113,12 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 		"otelArtifact": apm.OtelArtifactName(primary.rt),
 	}
 	if sapi == "fpm" && (anyLoaded || p.Options["autostage"] == "1") && dirExists("/etc/nginx") {
-		if res := basedirOutsideScan(filepath.Join(stateDir, "apm")); res.nginxFiles > 0 || res.userIni > 0 {
+		res := basedirOutsideScan(filepath.Join(stateDir, "apm"))
+		if res.nginxFiles > 0 || res.userIni > 0 {
 			o.Facts["basedirOutside"] = fmt.Sprintf("nginx:%d user.ini:%d", res.nginxFiles, res.userIni)
 			o.Facts["basedirOutsideSample"] = strings.Join(res.samples, ", ")
 		}
+		stageNginxBasedirPrep(o, service, stateDir, res)
 	}
 
 	prefix := "svc." + service + "."
@@ -507,6 +509,34 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 			"php": st.rt.VersionShort, "unit": st.unit, "test": st.testCmd,
 		}))
 	}
+}
+
+func stageNginxBasedirPrep(o *Outcome, service, stateDir string, res basedirScanResult) {
+	prepID := "apmphp-" + service + "-nginxprep"
+	if res.nginxFiles == 0 {
+		_ = apm.ResetStaged(stateDir, prepID)
+		return
+	}
+	cmd := nginxBasedirPrepCommand(filepath.Join(stateDir, "apm"), res.nginxDirs)
+	if cmd == "" {
+		return
+	}
+	change := apm.StagedChange{
+		ID:      prepID,
+		Service: service,
+		Kind:    "otel-prep",
+		Impact:  "nginx reload",
+		Command: cmd,
+	}
+	staged, isNew, err := apm.Stage(stateDir, change, []byte(cmd))
+	if err != nil || !isNew {
+		return
+	}
+	o.Events = append(o.Events, apmEvent("action_required", map[string]string{
+		"service": service, "change": "otel-prep", "scope": "nginx", "impact": "nginx reload",
+		"command": staged.Command, "target": strings.Join(res.nginxDirs, ", "),
+		"files": strconv.Itoa(res.nginxFiles),
+	}))
 }
 
 func stageBasedirPrep(o *Outcome, service, stateDir string, st *sapiTarget, stageID string) {
