@@ -112,6 +112,12 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 		"sapi":         sapi,
 		"otelArtifact": apm.OtelArtifactName(primary.rt),
 	}
+	if sapi == "fpm" && (anyLoaded || p.Options["autostage"] == "1") && dirExists("/etc/nginx") {
+		if res := basedirOutsideScan(filepath.Join(stateDir, "apm")); res.nginxFiles > 0 || res.userIni > 0 {
+			o.Facts["basedirOutside"] = fmt.Sprintf("nginx:%d user.ini:%d", res.nginxFiles, res.userIni)
+			o.Facts["basedirOutsideSample"] = strings.Join(res.samples, ", ")
+		}
+	}
 
 	prefix := "svc." + service + "."
 	for _, st := range targets {
@@ -232,7 +238,7 @@ func fpmTarget(bin, module string, opts map[string]string, apmDir string) (*sapi
 	rt.Libc = detectLibc(bin)
 	modules, merr := exec.CommandContext(ctx, bin, "-m").Output()
 	poolDir := fpmPoolDir(rt.IniDir)
-	restricted, total := openBasedirPools(poolDir, apmDir)
+	restricted, total := openBasedirPools(poolDir, rt.IniDir, apmDir)
 	unit := fpmUnitFor(bin, opts)
 	return &sapiTarget{
 		rt:           rt,
@@ -262,21 +268,36 @@ func fpmPoolDir(iniDir string) string {
 	return ""
 }
 
-var basedirRe = regexp.MustCompile(`(?m)^\s*php_(?:admin_)?value\[open_basedir\]\s*=\s*(\S+)`)
+var (
+	basedirRe    = regexp.MustCompile(`(?m)^\s*php_(?:admin_)?value\[open_basedir\]\s*=\s*(\S+)`)
+	fpmIncludeRe = regexp.MustCompile(`(?m)^\s*include\s*=\s*(\S+)`)
+)
 
-func openBasedirPools(poolDir, apmDir string) (restricted, total int) {
-	if poolDir == "" {
-		return 0, 0
-	}
-	entries, err := os.ReadDir(poolDir)
-	if err != nil {
-		return 0, 0
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".conf") {
-			continue
+func openBasedirPools(poolDir, confDir, apmDir string) (restricted, total int) {
+	files := map[string]bool{}
+	if poolDir != "" {
+		if entries, err := os.ReadDir(poolDir); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".conf") {
+					files[filepath.Join(poolDir, e.Name())] = true
+				}
+			}
 		}
-		data, err := os.ReadFile(filepath.Join(poolDir, e.Name()))
+	}
+	if confDir != "" {
+		if data, err := os.ReadFile(filepath.Join(confDir, "php-fpm.conf")); err == nil {
+			for _, m := range fpmIncludeRe.FindAllSubmatch(data, -1) {
+				matches, _ := filepath.Glob(string(m[1]))
+				for _, f := range matches {
+					if fi, err := os.Stat(f); err == nil && !fi.IsDir() {
+						files[f] = true
+					}
+				}
+			}
+		}
+	}
+	for f := range files {
+		data, err := os.ReadFile(f)
 		if err != nil {
 			continue
 		}
