@@ -170,6 +170,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 	}
 	dnsAlive := vhostDNSSweep(dnsNames, 3*time.Second)
+	localAddrs := hostAddrSet()
 
 	dnsEmitted := map[string]bool{}
 	for i, h := range hosts {
@@ -182,8 +183,8 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 
 		tags := map[string]string{"vhost": h.Name, "port": strconv.Itoa(h.Port)}
-		if alive, known := dnsAlive[dnsProbeName(h.Name)]; known {
-			if !alive {
+		if res, known := dnsAlive[dnsProbeName(h.Name)]; known {
+			if !res.alive {
 				if r.check.Error != "" {
 					r.check.Error += "; "
 				}
@@ -192,13 +193,23 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			if !dnsEmitted[h.Name] {
 				dnsEmitted[h.Name] = true
 				v := 0.0
-				if alive {
+				if res.alive {
 					v = 1
 				}
 				o.Metrics = append(o.Metrics, protocol.MetricPoint{
 					Name: "svc." + service + ".vhost.dns_ok", Value: v,
 					Tags: map[string]string{"vhost": h.Name},
 				})
+				if off, ok := vhostOffloaded(res, localAddrs); ok {
+					ov := 0.0
+					if off {
+						ov = 1
+					}
+					o.Metrics = append(o.Metrics, protocol.MetricPoint{
+						Name: "svc." + service + ".vhost.offloaded", Value: ov,
+						Tags: map[string]string{"vhost": h.Name},
+					})
+				}
 			}
 		}
 		o.Extra = append(o.Extra, r.check)
@@ -242,13 +253,17 @@ func dnsProbeName(raw string) string {
 	return n
 }
 
-var vhostLookupHost = func(ctx context.Context, name string) error {
-	_, err := net.DefaultResolver.LookupHost(ctx, name)
-	return err
+var vhostLookupHost = func(ctx context.Context, name string) ([]string, error) {
+	return net.DefaultResolver.LookupHost(ctx, name)
 }
 
-func vhostDNSSweep(names []string, perLookup time.Duration) map[string]bool {
-	out := map[string]bool{}
+type dnsSweepResult struct {
+	alive bool
+	ips   []string
+}
+
+func vhostDNSSweep(names []string, perLookup time.Duration) map[string]dnsSweepResult {
+	out := map[string]dnsSweepResult{}
 	if len(names) == 0 {
 		return out
 	}
@@ -270,11 +285,11 @@ func vhostDNSSweep(names []string, perLookup time.Duration) map[string]bool {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), perLookup)
 			defer cancel()
-			err := vhostLookupHost(ctx, name)
+			ips, err := vhostLookupHost(ctx, name)
 			if err == nil {
 				misses.Store(0)
 				mu.Lock()
-				out[name] = true
+				out[name] = dnsSweepResult{alive: true, ips: ips}
 				mu.Unlock()
 				return
 			}
@@ -282,7 +297,7 @@ func vhostDNSSweep(names []string, perLookup time.Duration) map[string]bool {
 			if errors.As(err, &de) && de.IsNotFound {
 				misses.Store(0)
 				mu.Lock()
-				out[name] = false
+				out[name] = dnsSweepResult{alive: false}
 				mu.Unlock()
 				return
 			}
@@ -291,6 +306,44 @@ func vhostDNSSweep(names []string, perLookup time.Duration) map[string]bool {
 	}
 	wg.Wait()
 	return out
+}
+
+var publicIP atomic.Value
+
+func SetPublicIP(ip string) {
+	if net.ParseIP(ip) != nil {
+		publicIP.Store(ip)
+	}
+}
+
+func hostAddrSet() map[string]bool {
+	set := map[string]bool{}
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok {
+				set[ipn.IP.String()] = true
+			}
+		}
+	}
+	if p, ok := publicIP.Load().(string); ok && p != "" {
+		set[p] = true
+	}
+	return set
+}
+
+func vhostOffloaded(res dnsSweepResult, local map[string]bool) (bool, bool) {
+	if !res.alive || len(res.ips) == 0 {
+		return false, false
+	}
+	if p, ok := publicIP.Load().(string); !ok || p == "" {
+		return false, false
+	}
+	for _, ip := range res.ips {
+		if p := net.ParseIP(ip); p != nil && (p.IsLoopback() || local[p.String()]) {
+			return false, true
+		}
+	}
+	return true, true
 }
 
 const (

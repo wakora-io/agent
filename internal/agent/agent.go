@@ -1502,6 +1502,10 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 				default:
 				}
 			}
+		case "publicIP":
+			if c.Key != "" {
+				defs.SetPublicIP(c.Key)
+			}
 		}
 	}
 }
