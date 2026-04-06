@@ -124,12 +124,18 @@ func main() {
 			}
 			serverID, serverKey, err := bootstrap.Register(httpc, regURL, *key, secret.MachineID(), cfg.Hostname)
 			if err != nil {
-				log.Fatal(err)
+				if saveErr := config.SavePendingKey(*configDir, *key); saveErr != nil {
+					log.Fatalf("register failed (%v) and pending key not stored: %v", err, saveErr)
+				}
+				log.Printf("register failed: %v", err)
+				log.Print("team key stored encrypted on this machine; the service retries registration until the gateway accepts (survives restarts)")
+			} else {
+				if err := config.SaveIdentity(*configDir, serverID, serverKey); err != nil {
+					log.Fatal(err)
+				}
+				config.ClearPendingKey(*configDir)
+				log.Printf("registered, server uuid %s", serverID)
 			}
-			if err := config.SaveIdentity(*configDir, serverID, serverKey); err != nil {
-				log.Fatal(err)
-			}
-			log.Printf("registered, server uuid %s", serverID)
 		}
 		for svc, kv := range overrides {
 			for k, v := range kv {
@@ -167,7 +173,7 @@ func main() {
 	if cfg.Endpoint == "" {
 		log.Fatal("no gateway endpoint built into this binary; use --endpoint (dev)")
 	}
-	if cfg.Key == "" && !underServiceManager() && term.IsTerminal(int(os.Stderr.Fd())) {
+	if cfg.Key == "" && config.LoadPendingKey(*configDir) == "" && !underServiceManager() && term.IsTerminal(int(os.Stderr.Fd())) {
 		log.Fatal("no identity; register with: wakora --key <TEAMKEY>")
 	}
 
@@ -198,8 +204,12 @@ func main() {
 			go autoUpdate(ctx, relURL, httpc, pubKey, *updateEvery, updateKick)
 		}
 		if cfg.Key == "" {
-			log.Print("no identity yet - idle until registered; run: wakora --key <TEAMKEY>")
-			if !waitForIdentity(ctx, cfg) {
+			if config.LoadPendingKey(*configDir) != "" {
+				log.Print("no identity yet - retrying registration with the stored team key")
+			} else {
+				log.Print("no identity yet - idle until registered; run: wakora --key <TEAMKEY>")
+			}
+			if !waitForIdentity(ctx, cfg, httpc, *configDir) {
 				return nil
 			}
 			a.RefreshIdentity()
@@ -320,8 +330,11 @@ func deriveURL(endpoint, path string) string {
 	return scheme + "://" + u.Host + path
 }
 
-func waitForIdentity(ctx context.Context, cfg *config.Config) bool {
-	t := time.NewTicker(15 * time.Second)
+func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client, configDir string) bool {
+	regURL := deriveURL(cfg.Endpoint, "/register")
+	backoff := 2 * time.Second
+	next := time.Now()
+	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -329,8 +342,33 @@ func waitForIdentity(ctx context.Context, cfg *config.Config) bool {
 			return false
 		case <-t.C:
 			if err := cfg.ReloadIdentity(); err == nil && cfg.Key != "" {
+				config.ClearPendingKey(configDir)
 				return true
 			}
+			if regURL == "" || time.Now().Before(next) {
+				continue
+			}
+			pending := config.LoadPendingKey(configDir)
+			if pending == "" {
+				continue
+			}
+			serverID, serverKey, err := bootstrap.Register(httpc, regURL, pending, secret.MachineID(), cfg.Hostname)
+			if err != nil {
+				log.Printf("pending registration: %v (next try in %s)", err, backoff)
+				next = time.Now().Add(backoff)
+				if backoff *= 2; backoff > time.Minute {
+					backoff = time.Minute
+				}
+				continue
+			}
+			if err := config.SaveIdentity(configDir, serverID, serverKey); err != nil {
+				log.Printf("pending registration: identity save failed: %v", err)
+				continue
+			}
+			config.ClearPendingKey(configDir)
+			_ = cfg.ReloadIdentity()
+			log.Printf("registered, server uuid %s", serverID)
+			return true
 		}
 	}
 }

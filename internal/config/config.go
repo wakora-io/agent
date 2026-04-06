@@ -136,6 +136,48 @@ func (c *Config) SaveKey(key string) error {
 	return nil
 }
 
+func PendingKeyPath(dir string) string {
+	if dir == "" {
+		dir = defaultDir
+	}
+	return filepath.Join(dir, "pending-key")
+}
+
+func SavePendingKey(dir, teamKey string) error {
+	if dir == "" {
+		dir = defaultDir
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	enc, err := secret.Encrypt(teamKey)
+	if err != nil {
+		return err
+	}
+	return writeINI(PendingKeyPath(dir), map[string]map[string]string{"": {"key": enc}})
+}
+
+func LoadPendingKey(dir string) string {
+	f, err := os.Open(PendingKeyPath(dir))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	enc := parseINI(f)[""]["key"]
+	if enc == "" {
+		return ""
+	}
+	plain, err := secret.Decrypt(enc)
+	if err != nil {
+		return ""
+	}
+	return plain
+}
+
+func ClearPendingKey(dir string) {
+	_ = os.Remove(PendingKeyPath(dir))
+}
+
 func WriteOverride(dir, service, key, value string) error {
 	if dir == "" {
 		dir = defaultDir
