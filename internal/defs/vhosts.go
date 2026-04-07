@@ -215,13 +215,24 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			}
 		}
 		if reg := vhostRegistrable(h.Name); reg != "" && !domEmitted[reg] {
-			if info, ok := domInfo[reg]; ok && info.hasReg {
+			if info, ok := domInfo[reg]; ok && (info.hasReg || info.hasExpiry) {
 				domEmitted[reg] = true
-				age := time.Since(info.registered).Hours() / 24
-				o.Metrics = append(o.Metrics, protocol.MetricPoint{
-					Name: "svc." + service + ".vhost.domain_age_days", Value: float64(int(age*10)) / 10,
-					Tags: map[string]string{"vhost": reg},
-				})
+				if info.hasReg {
+					age := time.Since(info.registered).Hours() / 24
+					o.Metrics = append(o.Metrics, protocol.MetricPoint{
+						Name: "svc." + service + ".vhost.domain_age_days", Value: float64(int(age*10)) / 10,
+						Tags: map[string]string{"vhost": reg},
+					})
+				}
+				// negative = the registration lapsed but the zone still answers: the
+				// grace window where the client can still save the domain
+				if info.hasExpiry {
+					left := time.Until(info.expiry).Hours() / 24
+					o.Metrics = append(o.Metrics, protocol.MetricPoint{
+						Name: "svc." + service + ".vhost.domain_days_left", Value: float64(int(left*10)) / 10,
+						Tags: map[string]string{"vhost": reg},
+					})
+				}
 			}
 		}
 		o.Extra = append(o.Extra, r.check)
