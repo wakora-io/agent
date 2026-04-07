@@ -61,6 +61,8 @@ type Agent struct {
 	vhostDone         chan probeDone
 	vhostBusy         map[string]bool
 	updateKick        chan struct{}
+	updateNote        chan [2]string
+	updateNoteDone    chan struct{}
 	otlpAuto          atomic.Bool
 
 	pmu     sync.Mutex
@@ -72,6 +74,21 @@ const pendingCap = 8192
 var probeTick = 15 * time.Second
 
 func (a *Agent) SetUpdateKick(ch chan struct{}) { a.updateKick = ch }
+
+func (a *Agent) AnnounceUpdate(from, to string) {
+	if a.updateNote == nil {
+		return
+	}
+	select {
+	case a.updateNote <- [2]string{from, to}:
+	default:
+		return
+	}
+	select {
+	case <-a.updateNoteDone:
+	case <-time.After(3 * time.Second):
+	}
+}
 
 type trackedConn struct {
 	inner transport.Conn
@@ -150,6 +167,8 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		profiling:         map[string]bool{},
 		vhostDone:         make(chan probeDone, 8),
 		vhostBusy:         map[string]bool{},
+		updateNote:        make(chan [2]string, 1),
+		updateNoteDone:    make(chan struct{}, 1),
 		pending:           map[uint64][]byte{},
 	}
 	a.key.Store(cfg.Key)
@@ -271,6 +290,25 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			case <-pt.C:
 				if err := a.runDueProbes(conn); err != nil {
 					return err
+				}
+			case note := <-a.updateNote:
+				detail, _ := json.Marshal(map[string]string{"from": note[0], "to": note[1]})
+				a.seq++
+				msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+					ServerID:  a.cfg.ServerID,
+					Hostname:  a.cfg.Hostname,
+					Kind:      "agent_update",
+					Detail:    string(detail),
+					Timestamp: time.Now().Unix(),
+				})
+				if err == nil {
+					if err := conn.Send(msg); err != nil {
+						return err
+					}
+				}
+				select {
+				case a.updateNoteDone <- struct{}{}:
+				default:
 				}
 			case pts := <-a.custom:
 				a.seq++

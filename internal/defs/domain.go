@@ -16,13 +16,21 @@ import (
 
 const rdapBootstrapURL = "https://data.iana.org/rdap/dns.json"
 
+type domainInfo struct {
+	expiry     time.Time
+	registered time.Time
+	hasExpiry  bool
+	hasReg     bool
+	err        string
+}
+
 var domainCache = struct {
 	sync.Mutex
-	expiry    map[string]time.Time
+	info      map[string]domainInfo
 	fetchedAt map[string]time.Time
 	bootstrap map[string]string
 	bootAt    time.Time
-}{expiry: map[string]time.Time{}, fetchedAt: map[string]time.Time{}}
+}{info: map[string]domainInfo{}, fetchedAt: map[string]time.Time{}}
 
 func runDomain(o *Outcome, service string, p protocol.Probe, timeout time.Duration) {
 	if len(p.Domains) == 0 {
@@ -36,17 +44,25 @@ func runDomain(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	var failures []string
 	now := time.Now()
 	for _, domain := range p.Domains {
-		expiry, err := domainExpiry(client, domain, timeout)
-		if err != nil {
-			failures = append(failures, domain+": "+err.Error())
+		info := domainLookup(client, domain, timeout)
+		if !info.hasExpiry {
+			failures = append(failures, domain+": "+info.err)
 			continue
 		}
-		days := expiry.Sub(now).Hours() / 24
+		days := info.expiry.Sub(now).Hours() / 24
 		tags := map[string]string{"domain": domain}
 		o.Metrics = append(o.Metrics, protocol.MetricPoint{
 			Name: "ext.domain.days_left", Value: float64(int(days*10)) / 10, Tags: tags,
 		})
-		payload, err := json.Marshal(map[string]string{"expiry": expiry.UTC().Format("2006-01-02")})
+		fact := map[string]string{"expiry": info.expiry.UTC().Format("2006-01-02")}
+		if info.hasReg {
+			age := now.Sub(info.registered).Hours() / 24
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{
+				Name: "ext.domain.age_days", Value: float64(int(age*10)) / 10, Tags: tags,
+			})
+			fact["registered"] = info.registered.UTC().Format("2006-01-02")
+		}
+		payload, err := json.Marshal(fact)
 		if err == nil {
 			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "domain", Key: domain, Payload: string(payload)})
 		}
@@ -62,49 +78,69 @@ func runDomain(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	}
 }
 
-func domainExpiry(client *http.Client, domain string, timeout time.Duration) (time.Time, error) {
+func domainCached(domain string) (domainInfo, bool) {
 	domainCache.Lock()
-	if exp, ok := domainCache.expiry[domain]; ok && time.Since(domainCache.fetchedAt[domain]) < 12*time.Hour {
-		domainCache.Unlock()
-		return exp, nil
+	defer domainCache.Unlock()
+	info, ok := domainCache.info[domain]
+	if !ok || time.Since(domainCache.fetchedAt[domain]) >= 12*time.Hour {
+		return domainInfo{}, false
 	}
-	domainCache.Unlock()
-
-	exp, err := rdapExpiry(client, domain)
-	if err != nil {
-		exp, err = whoisExpiry(domain, timeout)
-	}
-	if err != nil {
-		return time.Time{}, err
-	}
-	domainCache.Lock()
-	domainCache.expiry[domain] = exp
-	domainCache.fetchedAt[domain] = time.Now()
-	domainCache.Unlock()
-	return exp, nil
+	return info, true
 }
 
-func rdapExpiry(client *http.Client, domain string) (time.Time, error) {
+func domainLookup(client *http.Client, domain string, timeout time.Duration) domainInfo {
+	if info, ok := domainCached(domain); ok {
+		return info
+	}
+	info := rdapLookup(client, domain)
+	if !info.hasExpiry {
+		if exp, err := whoisExpiry(domain, timeout); err == nil {
+			info.expiry = exp
+			info.hasExpiry = true
+			info.err = ""
+		} else if info.err == "" {
+			info.err = err.Error()
+		}
+	}
+	domainCache.Lock()
+	domainCache.info[domain] = info
+	domainCache.fetchedAt[domain] = time.Now()
+	domainCache.Unlock()
+	return info
+}
+
+func rdapLookup(client *http.Client, domain string) domainInfo {
 	base, err := rdapBase(client, tldOf(domain))
 	if err != nil {
-		return time.Time{}, err
+		return domainInfo{err: err.Error()}
 	}
 	resp, err := client.Get(base + "domain/" + domain)
 	if err != nil {
-		return time.Time{}, err
+		return domainInfo{err: err.Error()}
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return time.Time{}, errRdap(resp.StatusCode)
+		return domainInfo{err: errRdap(resp.StatusCode).Error()}
 	}
 	var doc struct {
 		Events []rdapEvent `json:"events"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return time.Time{}, err
+		return domainInfo{err: err.Error()}
 	}
-	return rdapExpirationEvent(doc.Events)
+	info := domainInfo{}
+	if t, err := rdapEventDate(doc.Events, "expiration"); err == nil {
+		info.expiry = t
+		info.hasExpiry = true
+	} else {
+		info.err = err.Error()
+	}
+	if t, err := rdapEventDate(doc.Events, "registration"); err == nil {
+		info.registered = t
+		info.hasReg = true
+	}
+	return info
 }
 
 type rdapEvent struct {
@@ -112,9 +148,9 @@ type rdapEvent struct {
 	EventDate   string `json:"eventDate"`
 }
 
-func rdapExpirationEvent(events []rdapEvent) (time.Time, error) {
+func rdapEventDate(events []rdapEvent, action string) (time.Time, error) {
 	for _, e := range events {
-		if e.EventAction != "expiration" {
+		if e.EventAction != action {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339, e.EventDate); err == nil {

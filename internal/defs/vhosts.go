@@ -171,8 +171,10 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	}
 	dnsAlive := vhostDNSSweep(dnsNames, 3*time.Second)
 	localAddrs := hostAddrSet()
+	domInfo := vhostDomainScan(dnsNames, 5*time.Second)
 
 	dnsEmitted := map[string]bool{}
+	domEmitted := map[string]bool{}
 	for i, h := range hosts {
 		r := results[i]
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
@@ -210,6 +212,16 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 						Tags: map[string]string{"vhost": h.Name},
 					})
 				}
+			}
+		}
+		if reg := vhostRegistrable(h.Name); reg != "" && !domEmitted[reg] {
+			if info, ok := domInfo[reg]; ok && info.hasReg {
+				domEmitted[reg] = true
+				age := time.Since(info.registered).Hours() / 24
+				o.Metrics = append(o.Metrics, protocol.MetricPoint{
+					Name: "svc." + service + ".vhost.domain_age_days", Value: float64(int(age*10)) / 10,
+					Tags: map[string]string{"vhost": reg},
+				})
 			}
 		}
 		o.Extra = append(o.Extra, r.check)
@@ -344,6 +356,70 @@ func vhostOffloaded(res dnsSweepResult, local map[string]bool) (bool, bool) {
 		}
 	}
 	return true, true
+}
+
+var ccSLD = map[string]bool{
+	"co.uk": true, "org.uk": true, "me.uk": true, "ac.uk": true, "gov.uk": true,
+	"com.au": true, "net.au": true, "org.au": true, "co.nz": true, "net.nz": true,
+	"com.br": true, "net.br": true, "co.jp": true, "or.jp": true, "ne.jp": true,
+	"com.tr": true, "com.pl": true, "net.pl": true, "org.pl": true, "com.ua": true,
+	"co.za": true, "com.mx": true, "com.ar": true, "com.cn": true, "com.hk": true,
+	"co.in": true, "co.kr": true, "com.sg": true, "com.my": true, "co.id": true,
+}
+
+func vhostRegistrable(name string) string {
+	n := dnsProbeName(strings.TrimPrefix(name, "*."))
+	if n == "" {
+		return ""
+	}
+	parts := strings.Split(n, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	last2 := strings.Join(parts[len(parts)-2:], ".")
+	if len(parts) >= 3 && ccSLD[last2] {
+		return strings.Join(parts[len(parts)-3:], ".")
+	}
+	return last2
+}
+
+const vhostDomainBudget = 10
+
+func vhostDomainScan(names []string, timeout time.Duration) map[string]domainInfo {
+	uniq := map[string]bool{}
+	for _, n := range names {
+		if reg := vhostRegistrable(n); reg != "" {
+			uniq[reg] = true
+		}
+	}
+	out := map[string]domainInfo{}
+	client := &http.Client{Timeout: timeout}
+	budget := vhostDomainBudget
+	for reg := range uniq {
+		if info, ok := domainCached(reg); ok {
+			out[reg] = info
+			continue
+		}
+		if budget <= 0 {
+			continue
+		}
+		budget--
+		out[reg] = rdapLookupCached(client, reg)
+		time.Sleep(300 * time.Millisecond)
+	}
+	return out
+}
+
+func rdapLookupCached(client *http.Client, domain string) domainInfo {
+	if info, ok := domainCached(domain); ok {
+		return info
+	}
+	info := rdapLookup(client, domain)
+	domainCache.Lock()
+	domainCache.info[domain] = info
+	domainCache.fetchedAt[domain] = time.Now()
+	domainCache.Unlock()
+	return info
 }
 
 const (

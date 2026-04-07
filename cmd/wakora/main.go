@@ -201,7 +201,7 @@ func main() {
 		if relURL != "" {
 			updateKick := make(chan struct{}, 1)
 			a.SetUpdateKick(updateKick)
-			go autoUpdate(ctx, relURL, httpc, pubKey, *updateEvery, updateKick)
+			go autoUpdate(ctx, relURL, httpc, pubKey, *updateEvery, updateKick, a.AnnounceUpdate)
 		}
 		if cfg.Key == "" {
 			if config.LoadPendingKey(*configDir) != "" {
@@ -401,7 +401,7 @@ func runUpdateOnce(relURL string, httpc *http.Client, pubKey string) {
 	restartService()
 }
 
-func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey string, every time.Duration, kick <-chan struct{}) {
+func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey string, every time.Duration, kick <-chan struct{}, announce func(from, to string)) {
 	u := update.New(relURL, httpc, pubKey)
 	exe, err := os.Executable()
 	if err != nil {
@@ -419,6 +419,9 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey s
 		if err := u.Apply(exe); err != nil {
 			log.Printf("auto-update failed: %v", err)
 			return
+		}
+		if announce != nil {
+			announce(buildinfo.Version, latest)
 		}
 		log.Printf("auto-updated %s -> %s, restarting", buildinfo.Version, latest)
 		exitForRestart()
