@@ -33,6 +33,26 @@ sleep 3
 grep 'POST /v1/traces' /tmp/otlp.log || { echo "no OTLP export seen"; cat /tmp/otlp.log 2>/dev/null; exit 1; }
 echo "e2e ok: spans exported over OTLP"
 
+cat > /recv/dumpbody.php <<'EOF'
+<?php
+file_put_contents('/tmp/otlp-body.bin', file_get_contents('php://input'), FILE_APPEND);
+echo '{}';
+EOF
+php -S 127.0.0.1:4319 /recv/dumpbody.php >/dev/null 2>&1 &
+php -d "extension=/art/$SO" \
+    -d "auto_prepend_file=/sdk/wakora-otel.php" \
+    -d "wakora.otel_service=e2e-php-root" \
+    -d "wakora.otel_endpoint=http://127.0.0.1:4319" \
+    -S 127.0.0.1:8083 -t /docroot >/dev/null 2>&1 &
+sleep 2
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8083/x.php");')
+[ "$body" = "ok" ] || { echo "root-span app request failed: $body"; exit 1; }
+sleep 3
+# the generic request root is a SERVER span named "GET /x.php" - a non-WP app
+# must not export client-only traces (protobuf body carries the span name raw)
+grep -q 'GET /x.php' /tmp/otlp-body.bin || { echo "generic root span missing from the export"; exit 1; }
+echo "e2e ok: non-WP request exports a generic server root span"
+
 php -d "extension=/art/$SO" \
     -d "auto_prepend_file=/sdk/wakora-otel.php" \
     -d "open_basedir=/docroot:/tmp:/sdk" \
