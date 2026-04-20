@@ -49,9 +49,6 @@ try {
     if (isset($_SERVER['REQUEST_METHOD']) && !isset($GLOBALS['wakoraRootSpan'])) {
         $wakoraScript = isset($_SERVER['SCRIPT_FILENAME']) ? (string) $_SERVER['SCRIPT_FILENAME'] : '';
         $wakoraScriptDir = $wakoraScript !== '' ? dirname($wakoraScript) : '';
-        // @-guarded: probing a path outside open_basedir emits a warning that would
-        // print into the response body (apm-9 discipline) - a parent dir above the
-        // docroot is exactly that case; the silenced check just returns false there
         $wakoraIsWp = $wakoraScriptDir !== '' && (
             @file_exists($wakoraScriptDir . '/wp-settings.php')
             || @file_exists(dirname($wakoraScriptDir) . '/wp-settings.php')
