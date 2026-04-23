@@ -499,9 +499,10 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 	}
 	ini := apm.OtelIni(soPath, service, endpoint, sdkDir, artifactSha)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
-	command := "cp " + stagedPath + " " + target + " && " + st.reloadCmd
+	keep := "{ [ ! -e " + target + " ] || cp -a " + target + " " + target + ".wakora-prev; } && "
+	command := keep + "cp " + stagedPath + " " + target + " && " + st.reloadCmd
 	if st.testCmd != "" {
-		command = "cp " + stagedPath + " " + target + " && " + st.testCmd + " && " + st.reloadCmd
+		command = keep + "cp " + stagedPath + " " + target + " && " + st.testCmd + " && " + st.reloadCmd
 	}
 	change := apm.StagedChange{
 		ID:         stageID,
@@ -559,7 +560,7 @@ func stageBasedirPrep(o *Outcome, service, stateDir string, st *sapiTarget, stag
 		return
 	}
 	apmDir := filepath.Join(stateDir, "apm")
-	sed := "sed -i.wakora-bak '/open_basedir/{/wakora/!s#[[:space:]]*$#:" + apmDir + "#}' " + st.poolDir + "/*.conf"
+	sed := "sed -i.wakora-bak '/open_basedir/{/^[[:space:]]*;/!{/wakora/!s#[[:space:]]*$#:" + apmDir + "#}}' " + st.poolDir + "/*.conf"
 	change := apm.StagedChange{
 		ID:      stageID + "-prep",
 		Service: service,

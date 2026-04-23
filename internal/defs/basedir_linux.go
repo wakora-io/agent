@@ -20,6 +20,7 @@ func nginxBasedirPrepCommand(stateDir string, dirs []string) string {
 	apmDir := filepath.Join(stateDir, "apm")
 	parts := []string{`B=` + filepath.Join(stateDir, "backups") + `/nginx-prep-$(date +%F-%H%M%S)`}
 	globs := make([]string, len(dirs))
+	restores := make([]string, len(dirs))
 	for i, d := range dirs {
 		sub := strings.ReplaceAll(strings.Trim(d, "/"), "/", "_")
 		parts = append(parts,
@@ -27,12 +28,11 @@ func nginxBasedirPrepCommand(stateDir string, dirs []string) string {
 			`cp -a `+d+`/* $B/`+sub+`/`,
 		)
 		globs[i] = d + "/*"
+		restores[i] = `cp -a $B/` + sub + `/* ` + d + `/`
 	}
-	parts = append(parts,
-		`sed -i '/open_basedir/{\#`+apmDir+`#!s#\(open_basedir[[:space:]]*=[[:space:]]*\)\([^";\\ ]*\)#\1\2:`+apmDir+`#g}' `+strings.Join(globs, " "),
-		`nginx -t`,
-		`systemctl reload nginx`,
-	)
+	patch := `sed -i '/open_basedir/{/^[[:space:]]*#/!{\#` + apmDir + `#!s#\(open_basedir[[:space:]]*=[[:space:]]*\)\([^";\\ ]*\)#\1\2:` + apmDir + `#g}}' ` + strings.Join(globs, " ") +
+		` && nginx -t && systemctl reload nginx || { ` + strings.Join(restores, `; `) + `; echo wakora: patch failed - originals restored from $B; false; }`
+	parts = append(parts, `{ `+patch+`; }`)
 	return strings.Join(parts, " && ")
 }
 
@@ -54,8 +54,9 @@ type basedirScanCacheSet struct {
 var basedirScanCache basedirScanCacheSet
 
 var (
-	basedirValRe  = regexp.MustCompile(`open_basedir\s*=\s*"?([^";\s]+)`)
-	basedirLineRe = regexp.MustCompile(`(?m)^.*open_basedir.*$`)
+	basedirValRe  = regexp.MustCompile(`(?m)^[^#\r\n]*open_basedir\s*=\s*"?([^";\s]+)`)
+	userIniValRe  = regexp.MustCompile(`(?m)^[^;#\r\n]*open_basedir\s*=\s*"?([^";\s]+)`)
+	basedirLineRe = regexp.MustCompile(`(?m)^[^#\r\n]*open_basedir.*$`)
 	nginxRootRe   = regexp.MustCompile(`(?m)^\s*root\s+([^;\s]+)\s*;`)
 )
 
@@ -143,7 +144,7 @@ func scanNginxBasedir(root, apmDir string) basedirScanResult {
 		if err != nil {
 			continue
 		}
-		for _, m := range basedirValRe.FindAllSubmatch(data, -1) {
+		for _, m := range userIniValRe.FindAllSubmatch(data, -1) {
 			if !basedirCovers(string(m[1]), apmDir) {
 				res.userIni++
 				if len(res.samples) < 6 {

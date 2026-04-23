@@ -166,7 +166,8 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 		}
 		content = systemdDropin(env, sha)
 		dst := "/etc/systemd/system/" + unit + ".service.d/10-wakora-otel.conf"
-		command = "mkdir -p /etc/systemd/system/" + unit + ".service.d && cp " +
+		command = "mkdir -p /etc/systemd/system/" + unit + ".service.d && " +
+			"{ [ ! -e " + dst + " ] || cp -a " + dst + " " + dst + ".wakora-prev; } && cp " +
 			stagedPath + " " + dst +
 			" && systemctl daemon-reload && systemctl restart " + unit
 	}
