@@ -39,6 +39,7 @@ type Agent struct {
 	facts        []discovery.Fact
 	defs         []protocol.Definition
 	roles        map[string]string
+	deny         map[string]bool
 	active       []protocol.Definition
 	lastRun      map[string]time.Time
 	serviceFacts map[string]map[string]string
@@ -747,10 +748,17 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				continue
 			}
 			if p.Type == "apmprofile" || p.Type == "apmdotnetprofile" {
+				if a.denied("profiler") {
+					continue
+				}
 				a.startProfile(d.Service, p)
 				continue
 			}
 			if p.Type == "ebpfhttp" {
+				if a.denied("ebpf") {
+					a.stopEBPF()
+					continue
+				}
 				if err := a.runEBPFHTTP(conn, d.Service, p); err != nil {
 					return err
 				}
@@ -1329,6 +1337,23 @@ func rate(cur, prev uint64, secs float64) float64 {
 	return float64(int(float64(cur-prev)/secs*1000+0.5)) / 1000
 }
 
+func (a *Agent) denied(cap string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.deny[cap]
+}
+
+func (a *Agent) stopEBPF() {
+	if a.apmEngine == nil {
+		a.apmErr = nil
+		return
+	}
+	a.apmEngine.Close()
+	a.apmEngine = nil
+	a.apmErr = nil
+	log.Print("ebpf http engine stopped: denied from the console")
+}
+
 func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Probe) error {
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,
@@ -1501,10 +1526,18 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 			return
 		}
 		verified := defs.Verify(set, a.publisherKey)
+		deny := map[string]bool{}
+		for _, d := range set.Deny {
+			deny[d] = true
+		}
 		a.mu.Lock()
 		a.defs = verified
 		a.roles = set.Roles
+		a.deny = deny
 		a.mu.Unlock()
+		if len(set.Deny) > 0 {
+			log.Printf("console denies: %v", set.Deny)
+		}
 		log.Printf("definitions received: %d verified of %d", len(verified), len(set.Definitions))
 		a.refreshActive()
 	case protocol.TypeCommand:
