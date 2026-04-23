@@ -94,7 +94,7 @@ func runAPMDotnet(o *Outcome, service string, p protocol.Probe, stateDir string)
 			if Provision.NeedsRefresh(bundle) {
 				Provision.Ensure(bundle, true)
 				o.Facts["otelStage"] = "active (fetching new signed build)"
-			} else if sha := Provision.LocalSha(bundle); sha != "" && sha != stagedArtifactSha(stateDir, stageID) {
+			} else if sha := Provision.LocalSha(bundle); sha != "" && sha != stagedArtifactSha(stateDir, stageID) && !stagingDenied.Load() {
 				stageDotnet(o, service, p, stateDir, bundle, nativeSub, host, stageID)
 				o.Facts["otelStage"] = "active (new build staged; restart to apply)"
 			}
@@ -108,6 +108,13 @@ func runAPMDotnet(o *Outcome, service string, p protocol.Probe, stateDir string)
 		}))
 	}
 	if p.Options["autostage"] != "1" {
+		return
+	}
+	if stagingDenied.Load() {
+		if apm.StagedState(stateDir, stageID) == "pending_activation" {
+			_ = apm.ResetStaged(stateDir, stageID)
+		}
+		o.Facts["otelStage"] = "disabled from the console"
 		return
 	}
 	stageDotnet(o, service, p, stateDir, bundle, nativeSub, host, stageID)

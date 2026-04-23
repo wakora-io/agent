@@ -121,7 +121,11 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 				o.Facts["basedirOutsideLine"] = res.sampleLine
 			}
 		}
-		stageNginxBasedirPrep(o, service, stateDir, res)
+		if stagingDenied.Load() {
+			_ = apm.ResetStaged(stateDir, "apmphp-"+service+"-nginxprep")
+		} else {
+			stageNginxBasedirPrep(o, service, stateDir, res)
+		}
 	}
 
 	prefix := "svc." + service + "."
@@ -155,7 +159,7 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 				if Provision.NeedsRefresh(artifact) {
 					Provision.Ensure(artifact, false)
 					o.Facts[stageKey] = "active (fetching new signed build)"
-				} else if sha := Provision.LocalSha(artifact); sha != "" && sha != stagedArtifactSha(stateDir, stageID) {
+				} else if sha := Provision.LocalSha(artifact); sha != "" && sha != stagedArtifactSha(stateDir, stageID) && !stagingDenied.Load() {
 					stageOtel(o, service, p, stateDir, st, stageID, stageKey)
 					o.Facts[stageKey] = "active (new build staged; reload to apply)"
 				}
@@ -174,6 +178,14 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 			}))
 		}
 		if p.Options["autostage"] != "1" {
+			continue
+		}
+		if stagingDenied.Load() {
+			if apm.StagedState(stateDir, stageID) == "pending_activation" {
+				_ = apm.ResetStaged(stateDir, stageID)
+			}
+			_ = apm.ResetStaged(stateDir, stageID+"-prep")
+			o.Facts[stageKey] = "disabled from the console"
 			continue
 		}
 		stageOtel(o, service, p, stateDir, st, stageID, stageKey)

@@ -66,6 +66,7 @@ type SpanBatch struct {
 type FoldedStack struct {
 	Stack   string `json:"stack"`
 	Samples uint32 `json:"samples"`
+	Pool    string `json:"pool,omitempty"`
 }
 
 type ProfileBatch struct {

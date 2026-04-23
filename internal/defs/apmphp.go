@@ -1,10 +1,15 @@
 package defs
 
 import (
+	"sync/atomic"
 	"time"
 
 	"wakora.io/agent/internal/protocol"
 )
+
+var stagingDenied atomic.Bool
+
+func SetStagingDenied(v bool) { stagingDenied.Store(v) }
 
 func RunAPMPhp(service string, p protocol.Probe, stateDir string) Outcome {
 	o := Outcome{Check: protocol.CheckResult{

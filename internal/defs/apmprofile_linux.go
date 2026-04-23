@@ -39,6 +39,7 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 	forced := p.Options["phpVersion"]
 	verByExe := map[string]string{}
 	var samplers []*apm.PHPSampler
+	var pools []string
 	seen := map[string]bool{}
 	for _, pid := range pids {
 		// a big shared-hosting box runs hundreds of fpm workers; attaching to every
@@ -68,6 +69,7 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 			continue
 		}
 		samplers = append(samplers, s)
+		pools = append(pools, poolOfPid(pid))
 	}
 	if len(samplers) == 0 {
 		versions := make([]string, 0, len(seen))
@@ -99,13 +101,14 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 	deadline := time.Now().Add(time.Duration(windowSec) * time.Second)
 	cursor := 0
 	for time.Now().Before(deadline) {
-		s := samplers[cursor%len(samplers)]
+		i := cursor % len(samplers)
+		s := samplers[i]
 		cursor++
 		total++
 		frames, owner, err := s.Sample()
 		if err == nil && len(frames) > 0 {
 			hits++
-			folded[strings.Join(frames, ";")]++
+			folded[pools[i]+"\x1f"+strings.Join(frames, ";")]++
 			if owner != "" {
 				owners[owner]++
 			}
@@ -115,7 +118,14 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 
 	o.Check.Status = "ok"
 	o.Check.Target = "process_vm_readv php-fpm x" + strconv.Itoa(len(samplers))
-	o.ProfileStacks = topStacks(folded, profileMaxStacks)
+	stacks := topStacks(folded, profileMaxStacks)
+	for i := range stacks {
+		if j := strings.Index(stacks[i].Stack, "\x1f"); j >= 0 {
+			stacks[i].Pool = stacks[i].Stack[:j]
+			stacks[i].Stack = stacks[i].Stack[j+1:]
+		}
+	}
+	o.ProfileStacks = stacks
 	o.ProfileMeta = protocol.ProfileBatch{
 		Service: service, WindowSec: uint32(windowSec), SampleRate: uint32(rate),
 		SampleTotal: total, SampleHits: hits,
@@ -172,6 +182,18 @@ func detectPHPMinorPid(pid int) string {
 		return ""
 	}
 	return apm.MinorVersion(fields[1])
+}
+
+func poolOfPid(pid int) string {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return ""
+	}
+	s := strings.ReplaceAll(string(data), "\x00", " ")
+	if i := strings.Index(s, "pool "); i >= 0 {
+		return strings.TrimSpace(s[i+5:])
+	}
+	return ""
 }
 
 func phpFpmWorkers(pattern string) []int {

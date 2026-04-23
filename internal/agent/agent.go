@@ -1530,6 +1530,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		for _, d := range set.Deny {
 			deny[d] = true
 		}
+		defs.SetStagingDenied(deny["staged"])
 		a.mu.Lock()
 		a.defs = verified
 		a.roles = set.Roles
