@@ -132,11 +132,20 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 	if hits > 0 {
 		for _, ow := range topOwners(owners, 15) {
 			pct := float64(owners[ow]) / float64(hits) * 100
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{
-				Name:  prefix + "owner_pct",
-				Value: float64(int(pct*10+0.5)) / 10,
-				Tags:  map[string]string{"owner": ow},
-			})
+			o.Metrics = append(o.Metrics,
+				protocol.MetricPoint{
+					Name:  prefix + "owner_pct",
+					Value: float64(int(pct*10+0.5)) / 10,
+					Tags:  map[string]string{"owner": ow},
+				},
+				// raw per-batch sample count: percentages of one batch cannot be
+				// aggregated across a time window, counts can (sum-by-tag)
+				protocol.MetricPoint{
+					Name:  prefix + "owner_samples",
+					Value: float64(owners[ow]),
+					Tags:  map[string]string{"owner": ow},
+				},
+			)
 		}
 	}
 }
