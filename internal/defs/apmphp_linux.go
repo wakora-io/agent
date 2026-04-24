@@ -510,10 +510,10 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 	}
 	ini := apm.OtelIni(soPath, service, endpoint, sdkDir, artifactSha)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
-	keep := "{ [ ! -e " + target + " ] || cp -a " + target + " " + target + ".wakora-prev; } && "
-	command := keep + "cp " + stagedPath + " " + target + " && " + st.reloadCmd
+	apply := "{ [ ! -e " + target + " ] || cp -a " + target + " " + target + ".wakora-prev; } && cp " + stagedPath + " " + target
+	command := apply + " && " + st.reloadCmd
 	if st.testCmd != "" {
-		command = keep + "cp " + stagedPath + " " + target + " && " + st.testCmd + " && " + st.reloadCmd
+		command = apply + " && " + st.testCmd + " && " + st.reloadCmd
 	}
 	change := apm.StagedChange{
 		ID:         stageID,
@@ -533,7 +533,7 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 		o.Events = append(o.Events, apmEvent("action_required", map[string]string{
 			"service": service, "change": "otel-spans", "impact": "reload",
 			"command": staged.Command, "stagedPath": staged.StagedPath, "target": target,
-			"php": st.rt.VersionShort, "unit": st.unit, "test": st.testCmd,
+			"php": st.rt.VersionShort, "unit": st.unit, "test": st.testCmd, "apply": apply,
 		}))
 	}
 }

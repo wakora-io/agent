@@ -35,7 +35,18 @@ func Stage(base string, c StagedChange, content []byte) (StagedChange, bool, err
 
 	prev, _ := loadStaged(base, c.ID)
 	if prev.ContentSha == c.ContentSha && prev.State != "" {
-		return prev, false, nil
+		if prev.Command == c.Command {
+			return prev, false, nil
+		}
+		c.State = prev.State
+		meta, err := json.Marshal(c)
+		if err != nil {
+			return prev, false, nil
+		}
+		if err := os.WriteFile(filepath.Join(dir, c.ID+".json"), meta, 0o600); err != nil {
+			return prev, false, nil
+		}
+		return c, c.State == "pending_activation", nil
 	}
 	if err := os.WriteFile(c.StagedPath, content, 0o644); err != nil {
 		return c, false, err
