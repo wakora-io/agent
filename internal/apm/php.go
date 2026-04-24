@@ -14,6 +14,7 @@ type PHPRuntime struct {
 	Libc         string
 	ScanDir      string
 	IniDir       string
+	Prepend      string
 }
 
 func ParsePHPInfo(out string) PHPRuntime {
@@ -41,8 +42,22 @@ func ParsePHPInfo(out string) PHPRuntime {
 			}
 			continue
 		}
+		if v, ok := cutInfo(line, "auto_prepend_file"); ok && rt.Prepend == "" {
+			rt.Prepend = iniValue(v)
+			continue
+		}
 	}
 	return rt
+}
+
+func iniValue(v string) string {
+	for _, part := range strings.Split(v, "=>") {
+		part = strings.TrimSpace(part)
+		if part != "" && part != "no value" {
+			return part
+		}
+	}
+	return ""
 }
 
 func firstPath(v string) string {

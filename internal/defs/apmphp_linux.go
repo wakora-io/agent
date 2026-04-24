@@ -148,6 +148,7 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 		}
 		if st.loaded {
 			o.Facts[stageKey] = "active"
+			_ = apm.ResetStaged(stateDir, stageID+"-cleanup")
 			if apm.StagedState(stateDir, stageID) == "pending_activation" {
 				_ = apm.MarkActivated(stateDir, stageID)
 				o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{
@@ -176,6 +177,16 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 			o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{
 				"service": service, "layer": "otel-spans", "sapi": sapi, "php": minor,
 			}))
+		}
+		staleKey := "stalePrepend"
+		if len(targets) > 1 {
+			staleKey += "." + minor
+		}
+		if st.modOk && strings.Contains(st.rt.Prepend, "/wakora/") {
+			o.Facts[staleKey] = st.rt.Prepend
+			stageCleanup(o, service, stateDir, st, stageID, minor)
+		} else {
+			_ = apm.ResetStaged(stateDir, stageID+"-cleanup")
 		}
 		if p.Options["autostage"] != "1" {
 			continue
@@ -552,6 +563,64 @@ func stageNginxBasedirPrep(o *Outcome, service, stateDir string, res basedirScan
 		"service": service, "change": "otel-prep", "scope": "nginx", "impact": "nginx reload",
 		"command": staged.Command, "target": strings.Join(res.nginxDirs, ", "),
 		"files": strconv.Itoa(res.nginxFiles),
+	}))
+}
+
+var prependLineRe = regexp.MustCompile(`(?m)^[^;#\r\n]*auto_prepend_file[^=\r\n]*=[^\r\n]*wakora`)
+
+func stageCleanup(o *Outcome, service, stateDir string, st *sapiTarget, stageID, minor string) {
+	grepDir := func(dir, suffix string) []string {
+		var out []string
+		if dir == "" {
+			return out
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return out
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), suffix) {
+				continue
+			}
+			p := filepath.Join(dir, e.Name())
+			if data, err := os.ReadFile(p); err == nil && prependLineRe.Match(data) {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	iniFiles := grepDir(st.iniDir, ".ini")
+	poolFiles := grepDir(st.poolDir, ".conf")
+	if len(iniFiles) == 0 && len(poolFiles) == 0 {
+		return
+	}
+	var parts []string
+	if len(iniFiles) > 0 {
+		parts = append(parts, "rm "+strings.Join(iniFiles, " "))
+	}
+	if len(poolFiles) > 0 {
+		parts = append(parts, `sed -i.wakora-bak '/^[[:space:]]*;/!{\#auto_prepend_file[^=]*=.*wakora#d}' `+strings.Join(poolFiles, " "))
+	}
+	if st.testCmd != "" {
+		parts = append(parts, st.testCmd)
+	}
+	parts = append(parts, st.reloadCmd)
+	cmd := strings.Join(parts, " && ")
+	change := apm.StagedChange{
+		ID:      stageID + "-cleanup",
+		Service: service,
+		Kind:    "otel-cleanup",
+		Impact:  "reload",
+		Command: cmd,
+	}
+	staged, isNew, err := apm.Stage(stateDir, change, []byte(cmd))
+	if err != nil || !isNew {
+		return
+	}
+	o.Events = append(o.Events, apmEvent("action_required", map[string]string{
+		"service": service, "change": "otel-cleanup", "impact": "reload",
+		"command": staged.Command, "target": strings.Join(append(iniFiles, poolFiles...), ", "),
+		"php": minor, "unit": st.unit, "prepend": st.rt.Prepend,
 	}))
 }
 
