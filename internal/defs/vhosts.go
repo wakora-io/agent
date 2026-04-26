@@ -110,8 +110,19 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			return hosts[i].Port < hosts[j].Port
 		})
 		vhostParseCache.put(service, sig, hosts)
+		if p.Command == "nginx" {
+			stickyPoolsCache.Store(service, scanStickyPools(out))
+		}
 	}
 	o.Check.Status = "ok"
+	if p.Command == "nginx" {
+		if v, ok := stickyPoolsCache.Load(service); ok {
+			if o.Facts == nil {
+				o.Facts = map[string]string{}
+			}
+			o.Facts["stickyPools"] = v.(string)
+		}
+	}
 
 	var primaries []int
 	for i, h := range hosts {
@@ -733,6 +744,103 @@ func apacheEnvLogDir(path string) string {
 }
 
 var nginxServerRe = regexp.MustCompile(`^server\s*(\{|$)`)
+
+var stickyPoolsCache sync.Map
+
+func scanStickyPools(out []byte) string {
+	type poolUse struct {
+		vhosts []string
+		admin  int
+	}
+	pools := map[string]*poolUse{}
+	var order []string
+	depth := 0
+	inServer := false
+	braceOpen := false
+	entryDepth := 0
+	name := ""
+	pass := ""
+	admin := false
+
+	flushSrv := func() {
+		if pass != "" {
+			pl := pools[pass]
+			if pl == nil {
+				pl = &poolUse{}
+				pools[pass] = pl
+				order = append(order, pass)
+			}
+			if name == "" {
+				name = "_"
+			}
+			pl.vhosts = append(pl.vhosts, name)
+			if admin {
+				pl.admin++
+			}
+		}
+		name, pass, admin = "", "", false
+	}
+
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := raw
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !inServer && nginxServerRe.MatchString(trimmed) {
+			inServer = true
+			braceOpen = false
+			entryDepth = depth
+		}
+		if inServer {
+			stmts, _ := splitNginxStatements(trimmed)
+			for _, st := range stmts {
+				f := strings.Fields(st)
+				if len(f) < 2 {
+					continue
+				}
+				switch f[0] {
+				case "server_name":
+					if name == "" {
+						name = f[1]
+					}
+				case "fastcgi_pass":
+					if pass == "" {
+						pass = f[1]
+					}
+				case "fastcgi_param":
+					if f[1] == "PHP_ADMIN_VALUE" {
+						admin = true
+					}
+				}
+			}
+			if strings.IndexByte(trimmed, '{') >= 0 {
+				braceOpen = true
+			}
+		}
+		depth += strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
+		if inServer && braceOpen && depth <= entryDepth {
+			flushSrv()
+			inServer = false
+		}
+	}
+
+	var parts []string
+	for _, p := range order {
+		pl := pools[p]
+		if len(pl.vhosts) > 1 && pl.admin > 0 {
+			parts = append(parts, fmt.Sprintf("%s shared by %d vhosts, %d set PHP_ADMIN_VALUE (e.g. %s)", p, len(pl.vhosts), pl.admin, pl.vhosts[0]))
+		}
+	}
+	s := strings.Join(parts, "; ")
+	if len(s) > 300 {
+		s = s[:300]
+	}
+	return s
+}
 
 func parseNginxVhosts(out []byte) []vhost {
 	var hosts []vhost

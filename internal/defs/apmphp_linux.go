@@ -63,6 +63,43 @@ func phpCLIBinary() string {
 	return ""
 }
 
+var libphpRe = regexp.MustCompile(`libphp(\d+\.\d+)\.so`)
+
+func parseModPhpMinor(data []byte) string {
+	if m := libphpRe.FindSubmatch(data); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+func apacheModPhpMinor() string {
+	for _, glob := range []string{"/etc/apache2/mods-enabled/php*.load", "/etc/httpd/conf.modules.d/*php*.conf"} {
+		files, _ := filepath.Glob(glob)
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			if minor := parseModPhpMinor(data); minor != "" {
+				return minor
+			}
+		}
+	}
+	return ""
+}
+
+func phpCLIBinaryFor(minor string) string {
+	if minor != "" {
+		short := strings.ReplaceAll(minor, ".", "")
+		for _, c := range []string{"php" + minor, "php" + short, "php" + short + "-cli"} {
+			if path, err := exec.LookPath(c); err == nil {
+				return path
+			}
+		}
+	}
+	return phpCLIBinary()
+}
+
 func runAPMPhp(o *Outcome, service string, p protocol.Probe, stateDir string) {
 	module := p.Options["module"]
 	if module == "" {
@@ -120,6 +157,10 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 			if res.sampleLine != "" {
 				o.Facts["basedirOutsideLine"] = res.sampleLine
 			}
+		} else {
+			o.Facts["basedirOutside"] = ""
+			o.Facts["basedirOutsideSample"] = ""
+			o.Facts["basedirOutsideLine"] = ""
 		}
 		if stagingDenied.Load() {
 			_ = apm.ResetStaged(stateDir, "apmphp-"+service+"-nginxprep")
@@ -352,7 +393,7 @@ func fpmUnitFor(bin string, opts map[string]string) string {
 }
 
 func resolveApacheSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
-	bin := phpCLIBinary()
+	bin := phpCLIBinaryFor(apacheModPhpMinor())
 	if bin == "" {
 		return nil, "php cli binary not found (needed to fingerprint mod_php)"
 	}
