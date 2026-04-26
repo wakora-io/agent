@@ -117,6 +117,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 				o.Events = append(o.Events, protocol.AgentEvent{Kind: "insight", Detail: string(detail)})
 			}
 			stickyPoolsCache.Store(service, s)
+			vhostPoolsCache.Store(service, scanVhostPools(out))
 		}
 	}
 	o.Check.Status = "ok"
@@ -195,10 +196,18 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	for name, res := range dnsAlive {
 		deadConfirmed[name] = dnsConfirmedDead(name, res.alive)
 	}
+	poolMinor := map[string]string{}
+	if p.Command == "nginx" {
+		poolMinor = vhostPoolMinorMap(service)
+	}
 	for i, h := range hosts {
 		r := results[i]
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
-		payload, _ := json.Marshal(map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL})
+		pm := map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL}
+		if mv, ok := poolMinor[h.Name]; ok {
+			pm["php"] = mv
+		}
+		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
 		if !probed[i] {
 			continue
@@ -751,6 +760,127 @@ func apacheEnvLogDir(path string) string {
 var nginxServerRe = regexp.MustCompile(`^server\s*(\{|$)`)
 
 var stickyPoolsCache sync.Map
+
+var vhostPoolsCache sync.Map
+
+func scanVhostPools(out []byte) map[string]string {
+	byName := map[string]string{}
+	depth := 0
+	inServer := false
+	braceOpen := false
+	entryDepth := 0
+	var names []string
+	pass := ""
+
+	flush := func() {
+		if pass != "" {
+			for _, n := range names {
+				if _, ok := byName[n]; !ok {
+					byName[n] = pass
+				}
+			}
+		}
+		names, pass = nil, ""
+	}
+
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := raw
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !inServer && nginxServerRe.MatchString(trimmed) {
+			inServer = true
+			braceOpen = false
+			entryDepth = depth
+		}
+		if inServer {
+			stmts, _ := splitNginxStatements(trimmed)
+			for _, st := range stmts {
+				f := strings.Fields(st)
+				if len(f) < 2 {
+					continue
+				}
+				switch f[0] {
+				case "server_name":
+					names = append(names, f[1:]...)
+				case "fastcgi_pass":
+					if pass == "" {
+						pass = f[1]
+					}
+				}
+			}
+			if strings.IndexByte(trimmed, '{') >= 0 {
+				braceOpen = true
+			}
+		}
+		depth += strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
+		if inServer && braceOpen && depth <= entryDepth {
+			flush()
+			inServer = false
+		}
+	}
+	return byName
+}
+
+var fpmListenRe = regexp.MustCompile(`(?m)^\s*listen\s*=\s*(\S+)`)
+var fpmDebMinorRe = regexp.MustCompile(`/php/(\d+\.\d+)/`)
+var fpmRemiMinorRe = regexp.MustCompile(`/php(\d)(\d)/`)
+
+func fpmListenMinors(globs ...string) map[string]string {
+	if len(globs) == 0 {
+		globs = []string{"/etc/php/*/fpm/pool.d/*.conf", "/etc/opt/remi/php*/php-fpm.d/*.conf"}
+	}
+	out := map[string]string{}
+	for _, g := range globs {
+		files, _ := filepath.Glob(g)
+		for _, f := range files {
+			minor := ""
+			if m := fpmDebMinorRe.FindStringSubmatch(f); m != nil {
+				minor = m[1]
+			} else if m := fpmRemiMinorRe.FindStringSubmatch(f); m != nil {
+				minor = m[1] + "." + m[2]
+			}
+			if minor == "" {
+				continue
+			}
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			for _, lm := range fpmListenRe.FindAllSubmatch(data, -1) {
+				out[strings.TrimSpace(string(lm[1]))] = minor
+			}
+		}
+	}
+	return out
+}
+
+func vhostPoolMinorMap(service string) map[string]string {
+	v, ok := vhostPoolsCache.Load(service)
+	if !ok {
+		return nil
+	}
+	passByName, _ := v.(map[string]string)
+	if len(passByName) == 0 {
+		return nil
+	}
+	listens := fpmListenMinors()
+	if len(listens) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for name, pass := range passByName {
+		key := strings.TrimPrefix(pass, "unix:")
+		if minor, ok := listens[key]; ok {
+			out[name] = minor
+		}
+	}
+	return out
+}
 
 func scanStickyPools(out []byte) string {
 	type poolUse struct {
