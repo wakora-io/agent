@@ -196,7 +196,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	for name, res := range dnsAlive {
 		deadConfirmed[name] = dnsConfirmedDead(name, res.alive)
 	}
-	poolMinor := map[string]string{}
+	poolMinor := map[string]fpmPoolInfo{}
 	if p.Command == "nginx" {
 		poolMinor = vhostPoolMinorMap(service)
 	}
@@ -204,8 +204,11 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		r := results[i]
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
 		pm := map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL}
-		if mv, ok := poolMinor[h.Name]; ok {
-			pm["php"] = mv
+		if info, ok := poolMinor[h.Name]; ok {
+			pm["php"] = info.Minor
+			if info.Prepend != "" && !strings.Contains(info.Prepend, "/wakora/") {
+				pm["prependOverride"] = info.Prepend
+			}
 		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
@@ -827,14 +830,20 @@ func scanVhostPools(out []byte) map[string]string {
 }
 
 var fpmListenRe = regexp.MustCompile(`(?m)^\s*listen\s*=\s*(\S+)`)
+var fpmPrependRe = regexp.MustCompile(`(?m)^\s*php_(?:admin_)?value\[auto_prepend_file\]\s*=\s*(\S*)`)
 var fpmDebMinorRe = regexp.MustCompile(`/php/(\d+\.\d+)/`)
 var fpmRemiMinorRe = regexp.MustCompile(`/php(\d)(\d)/`)
 
-func fpmListenMinors(globs ...string) map[string]string {
+type fpmPoolInfo struct {
+	Minor   string
+	Prepend string
+}
+
+func fpmListenPools(globs ...string) map[string]fpmPoolInfo {
 	if len(globs) == 0 {
 		globs = []string{"/etc/php/*/fpm/pool.d/*.conf", "/etc/opt/remi/php*/php-fpm.d/*.conf"}
 	}
-	out := map[string]string{}
+	out := map[string]fpmPoolInfo{}
 	for _, g := range globs {
 		files, _ := filepath.Glob(g)
 		for _, f := range files {
@@ -851,15 +860,22 @@ func fpmListenMinors(globs ...string) map[string]string {
 			if err != nil {
 				continue
 			}
+			info := fpmPoolInfo{Minor: minor}
+			if m := fpmPrependRe.FindSubmatch(data); m != nil {
+				info.Prepend = strings.TrimSpace(string(m[1]))
+				if info.Prepend == "" {
+					info.Prepend = "none"
+				}
+			}
 			for _, lm := range fpmListenRe.FindAllSubmatch(data, -1) {
-				out[strings.TrimSpace(string(lm[1]))] = minor
+				out[strings.TrimSpace(string(lm[1]))] = info
 			}
 		}
 	}
 	return out
 }
 
-func vhostPoolMinorMap(service string) map[string]string {
+func vhostPoolMinorMap(service string) map[string]fpmPoolInfo {
 	v, ok := vhostPoolsCache.Load(service)
 	if !ok {
 		return nil
@@ -868,15 +884,15 @@ func vhostPoolMinorMap(service string) map[string]string {
 	if len(passByName) == 0 {
 		return nil
 	}
-	listens := fpmListenMinors()
+	listens := fpmListenPools()
 	if len(listens) == 0 {
 		return nil
 	}
-	out := map[string]string{}
+	out := map[string]fpmPoolInfo{}
 	for name, pass := range passByName {
 		key := strings.TrimPrefix(pass, "unix:")
-		if minor, ok := listens[key]; ok {
-			out[name] = minor
+		if info, ok := listens[key]; ok {
+			out[name] = info
 		}
 	}
 	return out
