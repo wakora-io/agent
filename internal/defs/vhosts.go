@@ -111,7 +111,12 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		})
 		vhostParseCache.put(service, sig, hosts)
 		if p.Command == "nginx" {
-			stickyPoolsCache.Store(service, scanStickyPools(out))
+			s := scanStickyPools(out)
+			if prev, ok := stickyPoolsCache.Load(service); s != "" && (!ok || prev.(string) != s) {
+				detail, _ := json.Marshal(map[string]string{"type": "sticky_pools", "pools": s})
+				o.Events = append(o.Events, protocol.AgentEvent{Kind: "insight", Detail: string(detail)})
+			}
+			stickyPoolsCache.Store(service, s)
 		}
 	}
 	o.Check.Status = "ok"
