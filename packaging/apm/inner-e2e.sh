@@ -170,10 +170,41 @@ foreach ($pre as $tag => $prios) {
     $GLOBALS['wp_filter'][$tag] = $h;
 }
 
+function add_action($tag, $cb, $prio = 10)
+{
+    if (!isset($GLOBALS['wp_filter'][$tag])) {
+        $GLOBALS['wp_filter'][$tag] = new WP_Hook();
+    }
+    $GLOBALS['wp_filter'][$tag]->callbacks[$prio][] = ['function' => $cb, 'accepted_args' => 1];
+}
+
+function do_hook($tag)
+{
+    if (!isset($GLOBALS['wp_filter'][$tag])) {
+        return [];
+    }
+    $out = [];
+    $cbs = $GLOBALS['wp_filter'][$tag]->callbacks;
+    ksort($cbs);
+    foreach ($cbs as $group) {
+        foreach ($group as $cb) {
+            $out[] = call_user_func($cb['function'], '');
+        }
+    }
+    return $out;
+}
+
 function my_plugin_init()
 {
     usleep(2000);
+    add_action('late_hook', 'my_late_worker');
     return 'seen';
+}
+
+function my_late_worker()
+{
+    usleep(2000);
+    return 'late';
 }
 
 $h = new WP_Hook();
@@ -191,13 +222,17 @@ if (isset($GLOBALS['wp_filter']['plugins_loaded'])) {
 }
 
 $wrappedAfter = $GLOBALS['wp_filter']['init']->callbacks[10]['my_plugin_init']['function'];
-$out = [];
-foreach ($GLOBALS['wp_filter']['init']->callbacks as $cbs) {
-    foreach ($cbs as $cb) {
-        $out[] = call_user_func($cb['function'], '');
+$out = do_hook('init');
+$late = 'missing';
+if (isset($GLOBALS['wp_filter']['late_hook'])) {
+    foreach ($GLOBALS['wp_filter']['late_hook']->callbacks as $group) {
+        foreach ($group as $cb) {
+            $late = is_string($cb['function']) ? 'plain' : 'wrapped';
+        }
     }
 }
-echo 'wp-' . implode(',', $out) . ($wrappedAfter !== $wrappedBefore ? '-wrapped' : '-plain');
+$out = array_filter($out, function ($v) { return $v !== null && $v !== ''; });
+echo 'wp-' . implode(',', $out) . ($wrappedAfter !== $wrappedBefore ? '-wrapped' : '-plain') . '-late.' . $late;
 EOF
 
 php -d "extension=/art/$SO" \
@@ -208,11 +243,11 @@ php -d "extension=/art/$SO" \
     -S 127.0.0.1:8085 -t /docroot-wp >/dev/null 2>&1 &
 sleep 2
 body=$(php -r 'echo file_get_contents("http://127.0.0.1:8085/wp.php");')
-[ "$body" = "wp-seen-wrapped" ] || { echo "deep-trace did not wrap the init callback: $body"; exit 1; }
+[ "$body" = "wp-seen-wrapped-late.wrapped" ] || { echo "deep-trace wrap chain broken (want wrapped + late-pass wrapped): $body"; exit 1; }
 sleep 3
 grep -q 'hook:init' /tmp/otlp-body.bin || { echo "hook span missing from the export"; exit 1; }
 grep -q 'my_plugin_init' /tmp/otlp-body.bin || { echo "callback identity missing from the hook span"; exit 1; }
-echo "e2e ok: sampled wp deep-trace wraps callbacks and exports hook spans"
+echo "e2e ok: sampled wp deep-trace wraps boot and runtime-registered callbacks"
 
 php -d "extension=/art/$SO" \
     -d "auto_prepend_file=/sdk/wakora-otel.php" \
@@ -221,5 +256,5 @@ php -d "extension=/art/$SO" \
     -S 127.0.0.1:8086 -t /docroot-wp >/dev/null 2>&1 &
 sleep 2
 body=$(php -r 'echo file_get_contents("http://127.0.0.1:8086/wp.php");')
-[ "$body" = "wp-seen-plain" ] || { echo "deep-trace must stay off without the ini key: $body"; exit 1; }
+[ "$body" = "wp-seen-plain-late.plain" ] || { echo "deep-trace must stay off without the ini key: $body"; exit 1; }
 echo "e2e ok: deep-trace stays fully inert without wakora.otel_deep_sample_n"

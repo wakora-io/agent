@@ -11,4 +11,7 @@ return [
     'exclude-classes' => [
         'WP_Hook',
     ],
+    'exclude-functions' => [
+        'add_action',
+    ],
 ];
