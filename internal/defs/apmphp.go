@@ -11,6 +11,10 @@ var stagingDenied atomic.Bool
 
 func SetStagingDenied(v bool) { stagingDenied.Store(v) }
 
+var deepTraceAllowed atomic.Bool
+
+func SetDeepTraceAllowed(v bool) { deepTraceAllowed.Store(v) }
+
 func RunAPMPhp(service string, p protocol.Probe, stateDir string) Outcome {
 	o := Outcome{Check: protocol.CheckResult{
 		CheckID:   service + "/" + p.Name,

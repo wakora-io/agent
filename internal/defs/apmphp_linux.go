@@ -211,6 +211,11 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 					}
 				}
 			}
+			deepKey := "deepTrace"
+			if len(targets) > 1 {
+				deepKey += "." + minor
+			}
+			stageDeepTrace(o, service, stateDir, st, stageID, deepKey, minor)
 			continue
 		}
 		if st.modOk && apm.StagedState(stateDir, stageID) == "active" {
@@ -605,6 +610,84 @@ func stageNginxBasedirPrep(o *Outcome, service, stateDir string, res basedirScan
 		"command": staged.Command, "target": strings.Join(res.nginxDirs, ", "),
 		"files": strconv.Itoa(res.nginxFiles),
 	}))
+}
+
+func stageDeepTrace(o *Outcome, service, stateDir string, st *sapiTarget, stageID, deepKey, minor string) {
+	deepID := stageID + "-deep"
+	if st.iniDir == "" {
+		return
+	}
+	target := filepath.Join(st.iniDir, "99-wakora-deep.ini")
+	_, applyErr := os.Stat(target)
+	applied := applyErr == nil
+	if !deepTraceAllowed.Load() || stagingDenied.Load() {
+		_ = apm.ResetStaged(stateDir, deepID)
+		if !applied {
+			o.Facts[deepKey] = ""
+			return
+		}
+		o.Facts[deepKey] = "active (console disabled - cleanup staged)"
+		parts := []string{"rm " + target}
+		if st.testCmd != "" {
+			parts = append(parts, st.testCmd)
+		}
+		parts = append(parts, st.reloadCmd)
+		cmd := strings.Join(parts, " && ")
+		change := apm.StagedChange{
+			ID:      deepID + "-cleanup",
+			Service: service,
+			Kind:    "deep-cleanup",
+			Impact:  "reload",
+			Command: cmd,
+		}
+		staged, isNew, err := apm.Stage(stateDir, change, []byte(cmd))
+		if err != nil || !isNew {
+			return
+		}
+		o.Events = append(o.Events, apmEvent("action_required", map[string]string{
+			"service": service, "change": "deep-cleanup", "impact": "reload",
+			"command": staged.Command, "target": target, "php": minor, "unit": st.unit,
+		}))
+		return
+	}
+	_ = apm.ResetStaged(stateDir, deepID+"-cleanup")
+	if applied {
+		o.Facts[deepKey] = "active"
+		if apm.StagedState(stateDir, deepID) == "pending_activation" {
+			_ = apm.MarkActivated(stateDir, deepID)
+		}
+		return
+	}
+	ini := "wakora.otel_deep_sample_n=50\n"
+	stagedPath := filepath.Join(stateDir, "staged", deepID+".staged")
+	apply := "cp " + stagedPath + " " + target
+	parts := []string{apply}
+	if st.testCmd != "" {
+		parts = append(parts, st.testCmd)
+	}
+	parts = append(parts, st.reloadCmd)
+	command := strings.Join(parts, " && ")
+	change := apm.StagedChange{
+		ID:         deepID,
+		Service:    service,
+		Kind:       "deep-trace",
+		TargetPath: target,
+		Impact:     "reload",
+		Command:    command,
+	}
+	staged, isNew, err := apm.Stage(stateDir, change, []byte(ini))
+	if err != nil {
+		o.Facts[deepKey] = "stage failed: " + err.Error()
+		return
+	}
+	o.Facts[deepKey] = staged.State
+	if isNew {
+		o.Events = append(o.Events, apmEvent("action_required", map[string]string{
+			"service": service, "change": "deep-trace", "impact": "reload",
+			"command": staged.Command, "stagedPath": staged.StagedPath, "target": target,
+			"php": minor, "unit": st.unit, "test": st.testCmd, "apply": apply,
+		}))
+	}
 }
 
 var prependLineRe = regexp.MustCompile(`(?m)^[^;#\r\n]*auto_prepend_file[^=\r\n]*=[^\r\n]*wakora`)

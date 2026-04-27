@@ -1530,7 +1530,12 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		for _, d := range set.Deny {
 			deny[d] = true
 		}
+		allow := map[string]bool{}
+		for _, al := range set.Allow {
+			allow[al] = true
+		}
 		defs.SetStagingDenied(deny["staged"])
+		defs.SetDeepTraceAllowed(allow["deeptrace"])
 		a.mu.Lock()
 		a.defs = verified
 		a.roles = set.Roles
