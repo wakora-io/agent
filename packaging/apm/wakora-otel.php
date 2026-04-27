@@ -123,15 +123,19 @@ try {
                                             if ($wakoraBudget->spans <= 0) {
                                                 return $wakoraOrig(...$wakoraArgs);
                                             }
-                                            $wakoraBudget->spans--;
-                                            $wakoraSpan = $wakoraTracer->spanBuilder('hook:' . $wakoraTag)
-                                                ->setAttribute('code.function', $wakoraCbName)
-                                                ->setAttribute('code.filepath', $wakoraCbFile)
-                                                ->startSpan();
+                                            $wakoraT0 = microtime(true);
                                             try {
                                                 return $wakoraOrig(...$wakoraArgs);
                                             } finally {
-                                                $wakoraSpan->end();
+                                                if ((microtime(true) - $wakoraT0) * 1000 >= 1.0 && $wakoraBudget->spans > 0) {
+                                                    $wakoraBudget->spans--;
+                                                    $wakoraTracer->spanBuilder('hook:' . $wakoraTag)
+                                                        ->setStartTimestamp((int) ($wakoraT0 * 1000000000))
+                                                        ->setAttribute('code.function', $wakoraCbName)
+                                                        ->setAttribute('code.filepath', $wakoraCbFile)
+                                                        ->startSpan()
+                                                        ->end();
+                                                }
                                             }
                                         };
                                     $wakoraWrapped++;
