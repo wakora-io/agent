@@ -8,4 +8,7 @@ return [
         'GPBMetadata',
         'Opentelemetry\Proto',
     ],
+    'exclude-classes' => [
+        'WP_Hook',
+    ],
 ];

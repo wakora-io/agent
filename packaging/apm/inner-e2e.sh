@@ -148,3 +148,78 @@ sleep 2
 lines_after=$(grep -c 'POST /v1/traces' /tmp/otlp.log)
 [ "$lines_after" = "$lines_before" ] || { echo "guarded pool must not export spans"; exit 1; }
 echo "e2e ok: vendor outside open_basedir skips bootstrap without breaking the site"
+
+mkdir -p /docroot-wp
+touch /docroot-wp/wp-settings.php
+cat > /docroot-wp/wp.php <<'EOF'
+<?php
+class WP_Hook
+{
+    public $callbacks = [];
+}
+
+$pre = isset($GLOBALS['wp_filter']) ? $GLOBALS['wp_filter'] : [];
+$GLOBALS['wp_filter'] = [];
+foreach ($pre as $tag => $prios) {
+    $h = new WP_Hook();
+    foreach ($prios as $p => $cbs) {
+        foreach ($cbs as $i => $cb) {
+            $h->callbacks[$p][$i] = $cb;
+        }
+    }
+    $GLOBALS['wp_filter'][$tag] = $h;
+}
+
+function my_plugin_init()
+{
+    usleep(2000);
+    return 'seen';
+}
+
+$h = new WP_Hook();
+$h->callbacks[10]['my_plugin_init'] = ['function' => 'my_plugin_init', 'accepted_args' => 1];
+$GLOBALS['wp_filter']['init'] = $h;
+
+$wrappedBefore = $GLOBALS['wp_filter']['init']->callbacks[10]['my_plugin_init']['function'];
+
+if (isset($GLOBALS['wp_filter']['plugins_loaded'])) {
+    foreach ($GLOBALS['wp_filter']['plugins_loaded']->callbacks as $cbs) {
+        foreach ($cbs as $cb) {
+            call_user_func($cb['function']);
+        }
+    }
+}
+
+$wrappedAfter = $GLOBALS['wp_filter']['init']->callbacks[10]['my_plugin_init']['function'];
+$out = [];
+foreach ($GLOBALS['wp_filter']['init']->callbacks as $cbs) {
+    foreach ($cbs as $cb) {
+        $out[] = call_user_func($cb['function'], '');
+    }
+}
+echo 'wp-' . implode(',', $out) . ($wrappedAfter !== $wrappedBefore ? '-wrapped' : '-plain');
+EOF
+
+php -d "extension=/art/$SO" \
+    -d "auto_prepend_file=/sdk/wakora-otel.php" \
+    -d "wakora.otel_service=e2e-php-wp-deep" \
+    -d "wakora.otel_endpoint=http://127.0.0.1:4319" \
+    -d "wakora.otel_deep_sample_n=1" \
+    -S 127.0.0.1:8085 -t /docroot-wp >/dev/null 2>&1 &
+sleep 2
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8085/wp.php");')
+[ "$body" = "wp-seen-wrapped" ] || { echo "deep-trace did not wrap the init callback: $body"; exit 1; }
+sleep 3
+grep -q 'hook:init' /tmp/otlp-body.bin || { echo "hook span missing from the export"; exit 1; }
+grep -q 'my_plugin_init' /tmp/otlp-body.bin || { echo "callback identity missing from the hook span"; exit 1; }
+echo "e2e ok: sampled wp deep-trace wraps callbacks and exports hook spans"
+
+php -d "extension=/art/$SO" \
+    -d "auto_prepend_file=/sdk/wakora-otel.php" \
+    -d "wakora.otel_service=e2e-php-wp-off" \
+    -d "wakora.otel_endpoint=http://127.0.0.1:4318" \
+    -S 127.0.0.1:8086 -t /docroot-wp >/dev/null 2>&1 &
+sleep 2
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8086/wp.php");')
+[ "$body" = "wp-seen-plain" ] || { echo "deep-trace must stay off without the ini key: $body"; exit 1; }
+echo "e2e ok: deep-trace stays fully inert without wakora.otel_deep_sample_n"
