@@ -118,6 +118,8 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			}
 			stickyPoolsCache.Store(service, s)
 			vhostPoolsCache.Store(service, scanVhostPools(out))
+		} else {
+			apacheRootsCache.Store(service, apacheVhostRoots(out))
 		}
 	}
 	o.Check.Status = "ok"
@@ -200,15 +202,29 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	if p.Command == "nginx" {
 		poolMinor = vhostPoolMinorMap(service)
 	}
+	apacheRoots := map[string]string{}
+	if p.Command != "nginx" {
+		if v, ok := apacheRootsCache.Load(service); ok {
+			apacheRoots, _ = v.(map[string]string)
+		}
+	}
 	for i, h := range hosts {
 		r := results[i]
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
 		pm := map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL}
 		if info, ok := poolMinor[h.Name]; ok {
-			pm["php"] = info.Minor
+			if info.Minor != "" {
+				pm["php"] = info.Minor
+			}
 			if info.Prepend != "" && !strings.Contains(info.Prepend, "/wakora/") {
 				pm["prependOverride"] = info.Prepend
 			}
+			if info.WP {
+				pm["wp"] = 1
+			}
+		}
+		if root, ok := apacheRoots[h.Name]; ok && wpAt(root) {
+			pm["wp"] = 1
 		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
@@ -766,24 +782,30 @@ var stickyPoolsCache sync.Map
 
 var vhostPoolsCache sync.Map
 
-func scanVhostPools(out []byte) map[string]string {
-	byName := map[string]string{}
+type vhostScanInfo struct {
+	pass string
+	root string
+}
+
+func scanVhostPools(out []byte) map[string]vhostScanInfo {
+	byName := map[string]vhostScanInfo{}
 	depth := 0
 	inServer := false
 	braceOpen := false
 	entryDepth := 0
 	var names []string
 	pass := ""
+	root := ""
 
 	flush := func() {
-		if pass != "" {
+		if pass != "" || root != "" {
 			for _, n := range names {
 				if _, ok := byName[n]; !ok {
-					byName[n] = pass
+					byName[n] = vhostScanInfo{pass: pass, root: root}
 				}
 			}
 		}
-		names, pass = nil, ""
+		names, pass, root = nil, "", ""
 	}
 
 	for _, raw := range strings.Split(string(out), "\n") {
@@ -814,6 +836,10 @@ func scanVhostPools(out []byte) map[string]string {
 					if pass == "" {
 						pass = f[1]
 					}
+				case "root":
+					if root == "" {
+						root = strings.TrimSuffix(f[1], ";")
+					}
 				}
 			}
 			if strings.IndexByte(trimmed, '{') >= 0 {
@@ -837,6 +863,15 @@ var fpmRemiMinorRe = regexp.MustCompile(`/php(\d)(\d)/`)
 type fpmPoolInfo struct {
 	Minor   string
 	Prepend string
+	WP      bool
+}
+
+func wpAt(root string) bool {
+	if root == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(root, "wp-settings.php"))
+	return err == nil
 }
 
 func fpmListenPools(globs ...string) map[string]fpmPoolInfo {
@@ -880,18 +915,19 @@ func vhostPoolMinorMap(service string) map[string]fpmPoolInfo {
 	if !ok {
 		return nil
 	}
-	passByName, _ := v.(map[string]string)
-	if len(passByName) == 0 {
+	scanByName, _ := v.(map[string]vhostScanInfo)
+	if len(scanByName) == 0 {
 		return nil
 	}
 	listens := fpmListenPools()
-	if len(listens) == 0 {
-		return nil
-	}
 	out := map[string]fpmPoolInfo{}
-	for name, pass := range passByName {
-		key := strings.TrimPrefix(pass, "unix:")
-		if info, ok := listens[key]; ok {
+	for name, scan := range scanByName {
+		info, matched := listens[strings.TrimPrefix(scan.pass, "unix:")]
+		if !matched && scan.root == "" {
+			continue
+		}
+		info.WP = wpAt(scan.root)
+		if matched || info.WP {
 			out[name] = info
 		}
 	}
@@ -1103,7 +1139,50 @@ var (
 	apacheSingleRe  = regexp.MustCompile(`^\*:(\d+)\s+(\S+)\s+\(`)
 	apacheNameRe    = regexp.MustCompile(`port (\d+) namevhost (\S+)`)
 	apacheDefaultRe = regexp.MustCompile(`default server (\S+)`)
+	apacheVhFileRe  = regexp.MustCompile(`namevhost (\S+)\s+\(([^:)]+):\d+\)|default server (\S+)\s+\(([^:)]+):\d+\)|^\*:\d+\s+(\S+)\s+\(([^:)]+):\d+\)`)
+	apacheDocRootRe = regexp.MustCompile(`(?mi)^\s*DocumentRoot\s+"?([^"\s]+)`)
 )
+
+var apacheRootsCache sync.Map
+
+func apacheVhostRoots(out []byte) map[string]string {
+	roots := map[string]string{}
+	fileRoot := map[string]string{}
+	for _, raw := range strings.Split(string(out), "\n") {
+		m := apacheVhFileRe.FindStringSubmatch(strings.TrimSpace(raw))
+		if m == nil {
+			continue
+		}
+		name, file := "", ""
+		switch {
+		case m[1] != "":
+			name, file = m[1], m[2]
+		case m[3] != "":
+			name, file = m[3], m[4]
+		default:
+			name, file = m[5], m[6]
+		}
+		if name == "" || file == "" {
+			continue
+		}
+		if _, ok := roots[name]; ok {
+			continue
+		}
+		root, cached := fileRoot[file]
+		if !cached {
+			if data, err := os.ReadFile(file); err == nil {
+				if dm := apacheDocRootRe.FindSubmatch(data); dm != nil {
+					root = strings.TrimSpace(string(dm[1]))
+				}
+			}
+			fileRoot[file] = root
+		}
+		if root != "" {
+			roots[name] = root
+		}
+	}
+	return roots
+}
 
 func parseApacheVhosts(out []byte) []vhost {
 	var hosts []vhost
