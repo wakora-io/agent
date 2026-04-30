@@ -145,6 +145,7 @@ func (a *Agent) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		spans = convertOTLP(exp)
 	}
+	spans = dropNoiseSpans(spans)
 	if len(spans) == 0 {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -163,6 +164,21 @@ func (a *Agent) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "agent busy or offline, retry later", http.StatusTooManyRequests)
 	}
+}
+
+var noiseSpanNames = map[string]bool{
+	"mysqli_next_result": true,
+}
+
+func dropNoiseSpans(spans []protocol.Span) []protocol.Span {
+	out := spans[:0]
+	for _, s := range spans {
+		if noiseSpanNames[s.Name] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 func convertOTLP(exp otlpExport) []protocol.Span {
