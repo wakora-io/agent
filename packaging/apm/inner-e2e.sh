@@ -258,3 +258,62 @@ sleep 2
 body=$(php -r 'echo file_get_contents("http://127.0.0.1:8086/wp.php");')
 [ "$body" = "wp-seen-plain-late.plain" ] || { echo "deep-trace must stay off without the ini key: $body"; exit 1; }
 echo "e2e ok: deep-trace stays fully inert without wakora.otel_deep_sample_n"
+
+cat > /docroot/page.php <<'EOF'
+<?php
+echo '<html><head><title>t</title></head><body>hello</body></html>';
+EOF
+cat > /docroot/feed.php <<'EOF'
+<?php
+header('Content-Type: application/json');
+echo '{"a":"<html><head></head></html>"}';
+EOF
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/page.php");')
+case "$body" in
+  *data-wakora-rum*) echo "rum snippet must NOT inject without rum-sites.php"; exit 1;;
+esac
+body=$(php -r '$c=stream_context_create(["http"=>["method"=>"POST","content"=>"{}","ignore_errors"=>true]]);echo file_get_contents("http://127.0.0.1:8080/page.php?wkr-rum=1",false,$c);')
+case "$body" in
+  *hello*) : ;;
+  *) echo "beacon marker must fall through to the app without rum-sites.php (got $body)"; exit 1;;
+esac
+echo "e2e ok: rum stays fully inert without rum-sites.php"
+
+echo "<?php return ['127.0.0.1'=>1];" > /rum-sites.php
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/page.php");')
+case "$body" in
+  *data-wakora-rum*) : ;;
+  *) echo "rum snippet missing on an enabled site"; exit 1;;
+esac
+case "$body" in
+  *"</head>"*) : ;;
+  *) echo "injection destroyed the head tag"; exit 1;;
+esac
+echo "e2e ok: rum snippet injects before </head> on the enabled site"
+
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/feed.php");')
+case "$body" in
+  *data-wakora-rum*) echo "rum snippet must not inject into non-html responses"; exit 1;;
+esac
+echo "e2e ok: non-html responses stay untouched"
+
+lines_before=$(grep -c 'POST /v1/rum' /tmp/otlp.log || true)
+code=$(php -r '$c=stream_context_create(["http"=>["method"=>"POST","header"=>"Content-Type: application/json","content"=>"{\"site\":\"127.0.0.1\",\"path\":\"/checkout\",\"vitals\":{\"lcp\":1200,\"cls\":0.03},\"errors\":[{\"msg\":\"boom\",\"n\":2}]}","ignore_errors"=>true]]);@file_get_contents("http://127.0.0.1:8080/page.php?wkr-rum=1",false,$c);preg_match("#\\s(\\d{3})\\s#",$http_response_header[0],$m);echo $m[1];')
+[ "$code" = "204" ] || { echo "beacon on the enabled site must answer 204 (got $code)"; exit 1; }
+sleep 1
+lines_after=$(grep -c 'POST /v1/rum' /tmp/otlp.log || true)
+[ "$lines_after" -gt "$lines_before" ] || { echo "beacon was not relayed to the agent endpoint"; exit 1; }
+echo "e2e ok: beacon answers 204 and relays to the agent"
+
+echo "<?php return ['other.example.com'=>1];" > /rum-sites.php
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/page.php");')
+case "$body" in
+  *data-wakora-rum*) echo "rum snippet must not inject on a not-enabled site"; exit 1;;
+esac
+body=$(php -r '$c=stream_context_create(["http"=>["method"=>"POST","content"=>"{}","ignore_errors"=>true]]);echo file_get_contents("http://127.0.0.1:8080/page.php?wkr-rum=1",false,$c);')
+case "$body" in
+  *hello*) : ;;
+  *) echo "beacon on a not-enabled site must fall through to the app (got $body)"; exit 1;;
+esac
+rm -f /rum-sites.php
+echo "e2e ok: a not-enabled site neither injects nor accepts beacons"

@@ -57,6 +57,8 @@ type Agent struct {
 	warnedUnsupported map[string]bool
 	custom            chan []protocol.MetricPoint
 	spans             chan []protocol.Span
+	rum               chan []protocol.RumItem
+	rumAllowed        atomic.Value
 	profiles          chan defs.Outcome
 	profiling         map[string]bool
 	vhostDone         chan probeDone
@@ -164,6 +166,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		warnedUnsupported: map[string]bool{},
 		custom:            make(chan []protocol.MetricPoint, 256),
 		spans:             make(chan []protocol.Span, 64),
+		rum:               make(chan []protocol.RumItem, 256),
 		profiles:          make(chan defs.Outcome, 8),
 		profiling:         map[string]bool{},
 		vhostDone:         make(chan probeDone, 8),
@@ -333,6 +336,18 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					ServerID: a.cfg.ServerID,
 					Hostname: a.cfg.Hostname,
 					Spans:    sp,
+				})
+				if err == nil {
+					if err := conn.Send(msg); err != nil {
+						return err
+					}
+				}
+			case ri := <-a.rum:
+				a.seq++
+				msg, err := protocol.Encode(protocol.TypeRum, a.seq, protocol.RumBatch{
+					ServerID: a.cfg.ServerID,
+					Hostname: a.cfg.Hostname,
+					Items:    ri,
 				})
 				if err == nil {
 					if err := conn.Send(msg); err != nil {
@@ -1536,6 +1551,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		}
 		defs.SetStagingDenied(deny["staged"])
 		defs.SetDeepTraceAllowed(allow["deeptrace"])
+		a.setRumSites(set.RumSites)
 		a.mu.Lock()
 		a.defs = verified
 		a.roles = set.Roles

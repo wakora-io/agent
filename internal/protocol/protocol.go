@@ -15,6 +15,7 @@ const (
 	TypeEvent     MessageType = "event"
 	TypeSpans     MessageType = "spans"
 	TypeProfile   MessageType = "profile"
+	TypeRum       MessageType = "rum"
 	TypeAck       MessageType = "ack"
 )
 
@@ -109,6 +110,28 @@ type DefinitionSet struct {
 	Roles       map[string]string  `json:"roles,omitempty"`
 	Deny        []string           `json:"deny,omitempty"`
 	Allow       []string           `json:"allow,omitempty"`
+	RumSites    []string           `json:"rumSites,omitempty"`
+}
+
+type RumError struct {
+	Msg string `json:"msg"`
+	Src string `json:"src,omitempty"`
+	N   uint32 `json:"n,omitempty"`
+}
+
+type RumItem struct {
+	Site    string             `json:"site"`
+	Path    string             `json:"path"`
+	Dev     string             `json:"dev,omitempty"`
+	Browser string             `json:"browser,omitempty"`
+	Vitals  map[string]float64 `json:"vitals,omitempty"`
+	Errors  []RumError         `json:"errors,omitempty"`
+}
+
+type RumBatch struct {
+	ServerID string    `json:"serverId"`
+	Hostname string    `json:"hostname,omitempty"`
+	Items    []RumItem `json:"items"`
 }
 
 type Match struct {

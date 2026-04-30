@@ -1,5 +1,91 @@
 <?php
 
+if (PHP_SAPI !== 'cli'
+    && isset($_SERVER['REQUEST_METHOD'], $_SERVER['HTTP_HOST'], $_GET['wkr-rum'])
+    && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $wakoraRumOwn = false;
+    $wakoraRumSites = @include dirname(__DIR__) . '/rum-sites.php';
+    if (is_array($wakoraRumSites) && count($wakoraRumSites)) {
+        $wakoraRumSite = strtolower((string) $_SERVER['HTTP_HOST']);
+        $wakoraRumP = strpos($wakoraRumSite, ':');
+        if ($wakoraRumP !== false) {
+            $wakoraRumSite = substr($wakoraRumSite, 0, $wakoraRumP);
+        }
+        if (strncmp($wakoraRumSite, 'www.', 4) === 0) {
+            $wakoraRumSite = substr($wakoraRumSite, 4);
+        }
+        if (isset($wakoraRumSites[$wakoraRumSite])) {
+            $wakoraRumOwn = true;
+            try {
+                $wakoraRumRaw = file_get_contents('php://input', false, null, 0, 32768);
+                $wakoraRumB = is_string($wakoraRumRaw) && $wakoraRumRaw !== '' ? json_decode($wakoraRumRaw, true, 4) : null;
+                if (is_array($wakoraRumB)) {
+                    $wakoraRumVitals = [];
+                    if (isset($wakoraRumB['vitals']) && is_array($wakoraRumB['vitals'])) {
+                        foreach ($wakoraRumB['vitals'] as $wakoraRumK => $wakoraRumV) {
+                            if (is_string($wakoraRumK) && is_numeric($wakoraRumV)) {
+                                $wakoraRumVitals[substr($wakoraRumK, 0, 8)] = (float) $wakoraRumV;
+                            }
+                        }
+                    }
+                    $wakoraRumErrs = [];
+                    if (isset($wakoraRumB['errors']) && is_array($wakoraRumB['errors'])) {
+                        foreach (array_slice($wakoraRumB['errors'], 0, 10) as $wakoraRumE) {
+                            if (is_array($wakoraRumE) && isset($wakoraRumE['msg']) && is_string($wakoraRumE['msg'])) {
+                                $wakoraRumErrs[] = [
+                                    'msg' => substr($wakoraRumE['msg'], 0, 250),
+                                    'src' => isset($wakoraRumE['src']) && is_string($wakoraRumE['src']) ? substr($wakoraRumE['src'], 0, 120) : '',
+                                    'n' => isset($wakoraRumE['n']) && is_numeric($wakoraRumE['n']) ? max(1, (int) $wakoraRumE['n']) : 1,
+                                ];
+                            }
+                        }
+                    }
+                    $wakoraRumOut = json_encode([
+                        'site' => $wakoraRumSite,
+                        'path' => isset($wakoraRumB['path']) && is_string($wakoraRumB['path']) ? substr($wakoraRumB['path'], 0, 300) : '/',
+                        'dev' => isset($wakoraRumB['dev']) && is_string($wakoraRumB['dev']) ? substr($wakoraRumB['dev'], 0, 30) : '',
+                        'browser' => isset($wakoraRumB['browser']) && is_string($wakoraRumB['browser']) ? substr($wakoraRumB['browser'], 0, 30) : '',
+                        'vitals' => $wakoraRumVitals,
+                        'errors' => $wakoraRumErrs,
+                    ]);
+                    $wakoraRumCfg = get_cfg_var('wakora.otel_endpoint');
+                    $wakoraRumEp = (is_string($wakoraRumCfg) && $wakoraRumCfg !== '' ? $wakoraRumCfg : 'http://127.0.0.1:4318') . '/v1/rum';
+                    if (function_exists('curl_init')) {
+                        $wakoraRumCh = curl_init($wakoraRumEp);
+                        curl_setopt_array($wakoraRumCh, [
+                            CURLOPT_POST => true,
+                            CURLOPT_POSTFIELDS => $wakoraRumOut,
+                            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                            CURLOPT_RETURNTRANSFER => true,
+                            CURLOPT_CONNECTTIMEOUT_MS => 150,
+                            CURLOPT_TIMEOUT_MS => 400,
+                        ]);
+                        curl_exec($wakoraRumCh);
+                        curl_close($wakoraRumCh);
+                    } else {
+                        @file_get_contents($wakoraRumEp, false, stream_context_create(['http' => [
+                            'method' => 'POST',
+                            'header' => 'Content-Type: application/json',
+                            'content' => $wakoraRumOut,
+                            'timeout' => 0.5,
+                        ]]));
+                    }
+                }
+            } catch (\Throwable $wakoraRumErr) {
+            }
+        }
+    }
+    if ($wakoraRumOwn) {
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
+        http_response_code(204);
+        header('Cache-Control: no-store');
+        exit;
+    }
+    unset($wakoraRumOwn, $wakoraRumSites, $wakoraRumSite, $wakoraRumP);
+}
+
 if (PHP_VERSION_ID < 80200 || PHP_SAPI === 'cli' || !extension_loaded('opentelemetry')) {
     return;
 }
@@ -204,4 +290,62 @@ try {
         }
     }
 } catch (\Throwable $wakoraRootErr) {
+}
+try {
+    if (isset($_SERVER['REQUEST_METHOD'], $_SERVER['HTTP_HOST'])
+        && $_SERVER['REQUEST_METHOD'] === 'GET'
+        && !isset($_SERVER['HTTP_X_REQUESTED_WITH'])
+        && (!isset($_SERVER['HTTP_ACCEPT']) || strpos((string) $_SERVER['HTTP_ACCEPT'], 'text/event-stream') === false)) {
+        $wakoraRumUri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '/';
+        if (strncmp($wakoraRumUri, '/wp-admin', 9) !== 0 && strncmp($wakoraRumUri, '/wp-login', 9) !== 0) {
+            $wakoraRumSites = @include dirname(__DIR__) . '/rum-sites.php';
+            if (is_array($wakoraRumSites) && count($wakoraRumSites)) {
+                $wakoraRumSite = strtolower((string) $_SERVER['HTTP_HOST']);
+                $wakoraRumP = strpos($wakoraRumSite, ':');
+                if ($wakoraRumP !== false) {
+                    $wakoraRumSite = substr($wakoraRumSite, 0, $wakoraRumP);
+                }
+                if (strncmp($wakoraRumSite, 'www.', 4) === 0) {
+                    $wakoraRumSite = substr($wakoraRumSite, 4);
+                }
+                if (isset($wakoraRumSites[$wakoraRumSite])) {
+                    $wakoraRumSnippet = <<<'WAKORARUMJS'
+<script data-wakora-rum>(function(){try{var v={},e=[],sent=0;var nav=performance.getEntriesByType("navigation")[0];if(nav){v.ttfb=Math.round(nav.responseStart)}
+try{new PerformanceObserver(function(l){var s=l.getEntries();if(s.length)v.lcp=Math.round(s[s.length-1].startTime)}).observe({type:"largest-contentful-paint",buffered:true})}catch(_){}
+try{var c=0;new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(!x.hadRecentInput)c+=x.value});v.cls=Math.round(c*1000)/1000}).observe({type:"layout-shift",buffered:true})}catch(_){}
+try{var i=0;new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(x.duration>i){i=x.duration;v.inp=Math.round(i)}})}).observe({type:"event",buffered:true,durationThreshold:40})}catch(_){}
+try{new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(x.name==="first-contentful-paint")v.fcp=Math.round(x.startTime)})}).observe({type:"paint",buffered:true})}catch(_){}
+addEventListener("error",function(ev){if(e.length<10)e.push({msg:String(ev.message||"error").slice(0,200),src:(ev.filename?ev.filename+":"+(ev.lineno||0):"").slice(0,120),n:1})});
+addEventListener("unhandledrejection",function(ev){if(e.length<10)e.push({msg:("promise: "+String(ev.reason)).slice(0,200),n:1})});
+function send(){if(sent)return;sent=1;var ua=navigator.userAgent,dev=/Mobi|Android/i.test(ua)?"mobile":(/Tablet|iPad/i.test(ua)?"tablet":"desktop");
+var bw=/Edg\//.test(ua)?"edge":(/OPR\//.test(ua)?"opera":(/Chrome\//.test(ua)?"chrome":(/Firefox\//.test(ua)?"firefox":(/Safari\//.test(ua)?"safari":"other"))));
+try{navigator.sendBeacon("/?wkr-rum=1",JSON.stringify({site:location.hostname,path:location.pathname,dev:dev,browser:bw,vitals:v,errors:e}))}catch(_){}}
+addEventListener("pagehide",send);document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")send()});
+}catch(_){}})();</script>
+WAKORARUMJS;
+                    ob_start(static function ($wakoraHtml) use ($wakoraRumSnippet) {
+                        try {
+                            if (!is_string($wakoraHtml) || $wakoraHtml === '' || strpos($wakoraHtml, 'data-wakora-rum') !== false) {
+                                return $wakoraHtml;
+                            }
+                            foreach (headers_list() as $wakoraRumH) {
+                                if (stripos($wakoraRumH, 'content-type:') === 0 && stripos($wakoraRumH, 'text/html') === false) {
+                                    return $wakoraHtml;
+                                }
+                            }
+                            $wakoraRumPos = stripos($wakoraHtml, '</head>');
+                            if ($wakoraRumPos === false) {
+                                return $wakoraHtml;
+                            }
+                            return substr($wakoraHtml, 0, $wakoraRumPos) . $wakoraRumSnippet . substr($wakoraHtml, $wakoraRumPos);
+                        } catch (\Throwable $wakoraRumCbErr) {
+                            return $wakoraHtml;
+                        }
+                    });
+                }
+            }
+        }
+        unset($wakoraRumUri, $wakoraRumSites, $wakoraRumSite, $wakoraRumP);
+    }
+} catch (\Throwable $wakoraRumInjErr) {
 }

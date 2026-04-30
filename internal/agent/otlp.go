@@ -82,6 +82,7 @@ func (a *Agent) ensureOTLP(ctx context.Context, port int) {
 func (a *Agent) serveOTLP(ctx context.Context, port int, binds []string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", a.handleOTLPTraces)
+	mux.HandleFunc("/v1/rum", a.handleRumBeacon)
 	srv := &http.Server{Handler: mux, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
 
 	hosts := []string{"127.0.0.1"}
