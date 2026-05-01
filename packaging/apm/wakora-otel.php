@@ -316,7 +316,7 @@ try{var c=0;new PerformanceObserver(function(l){l.getEntries().forEach(function(
 try{var i=0;new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(x.duration>i){i=x.duration;v.inp=Math.round(i)}})}).observe({type:"event",buffered:true,durationThreshold:40})}catch(_){}
 try{new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(x.name==="first-contentful-paint")v.fcp=Math.round(x.startTime)})}).observe({type:"paint",buffered:true})}catch(_){}
 addEventListener("error",function(ev){if(e.length<10)e.push({msg:String(ev.message||"error").slice(0,200),src:(ev.filename?ev.filename+":"+(ev.lineno||0):"").slice(0,120),n:1})});
-addEventListener("unhandledrejection",function(ev){if(e.length<10)e.push({msg:("promise: "+String(ev.reason)).slice(0,200),n:1})});
+addEventListener("unhandledrejection",function(ev){if(e.length<10){var st="";try{st=ev.reason&&ev.reason.stack?String(ev.reason.stack).split("\n").slice(1,3).join(" ").replace(/\s+/g," ").trim():""}catch(_){}e.push({msg:("promise: "+String(ev.reason)).slice(0,200),src:st.slice(0,120),n:1})}});
 function send(){if(sent)return;sent=1;var ua=navigator.userAgent,dev=/Mobi|Android/i.test(ua)?"mobile":(/Tablet|iPad/i.test(ua)?"tablet":"desktop");
 var bw=/Edg\//.test(ua)?"edge":(/OPR\//.test(ua)?"opera":(/Chrome\//.test(ua)?"chrome":(/Firefox\//.test(ua)?"firefox":(/Safari\//.test(ua)?"safari":"other"))));
 try{navigator.sendBeacon("/?wkr-rum=1",JSON.stringify({site:location.hostname,path:location.pathname,dev:dev,browser:bw,vitals:v,errors:e}))}catch(_){}}
