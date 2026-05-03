@@ -143,6 +143,20 @@ try {
     error_log('wakora-otel bootstrap disabled: ' . $wakoraErr->getMessage());
     return;
 }
+$wakoraStSend = static function (): void {
+    static $wakoraStDone = false;
+    if ($wakoraStDone || headers_sent()) {
+        return;
+    }
+    try {
+        $wakoraStCtx = \OpenTelemetry\API\Trace\Span::getCurrent()->getContext();
+        if ($wakoraStCtx->isValid()) {
+            header('Server-Timing: traceparent;desc="00-' . $wakoraStCtx->getTraceId() . '-' . $wakoraStCtx->getSpanId() . '-01"', false);
+            $wakoraStDone = true;
+        }
+    } catch (\Throwable $wakoraStErr) {
+    }
+};
 try {
     if (isset($_SERVER['REQUEST_METHOD']) && !isset($GLOBALS['wakoraRootSpan'])) {
         $wakoraScript = isset($_SERVER['SCRIPT_FILENAME']) ? (string) $_SERVER['SCRIPT_FILENAME'] : '';
@@ -151,6 +165,14 @@ try {
             @file_exists($wakoraScriptDir . '/wp-settings.php')
             || @file_exists(dirname($wakoraScriptDir) . '/wp-settings.php')
         );
+        if ($wakoraIsWp && PHP_SAPI !== 'cli') {
+            foreach (['plugins_loaded', 'init', 'template_redirect'] as $wakoraStHook) {
+                $GLOBALS['wp_filter'][$wakoraStHook][PHP_INT_MAX][] = [
+                    'function' => $wakoraStSend,
+                    'accepted_args' => 0,
+                ];
+            }
+        }
         if ($wakoraIsWp) {
             $wakoraDeepN = (int) $wakoraCfg('wakora.otel_deep_sample_n', '0');
             if ($wakoraDeepN > 0 && mt_rand(1, $wakoraDeepN) === 1) {
@@ -299,21 +321,14 @@ try {
                 ->setAttribute('user_agent.original', isset($_SERVER['HTTP_USER_AGENT']) ? (string) $_SERVER['HTTP_USER_AGENT'] : '')
                 ->startSpan();
             $GLOBALS['wakoraRootSpan'] = [$wakoraSpan, $wakoraSpan->activate()];
+            $wakoraStSend();
         }
     }
 } catch (\Throwable $wakoraRootErr) {
 }
 try {
     if (PHP_SAPI !== 'cli' && function_exists('header_register_callback')) {
-        header_register_callback(static function (): void {
-            try {
-                $wakoraStCtx = \OpenTelemetry\API\Trace\Span::getCurrent()->getContext();
-                if ($wakoraStCtx->isValid()) {
-                    header('Server-Timing: traceparent;desc="00-' . $wakoraStCtx->getTraceId() . '-' . $wakoraStCtx->getSpanId() . '-01"', false);
-                }
-            } catch (\Throwable $wakoraStErr) {
-            }
-        });
+        header_register_callback($wakoraStSend);
     }
 } catch (\Throwable $wakoraStRegErr) {
 }
