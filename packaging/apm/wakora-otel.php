@@ -299,13 +299,23 @@ try {
                 ->setAttribute('user_agent.original', isset($_SERVER['HTTP_USER_AGENT']) ? (string) $_SERVER['HTTP_USER_AGENT'] : '')
                 ->startSpan();
             $GLOBALS['wakoraRootSpan'] = [$wakoraSpan, $wakoraSpan->activate()];
-            if (!headers_sent()) {
-                $wakoraSpanCtx = $wakoraSpan->getContext();
-                header('Server-Timing: traceparent;desc="00-' . $wakoraSpanCtx->getTraceId() . '-' . $wakoraSpanCtx->getSpanId() . '-01"', false);
-            }
         }
     }
 } catch (\Throwable $wakoraRootErr) {
+}
+try {
+    if (PHP_SAPI !== 'cli' && function_exists('header_register_callback')) {
+        header_register_callback(static function (): void {
+            try {
+                $wakoraStCtx = \OpenTelemetry\API\Trace\Span::getCurrent()->getContext();
+                if ($wakoraStCtx->isValid()) {
+                    header('Server-Timing: traceparent;desc="00-' . $wakoraStCtx->getTraceId() . '-' . $wakoraStCtx->getSpanId() . '-01"', false);
+                }
+            } catch (\Throwable $wakoraStErr) {
+            }
+        });
+    }
+} catch (\Throwable $wakoraStRegErr) {
 }
 try {
     if (isset($_SERVER['REQUEST_METHOD'], $_SERVER['HTTP_HOST'])
