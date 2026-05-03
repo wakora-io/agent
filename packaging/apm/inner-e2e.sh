@@ -317,3 +317,15 @@ case "$body" in
 esac
 rm -f /rum-sites.php
 echo "e2e ok: a not-enabled site neither injects nor accepts beacons"
+
+echo "<?php return ['127.0.0.1'=>1];" > /rum-sites.php
+cat > /docroot/hosted.php <<'EOF'
+<?php
+echo '<html><head><title>t</title><script async src="https://rum.wakora.io/w.js" data-site="example.com"></script></head><body>hosted</body></html>';
+EOF
+body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/hosted.php");')
+case "$body" in
+  *data-wakora-rum*) echo "prepend must yield to a hosted w.js snippet already on the page (double beacons bill twice)"; exit 1;;
+esac
+rm -f /rum-sites.php
+echo "e2e ok: a page carrying the hosted snippet stays untouched - no double collection"

@@ -339,6 +339,9 @@ WAKORARUMJS;
                             if (!is_string($wakoraHtml) || $wakoraHtml === '' || strpos($wakoraHtml, 'data-wakora-rum') !== false) {
                                 return $wakoraHtml;
                             }
+                            if (strpos($wakoraHtml, 'rum.wakora.io/w.js') !== false) {
+                                return $wakoraHtml;
+                            }
                             foreach (headers_list() as $wakoraRumH) {
                                 if (stripos($wakoraRumH, 'content-type:') === 0 && stripos($wakoraRumH, 'text/html') === false) {
                                     return $wakoraHtml;
