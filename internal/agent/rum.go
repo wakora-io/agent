@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 
 	"wakora.io/agent/internal/protocol"
 )
+
+var rumTraceRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func (a *Agent) setRumSites(sites []string) {
 	norm := make([]string, 0, len(sites))
@@ -117,6 +120,9 @@ func (a *Agent) handleRumBeacon(w http.ResponseWriter, r *http.Request) {
 	}
 	if it.IP != "" && net.ParseIP(it.IP) == nil {
 		it.IP = ""
+	}
+	if it.Trace != "" && !rumTraceRe.MatchString(it.Trace) {
+		it.Trace = ""
 	}
 	if len(it.Errors) > 10 {
 		it.Errors = it.Errors[:10]

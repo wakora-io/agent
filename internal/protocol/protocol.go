@@ -125,6 +125,7 @@ type RumItem struct {
 	Dev     string             `json:"dev,omitempty"`
 	Browser string             `json:"browser,omitempty"`
 	IP      string             `json:"ip,omitempty"`
+	Trace   string             `json:"trace,omitempty"`
 	Vitals  map[string]float64 `json:"vitals,omitempty"`
 	Errors  []RumError         `json:"errors,omitempty"`
 }

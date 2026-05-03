@@ -56,6 +56,7 @@ if (PHP_SAPI !== 'cli'
                         'dev' => isset($wakoraRumB['dev']) && is_string($wakoraRumB['dev']) ? substr($wakoraRumB['dev'], 0, 30) : '',
                         'browser' => isset($wakoraRumB['browser']) && is_string($wakoraRumB['browser']) ? substr($wakoraRumB['browser'], 0, 30) : '',
                         'ip' => $wakoraRumIp,
+                        'trace' => isset($wakoraRumB['trace']) && is_string($wakoraRumB['trace']) && preg_match('/^[0-9a-f]{32}$/', $wakoraRumB['trace']) ? $wakoraRumB['trace'] : '',
                         'vitals' => $wakoraRumVitals,
                         'errors' => $wakoraRumErrs,
                     ]);
@@ -298,6 +299,10 @@ try {
                 ->setAttribute('user_agent.original', isset($_SERVER['HTTP_USER_AGENT']) ? (string) $_SERVER['HTTP_USER_AGENT'] : '')
                 ->startSpan();
             $GLOBALS['wakoraRootSpan'] = [$wakoraSpan, $wakoraSpan->activate()];
+            if (!headers_sent()) {
+                $wakoraSpanCtx = $wakoraSpan->getContext();
+                header('Server-Timing: traceparent;desc="00-' . $wakoraSpanCtx->getTraceId() . '-' . $wakoraSpanCtx->getSpanId() . '-01"', false);
+            }
         }
     }
 } catch (\Throwable $wakoraRootErr) {
@@ -330,7 +335,8 @@ addEventListener("error",function(ev){if(e.length<10)e.push({msg:String(ev.messa
 addEventListener("unhandledrejection",function(ev){if(e.length<10){var st="";try{st=ev.reason&&ev.reason.stack?String(ev.reason.stack).split("\n").slice(1,3).join(" ").replace(/\s+/g," ").trim():""}catch(_){}e.push({msg:("promise: "+String(ev.reason)).slice(0,200),src:st.slice(0,120),n:1})}});
 function send(){if(sent)return;sent=1;var ua=navigator.userAgent,dev=/Mobi|Android/i.test(ua)?"mobile":(/Tablet|iPad/i.test(ua)?"tablet":"desktop");
 var bw=/Edg\//.test(ua)?"edge":(/OPR\//.test(ua)?"opera":(/Chrome\//.test(ua)?"chrome":(/Firefox\//.test(ua)?"firefox":(/Safari\//.test(ua)?"safari":"other"))));
-try{navigator.sendBeacon("/?wkr-rum=1",JSON.stringify({site:location.hostname,path:location.pathname,dev:dev,browser:bw,vitals:v,errors:e}))}catch(_){}}
+var tr="";try{var st=(nav&&nav.serverTiming)||[];for(var q=0;q<st.length;q++){if(st[q].name==="traceparent"){var pd=String(st[q].description||"").split("-");if(pd.length>1)tr=pd[1];break}}}catch(_){}
+try{navigator.sendBeacon("/?wkr-rum=1",JSON.stringify({site:location.hostname,path:location.pathname,dev:dev,browser:bw,trace:tr,vitals:v,errors:e}))}catch(_){}}
 addEventListener("pagehide",send);document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")send()});
 }catch(_){}})();</script>
 WAKORARUMJS;
