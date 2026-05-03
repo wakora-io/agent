@@ -40,11 +40,22 @@ if (PHP_SAPI !== 'cli'
                             }
                         }
                     }
+                    $wakoraRumIp = '';
+                    foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_REAL_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'] as $wakoraRumIpK) {
+                        if (isset($_SERVER[$wakoraRumIpK]) && is_string($_SERVER[$wakoraRumIpK]) && $_SERVER[$wakoraRumIpK] !== '') {
+                            $wakoraRumIp = trim(strtok((string) $_SERVER[$wakoraRumIpK], ','));
+                            break;
+                        }
+                    }
+                    if ($wakoraRumIp !== '' && filter_var($wakoraRumIp, FILTER_VALIDATE_IP) === false) {
+                        $wakoraRumIp = '';
+                    }
                     $wakoraRumOut = json_encode([
                         'site' => $wakoraRumSite,
                         'path' => isset($wakoraRumB['path']) && is_string($wakoraRumB['path']) ? substr($wakoraRumB['path'], 0, 300) : '/',
                         'dev' => isset($wakoraRumB['dev']) && is_string($wakoraRumB['dev']) ? substr($wakoraRumB['dev'], 0, 30) : '',
                         'browser' => isset($wakoraRumB['browser']) && is_string($wakoraRumB['browser']) ? substr($wakoraRumB['browser'], 0, 30) : '',
+                        'ip' => $wakoraRumIp,
                         'vitals' => $wakoraRumVitals,
                         'errors' => $wakoraRumErrs,
                     ]);

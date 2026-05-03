@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -113,6 +114,9 @@ func (a *Agent) handleRumBeacon(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(it.Browser) > 30 {
 		it.Browser = it.Browser[:30]
+	}
+	if it.IP != "" && net.ParseIP(it.IP) == nil {
+		it.IP = ""
 	}
 	if len(it.Errors) > 10 {
 		it.Errors = it.Errors[:10]
