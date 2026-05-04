@@ -18,10 +18,11 @@ type Tailer struct {
 	offsets map[string]int64
 	lastAt  time.Time
 	res     map[string]*regexp.Regexp
+	srcLast map[string]time.Time
 }
 
 func NewTailer(paths []string) *Tailer {
-	return &Tailer{paths: paths, offsets: map[string]int64{}, res: map[string]*regexp.Regexp{}}
+	return &Tailer{paths: paths, offsets: map[string]int64{}, res: map[string]*regexp.Regexp{}, srcLast: map[string]time.Time{}}
 }
 
 func (t *Tailer) Key() string {
@@ -43,32 +44,39 @@ func (t *Tailer) compile(pattern string) *regexp.Regexp {
 	return re
 }
 
-func (t *Tailer) Sample(counters []protocol.Counter, now time.Time) ([]protocol.MetricPoint, error) {
+func (t *Tailer) Sample(counters []protocol.Counter, now time.Time) ([]protocol.MetricPoint, []protocol.AgentEvent, error) {
 	first := t.lastAt.IsZero()
 	counts := make([]int, len(counters))
+	sources := make([]map[string]int, len(counters))
 	var firstErr error
 	for _, path := range t.paths {
-		if err := t.sampleFile(path, counters, counts, first); err != nil && firstErr == nil {
+		if err := t.sampleFile(path, counters, counts, sources, first); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	if first {
 		t.lastAt = now
-		return nil, firstErr
+		return nil, nil, firstErr
 	}
 	elapsed := now.Sub(t.lastAt).Seconds()
 	t.lastAt = now
 	if elapsed <= 0 {
-		return nil, firstErr
+		return nil, nil, firstErr
 	}
 	var pts []protocol.MetricPoint
+	var events []protocol.AgentEvent
 	for i, c := range counters {
 		pts = append(pts, protocol.MetricPoint{Name: c.Name, Value: float64(counts[i]) / elapsed})
+		if c.Event != "" {
+			if ev, ok := foldSourceEvent(c, sources[i], now, t.srcLast); ok {
+				events = append(events, ev)
+			}
+		}
 	}
-	return pts, firstErr
+	return pts, events, firstErr
 }
 
-func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []int, first bool) error {
+func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []int, sources []map[string]int, first bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -101,6 +109,16 @@ func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []i
 			re := t.compile(c.Regex)
 			if re == nil || re.Match(line) {
 				counts[i]++
+				if c.Capture != "" {
+					if cre := t.compile(c.Capture); cre != nil {
+						if m := cre.FindSubmatch(line); len(m) >= 2 {
+							if sources[i] == nil {
+								sources[i] = map[string]int{}
+							}
+							sources[i][string(m[1])]++
+						}
+					}
+				}
 			}
 		}
 	}

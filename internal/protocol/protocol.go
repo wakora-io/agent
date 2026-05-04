@@ -170,8 +170,11 @@ type KVMetric struct {
 }
 
 type Counter struct {
-	Name  string `json:"name"`
-	Regex string `json:"regex,omitempty"`
+	Name    string `json:"name"`
+	Regex   string `json:"regex,omitempty"`
+	Capture string `json:"capture,omitempty"`
+	Event   string `json:"event,omitempty"`
+	Min     int    `json:"min,omitempty"`
 }
 
 type OID struct {

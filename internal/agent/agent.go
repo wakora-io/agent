@@ -1041,7 +1041,7 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 		t = defs.NewTailer(paths)
 		a.tailers[key] = t
 	}
-	pts, err := t.Sample(p.Counters, time.Now())
+	pts, events, err := t.Sample(p.Counters, time.Now())
 	if err != nil {
 		check.Status = "fail"
 		check.Error = err.Error()
@@ -1050,6 +1050,24 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 	check.Status = "ok"
 	if err := a.sendCheck(conn, check); err != nil {
 		return err
+	}
+	return a.sendTailOutput(conn, events, pts)
+}
+
+func (a *Agent) sendTailOutput(conn transport.Conn, events []protocol.AgentEvent, pts []protocol.MetricPoint) error {
+	for _, ev := range events {
+		ev.ServerID = a.cfg.ServerID
+		ev.Hostname = a.cfg.Hostname
+		if ev.Timestamp == 0 {
+			ev.Timestamp = time.Now().Unix()
+		}
+		log.Printf("%s: %s", ev.Kind, ev.Detail)
+		a.seq++
+		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq, ev); err == nil {
+			if err := conn.Send(msg); err != nil {
+				return err
+			}
+		}
 	}
 	if len(pts) > 0 {
 		a.seq++
@@ -1084,7 +1102,7 @@ func (a *Agent) runJournal(conn transport.Conn, service string, p protocol.Probe
 		Target:    strings.Join(p.Idents, ","),
 		Timestamp: time.Now().Unix(),
 	}
-	pts, err := j.Sample(p.Idents, p.Counters, time.Now())
+	pts, events, err := j.Sample(p.Idents, p.Counters, time.Now())
 	if err != nil {
 		check.Status = "fail"
 		check.Error = err.Error()
@@ -1094,22 +1112,7 @@ func (a *Agent) runJournal(conn transport.Conn, service string, p protocol.Probe
 	if err := a.sendCheck(conn, check); err != nil {
 		return err
 	}
-	if len(pts) > 0 {
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
-			ServerID:  a.cfg.ServerID,
-			Hostname:  a.cfg.Hostname,
-			Timestamp: time.Now().Unix(),
-			Points:    pts,
-		})
-		if err == nil {
-			if err := conn.Send(msg); err != nil {
-				return err
-			}
-			return a.observePoints(conn, pts)
-		}
-	}
-	return nil
+	return a.sendTailOutput(conn, events, pts)
 }
 
 func (a *Agent) snmpTargets() map[string][]string {
