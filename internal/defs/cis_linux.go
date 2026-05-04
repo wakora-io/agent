@@ -38,13 +38,13 @@ func runCIS(o *Outcome, service string) {
 		record(mode&0o022 == 0, "passwd-perm", "/etc/passwd is world/group-writable", "high", cisModeStr(mode))
 	}
 	if mode, ok := cisFileMode("/etc/shadow"); ok {
-		record(mode&0o077 == 0, "shadow-perm", "/etc/shadow readable beyond root", "critical", cisModeStr(mode))
+		record(mode&0o037 == 0, "shadow-perm", "/etc/shadow is group-writable or world-accessible", "critical", cisModeStr(mode))
 	}
 	if mode, ok := cisFileMode("/etc/group"); ok {
 		record(mode&0o022 == 0, "group-perm", "/etc/group is world/group-writable", "high", cisModeStr(mode))
 	}
 	if mode, ok := cisFileMode("/etc/gshadow"); ok {
-		record(mode&0o077 == 0, "gshadow-perm", "/etc/gshadow readable beyond root", "high", cisModeStr(mode))
+		record(mode&0o037 == 0, "gshadow-perm", "/etc/gshadow is group-writable or world-accessible", "high", cisModeStr(mode))
 	}
 	if mode, ok := cisFileMode("/etc/ssh/sshd_config"); ok {
 		record(mode&0o077 == 0, "sshd-config-perm", "sshd_config readable beyond root", "medium", cisModeStr(mode))
