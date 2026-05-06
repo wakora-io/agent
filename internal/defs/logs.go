@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,16 +36,17 @@ var defaultRedact = []*regexp.Regexp{
 }
 
 type LogTailer struct {
-	cursor  string
-	offsets map[string]int64
-	seenF   map[string]bool
-	res     map[string]*regexp.Regexp
-	redact  []*regexp.Regexp
-	pattern string
+	cursor   string
+	offsets  map[string]int64
+	seenF    map[string]bool
+	res      map[string]*regexp.Regexp
+	redact   []*regexp.Regexp
+	pattern  string
+	ctrSince map[string]int64
 }
 
 func NewLogTailer() *LogTailer {
-	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, res: map[string]*regexp.Regexp{}}
+	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, res: map[string]*regexp.Regexp{}, ctrSince: map[string]int64{}}
 }
 
 func (l *LogTailer) compile(pattern string) *regexp.Regexp {
@@ -116,6 +120,19 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 				continue
 			}
 			ln.Service = svc
+			ln.Message = l.scrub(ln.Message)
+			out = append(out, ln)
+		}
+	}
+	if p.Docker {
+		lines, err := l.dockerLogs(p.Path, now)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		for _, ln := range lines {
+			if logLevelRank[ln.Level] > minRank {
+				continue
+			}
 			ln.Message = l.scrub(ln.Message)
 			out = append(out, ln)
 		}
@@ -262,6 +279,140 @@ func parseMicros(s string) (int64, bool) {
 		n = n*10 + int64(c-'0')
 	}
 	return n, true
+}
+
+var dockerLevelRe = regexp.MustCompile(`(?i)\b(fatal|panic|critical|crit|error|err|warning|warn|notice|info|debug|trace)\b`)
+
+func dockerImageShort(image string) string {
+	if i := strings.LastIndex(image, "/"); i >= 0 {
+		image = image[i+1:]
+	}
+	if i := strings.IndexAny(image, ":@"); i >= 0 {
+		image = image[:i]
+	}
+	if image == "" {
+		return "docker"
+	}
+	return image
+}
+
+func (l *LogTailer) dockerLogs(sock string, now time.Time) ([]protocol.LogLine, error) {
+	if sock == "" {
+		sock = "/var/run/docker.sock"
+	}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", sock)
+			},
+		},
+	}
+	resp, err := client.Get("http://docker/containers/json")
+	if err != nil {
+		return nil, err
+	}
+	var ctrs []dockerContainer
+	err = json.NewDecoder(resp.Body).Decode(&ctrs)
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(ctrs) > 50 {
+		ctrs = ctrs[:50]
+	}
+	var out []protocol.LogLine
+	live := map[string]bool{}
+	for _, c := range ctrs {
+		live[c.ID] = true
+		since, seen := l.ctrSince[c.ID]
+		if !seen {
+			l.ctrSince[c.ID] = now.Unix()
+			continue
+		}
+		svc := dockerImageShort(c.Image)
+		r, err := client.Get("http://docker/containers/" + c.ID + "/logs?stdout=1&stderr=1&timestamps=1&since=" + strconv.FormatInt(since, 10))
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+		r.Body.Close()
+		last := since
+		for _, ln := range demuxDockerLog(body) {
+			ts, msg := splitDockerTimestamp(ln.text)
+			if ts <= since {
+				continue
+			}
+			if ts > last {
+				last = ts
+			}
+			level := ""
+			if m := dockerLevelRe.FindStringSubmatch(msg); len(m) >= 2 && len(msg) < 4096 {
+				level = normalizeLevel(m[1])
+			}
+			if level == "" || level == "info" {
+				if ln.stderr {
+					level = "notice"
+				} else {
+					level = "info"
+				}
+			}
+			out = append(out, protocol.LogLine{Ts: ts, Service: svc, Level: level, Message: msg})
+		}
+		l.ctrSince[c.ID] = last
+	}
+	for id := range l.ctrSince {
+		if !live[id] {
+			delete(l.ctrSince, id)
+		}
+	}
+	return out, nil
+}
+
+type dockerLogLine struct {
+	text   string
+	stderr bool
+}
+
+func demuxDockerLog(body []byte) []dockerLogLine {
+	var out []dockerLogLine
+	if len(body) >= 8 && (body[0] == 1 || body[0] == 2) && body[1] == 0 && body[2] == 0 && body[3] == 0 {
+		for len(body) >= 8 {
+			stream := body[0]
+			n := int(body[4])<<24 | int(body[5])<<16 | int(body[6])<<8 | int(body[7])
+			body = body[8:]
+			if n <= 0 || n > len(body) {
+				break
+			}
+			chunk := body[:n]
+			body = body[n:]
+			for _, t := range strings.Split(string(chunk), "\n") {
+				if t = strings.TrimSpace(t); t != "" {
+					out = append(out, dockerLogLine{text: t, stderr: stream == 2})
+				}
+			}
+		}
+		return out
+	}
+	for _, t := range strings.Split(string(body), "\n") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, dockerLogLine{text: t})
+		}
+	}
+	return out
+}
+
+func splitDockerTimestamp(line string) (int64, string) {
+	sp := strings.IndexByte(line, ' ')
+	if sp <= 0 {
+		return time.Now().Unix(), line
+	}
+	t, err := time.Parse(time.RFC3339Nano, line[:sp])
+	if err != nil {
+		return time.Now().Unix(), line
+	}
+	return t.Unix(), strings.TrimSpace(line[sp+1:])
 }
 
 func newestLogIn(dir string) string {

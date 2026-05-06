@@ -120,11 +120,12 @@ type SignedDefinition struct {
 }
 
 type DefinitionSet struct {
-	Definitions []SignedDefinition `json:"definitions"`
-	Roles       map[string]string  `json:"roles,omitempty"`
-	Deny        []string           `json:"deny,omitempty"`
-	Allow       []string           `json:"allow,omitempty"`
-	RumSites    []string           `json:"rumSites,omitempty"`
+	Definitions  []SignedDefinition `json:"definitions"`
+	Roles        map[string]string  `json:"roles,omitempty"`
+	Deny         []string           `json:"deny,omitempty"`
+	Allow        []string           `json:"allow,omitempty"`
+	RumSites     []string           `json:"rumSites,omitempty"`
+	DenyServices []string           `json:"denyServices,omitempty"`
 }
 
 type RumError struct {
@@ -251,6 +252,7 @@ type Probe struct {
 	MinLevel     string            `json:"minLevel,omitempty"`
 	ForceLevel   string            `json:"forceLevel,omitempty"`
 	Redact       []string          `json:"redact,omitempty"`
+	Docker       bool              `json:"docker,omitempty"`
 }
 
 type Definition struct {

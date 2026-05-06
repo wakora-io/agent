@@ -41,6 +41,7 @@ type Agent struct {
 	defs         []protocol.Definition
 	roles        map[string]string
 	deny         map[string]bool
+	denySvc      map[string]bool
 	active       []protocol.Definition
 	lastRun      map[string]time.Time
 	serviceFacts map[string]map[string]string
@@ -718,6 +719,9 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 	factsChanged := false
 	for _, run := range due {
 		d := run.def
+		if a.serviceDenied(d.Service) {
+			continue
+		}
 		for _, p := range run.probes {
 			if p.Type == "logtail" {
 				if err := a.runLogtail(conn, d.Service, p); err != nil {
@@ -732,6 +736,9 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				continue
 			}
 			if p.Type == "logs" {
+				if a.denied("logs") {
+					continue
+				}
 				if err := a.runLogs(conn, d.Service, p); err != nil {
 					return err
 				}
@@ -1455,6 +1462,12 @@ func (a *Agent) denied(cap string) bool {
 	return a.deny[cap]
 }
 
+func (a *Agent) serviceDenied(svc string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.denySvc[svc]
+}
+
 func (a *Agent) stopEBPF() {
 	if a.apmEngine == nil {
 		a.apmErr = nil
@@ -1649,13 +1662,21 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		defs.SetStagingDenied(deny["staged"])
 		defs.SetDeepTraceAllowed(allow["deeptrace"])
 		a.setRumSites(set.RumSites)
+		denySvc := map[string]bool{}
+		for _, sv := range set.DenyServices {
+			denySvc[sv] = true
+		}
 		a.mu.Lock()
 		a.defs = verified
 		a.roles = set.Roles
 		a.deny = deny
+		a.denySvc = denySvc
 		a.mu.Unlock()
 		if len(set.Deny) > 0 {
 			log.Printf("console denies: %v", set.Deny)
+		}
+		if len(set.DenyServices) > 0 {
+			log.Printf("console denies services: %v", set.DenyServices)
 		}
 		log.Printf("definitions received: %d verified of %d", len(verified), len(set.Definitions))
 		a.refreshActive()
