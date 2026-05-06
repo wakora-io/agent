@@ -8,7 +8,7 @@ var knownProbeTypes = map[string]bool{
 	"pve": true, "haproxy": true, "domain": true, "ext": true, "wineventlog": true,
 	"logtail": true, "journal": true, "procfact": true, "traps": true, "syslog": true,
 	"keepalived": true, "virsh": true, "iis": true, "hyperv": true, "ebpfhttp": true, "apmphp": true, "apmprofile": true, "apmdotnet": true,
-	"apmdotnetprofile": true, "k8s": true, "cis": true,
+	"apmdotnetprofile": true, "k8s": true, "cis": true, "logs": true,
 }
 
 func UnsupportedProbes(d protocol.Definition) []string {

@@ -16,6 +16,7 @@ const (
 	TypeSpans     MessageType = "spans"
 	TypeProfile   MessageType = "profile"
 	TypeRum       MessageType = "rum"
+	TypeLogs      MessageType = "logs"
 	TypeAck       MessageType = "ack"
 )
 
@@ -62,6 +63,19 @@ type SpanBatch struct {
 	ServerID string `json:"serverId"`
 	Hostname string `json:"hostname,omitempty"`
 	Spans    []Span `json:"spans"`
+}
+
+type LogLine struct {
+	Ts      int64  `json:"ts"`
+	Service string `json:"service"`
+	Level   string `json:"level"`
+	Message string `json:"message"`
+}
+
+type LogBatch struct {
+	ServerID string    `json:"serverId"`
+	Hostname string    `json:"hostname,omitempty"`
+	Lines    []LogLine `json:"lines"`
 }
 
 type FoldedStack struct {
@@ -232,6 +246,10 @@ type Probe struct {
 	ExpectBody   string            `json:"expectBody,omitempty"`
 	Prom         []PromRule        `json:"prom,omitempty"`
 	IntervalSec  int               `json:"intervalSec,omitempty"`
+	Paths        []string          `json:"paths,omitempty"`
+	LevelRegex   string            `json:"levelRegex,omitempty"`
+	MinLevel     string            `json:"minLevel,omitempty"`
+	Redact       []string          `json:"redact,omitempty"`
 }
 
 type Definition struct {

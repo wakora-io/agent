@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,10 @@ type Agent struct {
 	probeFacts   map[string][]protocol.Fact
 	tailers      map[string]*defs.Tailer
 	journals     map[string]*defs.JournalTailer
+	logTailers   map[string]*defs.LogTailer
+	logBudget    int
+	logBudgetAt  time.Time
+	logCapped    bool
 	trapL        map[int]*defs.TrapListener
 	syslogL      map[int]*defs.SyslogListener
 	listenerPrev map[string]listenerCounts
@@ -160,6 +165,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		probeFacts:        map[string][]protocol.Fact{},
 		tailers:           map[string]*defs.Tailer{},
 		journals:          map[string]*defs.JournalTailer{},
+		logTailers:        map[string]*defs.LogTailer{},
 		trapL:             map[int]*defs.TrapListener{},
 		syslogL:           map[int]*defs.SyslogListener{},
 		listenerPrev:      map[string]listenerCounts{},
@@ -725,6 +731,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
+			if p.Type == "logs" {
+				if err := a.runLogs(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
 			if p.Type == "procfact" {
 				a.mu.Lock()
 				facts := a.facts
@@ -1113,6 +1125,83 @@ func (a *Agent) runJournal(conn transport.Conn, service string, p protocol.Probe
 		return err
 	}
 	return a.sendTailOutput(conn, events, pts)
+}
+
+const logMaxLinesPerWindow = 2000
+
+func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) error {
+	key := service + "/" + p.Name
+	t := a.logTailers[key]
+	if t == nil {
+		t = defs.NewLogTailer()
+		a.logTailers[key] = t
+	}
+	if len(p.Paths) == 0 && p.Path == "" && p.PathFrom != "" {
+		if ov, ok := a.locationOverride(service, p.PathFrom); ok {
+			p.Paths = splitPaths(ov)
+		} else {
+			a.mu.Lock()
+			if facts := a.serviceFacts[service]; facts != nil {
+				p.Paths = splitPaths(facts[p.PathFrom])
+			}
+			a.mu.Unlock()
+		}
+	}
+	lines, err := t.Collect(service, p, time.Now())
+	if err != nil {
+		log.Printf("logs %s: %v", key, err)
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	lines = a.capLogs(conn, lines)
+	if len(lines) == 0 {
+		return nil
+	}
+	a.seq++
+	msg, err := protocol.Encode(protocol.TypeLogs, a.seq, protocol.LogBatch{
+		ServerID: a.cfg.ServerID,
+		Hostname: a.cfg.Hostname,
+		Lines:    lines,
+	})
+	if err != nil {
+		return nil
+	}
+	return conn.Send(msg)
+}
+
+func (a *Agent) capLogs(conn transport.Conn, lines []protocol.LogLine) []protocol.LogLine {
+	now := time.Now()
+	if now.After(a.logBudgetAt) {
+		a.logBudget = logMaxLinesPerWindow
+		a.logBudgetAt = now.Add(60 * time.Second)
+		a.logCapped = false
+	}
+	if len(lines) <= a.logBudget {
+		a.logBudget -= len(lines)
+		return lines
+	}
+	sort.SliceStable(lines, func(i, j int) bool {
+		return defs.LogRank(lines[i].Level) < defs.LogRank(lines[j].Level)
+	})
+	kept := lines
+	if a.logBudget < len(lines) {
+		kept = lines[:a.logBudget]
+	}
+	dropped := len(lines) - len(kept)
+	a.logBudget = 0
+	if dropped > 0 && !a.logCapped {
+		a.logCapped = true
+		detail, _ := json.Marshal(map[string]any{"dropped": dropped, "windowSec": 60})
+		a.seq++
+		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+			ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
+			Kind: "log_volume_capped", Detail: string(detail), Timestamp: time.Now().Unix(),
+		}); err == nil {
+			conn.Send(msg)
+		}
+	}
+	return kept
 }
 
 func (a *Agent) snmpTargets() map[string][]string {
