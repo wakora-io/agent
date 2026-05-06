@@ -253,6 +253,7 @@ type Probe struct {
 	ForceLevel   string            `json:"forceLevel,omitempty"`
 	Redact       []string          `json:"redact,omitempty"`
 	Docker       bool              `json:"docker,omitempty"`
+	K8s          bool              `json:"k8s,omitempty"`
 }
 
 type Definition struct {

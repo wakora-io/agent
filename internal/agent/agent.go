@@ -1390,7 +1390,54 @@ func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe)
 			}
 		}
 	}
-	return a.sendProbeMetrics(conn, pts)
+	if err := a.sendProbeMetrics(conn, pts); err != nil {
+		return err
+	}
+	return a.sendSyslogLines(conn, l.DrainLines())
+}
+
+var syslogSevLevel = [8]string{"error", "error", "error", "error", "warn", "notice", "info", "debug"}
+
+// sendSyslogLines feeds the device syslog stream into the logs pipeline:
+// severity maps onto the log levels, the default log policy (error/warn/
+// notice) drops the info chatter, the volume cap guards the rest
+func (a *Agent) sendSyslogLines(conn transport.Conn, raw []defs.SyslogLine) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	minRank := defs.LogRank("notice")
+	var lines []protocol.LogLine
+	for _, s := range raw {
+		sev := s.Severity
+		if sev < 0 || sev > 7 {
+			sev = 6
+		}
+		level := syslogSevLevel[sev]
+		if defs.LogRank(level) > minRank {
+			continue
+		}
+		lines = append(lines, protocol.LogLine{
+			Ts: s.Ts, Service: "syslog", Level: level,
+			Message: s.Source + " " + s.Message,
+		})
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	lines = a.capLogs(conn, lines)
+	if len(lines) == 0 {
+		return nil
+	}
+	a.seq++
+	msg, err := protocol.Encode(protocol.TypeLogs, a.seq, protocol.LogBatch{
+		ServerID: a.cfg.ServerID,
+		Hostname: a.cfg.Hostname,
+		Lines:    lines,
+	})
+	if err != nil {
+		return nil
+	}
+	return conn.Send(msg)
 }
 
 func (a *Agent) startProfile(service string, p protocol.Probe) {

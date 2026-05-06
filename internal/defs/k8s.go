@@ -295,6 +295,29 @@ func (kc *kubeClient) get(path string, out any) error {
 	return json.Unmarshal(body, out)
 }
 
+func (kc *kubeClient) getRaw(path string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, kc.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if kc.token != "" {
+		req.Header.Set("Authorization", "Bearer "+kc.token)
+	}
+	resp, err := kc.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: %s", path, resp.Status)
+	}
+	return body, nil
+}
+
 func (kc *kubeClient) version() string {
 	var v struct {
 		GitVersion string `json:"gitVersion"`
@@ -338,6 +361,7 @@ func (kc *kubeClient) nodes() (total, ready int, kubelet string, err error) {
 
 type k8sPod struct {
 	namespace string
+	name      string
 	phase     string
 	restarts  int
 	crashloop bool
@@ -348,6 +372,7 @@ func (kc *kubeClient) pods() ([]k8sPod, error) {
 		Items []struct {
 			Metadata struct {
 				Namespace string `json:"namespace"`
+				Name      string `json:"name"`
 			} `json:"metadata"`
 			Status struct {
 				Phase             string `json:"phase"`

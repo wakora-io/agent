@@ -8,12 +8,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"wakora.io/agent/internal/protocol"
 )
@@ -43,10 +45,13 @@ type LogTailer struct {
 	redact   []*regexp.Regexp
 	pattern  string
 	ctrSince map[string]int64
+	winSince map[string]int64
+	podSince map[string]string
 }
 
 func NewLogTailer() *LogTailer {
-	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, res: map[string]*regexp.Regexp{}, ctrSince: map[string]int64{}}
+	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, res: map[string]*regexp.Regexp{},
+		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}}
 }
 
 func (l *LogTailer) compile(pattern string) *regexp.Regexp {
@@ -133,6 +138,34 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 			if logLevelRank[ln.Level] > minRank {
 				continue
 			}
+			ln.Message = l.scrub(ln.Message)
+			out = append(out, ln)
+		}
+	}
+	if len(p.Channels) > 0 {
+		lines, err := l.winEventLines(p.Channels, now)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		for _, ln := range lines {
+			if logLevelRank[ln.Level] > minRank {
+				continue
+			}
+			ln.Service = svc
+			ln.Message = l.scrub(ln.Message)
+			out = append(out, ln)
+		}
+	}
+	if p.K8s {
+		lines, err := l.k8sPodLogs(p.Path, now)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		for _, ln := range lines {
+			if logLevelRank[ln.Level] > minRank {
+				continue
+			}
+			ln.Service = svc
 			ln.Message = l.scrub(ln.Message)
 			out = append(out, ln)
 		}
@@ -370,6 +403,76 @@ func (l *LogTailer) dockerLogs(sock string, now time.Time) ([]protocol.LogLine, 
 	return out, nil
 }
 
+func (l *LogTailer) k8sPodLogs(kubeconfig string, now time.Time) ([]protocol.LogLine, error) {
+	kc, _, err := connectKube(kubeconfig, 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	pods, err := kc.pods()
+	if err != nil {
+		return nil, err
+	}
+	var out []protocol.LogLine
+	live := map[string]bool{}
+	taken := 0
+	for _, pod := range pods {
+		if taken >= 10 {
+			break
+		}
+		if pod.phase == "Succeeded" || (pod.phase == "Running" && pod.restarts == 0 && !pod.crashloop) {
+			continue
+		}
+		key := pod.namespace + "/" + pod.name
+		live[key] = true
+		taken++
+		since, seen := l.podSince[key]
+		if !seen {
+			l.podSince[key] = now.UTC().Format(time.RFC3339)
+			continue
+		}
+		raw, err := kc.getRaw("/api/v1/namespaces/" + pod.namespace + "/pods/" + pod.name +
+			"/log?timestamps=true&tailLines=50&sinceTime=" + url.QueryEscape(since))
+		if err != nil {
+			continue
+		}
+		last := since
+		for _, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			sp := strings.IndexByte(line, ' ')
+			if sp <= 0 {
+				continue
+			}
+			ts, err := time.Parse(time.RFC3339Nano, line[:sp])
+			if err != nil {
+				continue
+			}
+			stamp := ts.UTC().Format(time.RFC3339)
+			if stamp <= since {
+				continue
+			}
+			if stamp > last {
+				last = stamp
+			}
+			msg := strings.TrimSpace(line[sp+1:])
+			if msg == "" {
+				continue
+			}
+			level := "info"
+			if m := dockerLevelRe.FindStringSubmatch(msg); len(m) >= 2 {
+				level = normalizeLevel(m[1])
+			}
+			out = append(out, protocol.LogLine{Ts: ts.Unix(), Level: level, Message: key + ": " + msg})
+		}
+		l.podSince[key] = last
+	}
+	for key := range l.podSince {
+		if !live[key] {
+			delete(l.podSince, key)
+		}
+	}
+	return out, nil
+}
+
 type dockerLogLine struct {
 	text   string
 	stderr bool
@@ -464,15 +567,36 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return nil, err
 	}
+	data, err := io.ReadAll(io.LimitReader(f, maxTailRead))
+	if err != nil {
+		return nil, err
+	}
 	var lines []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for sc.Scan() {
-		t := strings.TrimSpace(sc.Text())
-		if t != "" {
+	for _, t := range strings.Split(decodeMaybeUTF16(f, data), "\n") {
+		if t = strings.TrimSpace(t); t != "" {
 			lines = append(lines, t)
 		}
 	}
 	l.offsets[path] = size
 	return lines, nil
+}
+
+// decodeMaybeUTF16 handles UTF-16LE log files (the MSSQL ERRORLOG): a BOM at
+// the file start switches the whole tail to utf16 decoding
+func decodeMaybeUTF16(f *os.File, data []byte) string {
+	var bom [2]byte
+	if n, err := f.ReadAt(bom[:], 0); err != nil || n < 2 || bom[0] != 0xFF || bom[1] != 0xFE {
+		return string(data)
+	}
+	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+		data = data[2:]
+	}
+	if len(data)%2 == 1 {
+		data = data[:len(data)-1]
+	}
+	u := make([]uint16, len(data)/2)
+	for i := range u {
+		u[i] = uint16(data[2*i]) | uint16(data[2*i+1])<<8
+	}
+	return string(utf16.Decode(u))
 }

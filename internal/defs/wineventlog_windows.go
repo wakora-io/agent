@@ -94,6 +94,7 @@ type evtXML struct {
 			Name string `xml:"Name,attr"`
 		} `xml:"Provider"`
 		EventID     string `xml:"EventID"`
+		Level       string `xml:"Level"`
 		TimeCreated struct {
 			SystemTime string `xml:"SystemTime,attr"`
 		} `xml:"TimeCreated"`

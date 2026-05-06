@@ -6,9 +6,12 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"time"
 
 	"wakora.io/agent/internal/protocol"
 )
+
+func timeNowUnix() int64 { return time.Now().Unix() }
 
 type SyslogListener struct {
 	port int
@@ -21,9 +24,19 @@ type SyslogListener struct {
 	patterns map[string]*regexp.Regexp
 	allow    map[string]bool
 	lastErr  error
+	lines    []SyslogLine
 
 	conn *net.UDPConn
 }
+
+type SyslogLine struct {
+	Ts       int64
+	Source   string
+	Severity int
+	Message  string
+}
+
+const syslogLineCap = 200
 
 func NewSyslogListener(port int) *SyslogListener {
 	if port <= 0 {
@@ -101,7 +114,8 @@ func (s *SyslogListener) ingest(source, line string) {
 		return
 	}
 	s.total++
-	if sev, ok := syslogSeverity(line); ok && sev <= 3 {
+	sev, sevOk := syslogSeverity(line)
+	if sevOk && sev <= 3 {
 		s.severe++
 	}
 	for name, re := range s.patterns {
@@ -109,6 +123,38 @@ func (s *SyslogListener) ingest(source, line string) {
 			s.matches[name]++
 		}
 	}
+	if !sevOk {
+		sev = 6
+	}
+	msg := line
+	if i := indexAfterPri(line); i > 0 {
+		msg = line[i:]
+	}
+	if len(s.lines) < syslogLineCap {
+		s.lines = append(s.lines, SyslogLine{Ts: timeNowUnix(), Source: source, Severity: sev, Message: msg})
+	}
+}
+
+func indexAfterPri(line string) int {
+	if len(line) < 3 || line[0] != '<' {
+		return 0
+	}
+	for i := 1; i < len(line) && i <= 4; i++ {
+		if line[i] == '>' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// DrainLines hands the buffered device lines to the logs pipeline and resets
+// the ring; severity maps straight onto the log levels at the caller
+func (s *SyslogListener) DrainLines() []SyslogLine {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.lines
+	s.lines = nil
+	return out
 }
 
 func (s *SyslogListener) Snapshot() (total, severe, dropped uint64, matches map[string]uint64, err error) {

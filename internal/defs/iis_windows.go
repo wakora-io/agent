@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -68,6 +69,13 @@ func runIIS(o *Outcome, service string, p protocol.Probe, timeout time.Duration)
 	}
 	workers := float64(strings.Count(string(wpsOut), "WP \""))
 
+	if dirs := iisLogDirs(ctx, appcmd, string(sitesOut)); len(dirs) > 0 {
+		if o.Facts == nil {
+			o.Facts = map[string]string{}
+		}
+		o.Facts["accessLog"] = strings.Join(dirs, ",")
+	}
+
 	o.Check.Status = "ok"
 	o.Metrics = append(o.Metrics,
 		protocol.MetricPoint{Name: prefix + "sites", Value: sites},
@@ -76,4 +84,36 @@ func runIIS(o *Outcome, service string, p protocol.Probe, timeout time.Duration)
 		protocol.MetricPoint{Name: prefix + "pools_started", Value: poolsStarted},
 		protocol.MetricPoint{Name: prefix + "worker_processes", Value: workers},
 	)
+}
+
+var iisSiteIDRe = regexp.MustCompile(`SITE "([^"]+)" \(id:(\d+)`)
+
+// iisLogDirs resolves each site's REAL W3C log folder (logFile.directory is
+// per-site configurable) - the config-derived-paths canon; the tailer picks
+// the newest .log inside a directory by itself
+func iisLogDirs(ctx context.Context, appcmd, sitesOut string) []string {
+	seen := map[string]bool{}
+	var out []string
+	matches := iisSiteIDRe.FindAllStringSubmatch(sitesOut, -1)
+	if len(matches) > 20 {
+		matches = matches[:20]
+	}
+	for _, m := range matches {
+		dirOut, err := exec.CommandContext(ctx, appcmd, "list", "site", m[1], "/text:logFile.directory").Output()
+		if err != nil {
+			continue
+		}
+		dir := strings.TrimSpace(string(dirOut))
+		if dir == "" {
+			continue
+		}
+		dir = os.ExpandEnv(strings.ReplaceAll(strings.ReplaceAll(dir, "%SystemDrive%", "${SystemDrive}"), "%windir%", "${windir}"))
+		full := filepath.Join(dir, "W3SVC"+m[2])
+		if _, err := os.Stat(full); err != nil || seen[full] {
+			continue
+		}
+		seen[full] = true
+		out = append(out, full)
+	}
+	return out
 }
