@@ -82,6 +82,23 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + "." + m.Name, Value: v})
 		}
 	}
+	for _, f := range p.Facts {
+		v := strings.TrimSpace(byName[f.Name])
+		if f.Regex != "" {
+			if m, ok := extract([]byte(v), f.Regex); ok {
+				v = m
+			} else {
+				v = ""
+			}
+		}
+		if v == "" {
+			continue
+		}
+		if o.Facts == nil {
+			o.Facts = map[string]string{}
+		}
+		o.Facts[f.Name] = v
+	}
 }
 
 var mysqlSockets = []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"}

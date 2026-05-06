@@ -35,7 +35,7 @@ var execAllowlist = map[string]bool{
 	"nginx": true, "apache2ctl": true, "httpd": true, "php-fpm": true,
 	"mariadbd": true, "mysqld": true, "mysqladmin": true, "mariadb-admin": true,
 	"redis-cli": true, "psql": true, "postconf": true, "postqueue": true, "mailq": true,
-	"dovecot": true, "doveadm": true, "named": true, "rndc": true, "named-checkconf": true,
+	"dovecot": true, "doveadm": true, "doveconf": true, "named": true, "rndc": true, "named-checkconf": true,
 	"apt-get": true, "dnf": true, "yum": true, "rpm": true, "zypper": true, "apk": true,
 	"vsftpd": true, "pveversion": true, "qm": true, "pct": true, "pvesm": true,
 	"mongosh": true, "mongo": true, "systemctl": true,

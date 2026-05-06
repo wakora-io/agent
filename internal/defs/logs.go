@@ -130,6 +130,13 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 		forced = normalizeLevel(p.ForceLevel)
 	}
 	for _, path := range paths {
+		path = strings.ReplaceAll(path, "%s", "main")
+		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+			path = newestLogIn(path)
+			if path == "" {
+				continue
+			}
+		}
 		lines, err := l.tailFile(path, now)
 		if err != nil && firstErr == nil {
 			firstErr = err
@@ -157,13 +164,13 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 
 func normalizeLevel(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "emerg", "alert", "crit", "critical", "err", "error", "fatal":
+	case "emerg", "alert", "crit", "critical", "err", "error", "fatal", "panic", "e", "f", "#":
 		return "error"
-	case "warn", "warning":
+	case "warn", "warning", "w":
 		return "warn"
-	case "notice":
+	case "notice", "note", "log", "*":
 		return "notice"
-	case "debug", "trace":
+	case "debug", "trace", "d", ".":
 		return "debug"
 	}
 	return "info"
@@ -171,11 +178,16 @@ func normalizeLevel(s string) string {
 
 func (l *LogTailer) journal(idents []string, now time.Time) ([]protocol.LogLine, error) {
 	args := []string{"-q", "--no-pager", "-o", "json", "--show-cursor"}
+	matched := 0
 	for _, id := range idents {
 		if !identRe.MatchString(id) {
 			continue
 		}
 		args = append(args, "SYSLOG_IDENTIFIER="+id)
+		matched++
+	}
+	if matched == 0 {
+		return nil, nil
 	}
 	first := l.cursor == ""
 	if first {
@@ -250,6 +262,29 @@ func parseMicros(s string) (int64, bool) {
 		n = n*10 + int64(c-'0')
 	}
 	return n, true
+}
+
+func newestLogIn(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestMod) {
+			best = dir + "/" + e.Name()
+			bestMod = info.ModTime()
+		}
+	}
+	return best
 }
 
 func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {

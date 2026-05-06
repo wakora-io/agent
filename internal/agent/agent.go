@@ -1136,15 +1136,20 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 		t = defs.NewLogTailer()
 		a.logTailers[key] = t
 	}
-	if len(p.Paths) == 0 && p.Path == "" && p.PathFrom != "" {
+	if p.PathFrom != "" {
+		var fromPaths []string
 		if ov, ok := a.locationOverride(service, p.PathFrom); ok {
-			p.Paths = splitPaths(ov)
+			fromPaths = splitPaths(ov)
 		} else {
 			a.mu.Lock()
 			if facts := a.serviceFacts[service]; facts != nil {
-				p.Paths = splitPaths(facts[p.PathFrom])
+				fromPaths = splitPaths(facts[p.PathFrom])
 			}
 			a.mu.Unlock()
+		}
+		if len(fromPaths) > 0 {
+			p.Paths = fromPaths
+			p.Path = ""
 		}
 	}
 	lines, err := t.Collect(service, p, time.Now())

@@ -15,7 +15,7 @@ import (
 	"wakora.io/agent/internal/protocol"
 )
 
-var identRe = regexp.MustCompile(`^[A-Za-z0-9_.@-]+$`)
+var identRe = regexp.MustCompile(`^[A-Za-z0-9_.@/-]+$`)
 
 const srcCooldown = 30 * time.Minute
 

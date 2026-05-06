@@ -94,11 +94,14 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 
 		if p.Command != "nginx" {
-			if logs := apacheAccessLogs(p.Command); len(logs) > 0 {
-				if o.Facts == nil {
-					o.Facts = map[string]string{}
-				}
+			if o.Facts == nil {
+				o.Facts = map[string]string{}
+			}
+			if logs := apacheLogs(p.Command, apacheCustomLogRe); len(logs) > 0 {
 				o.Facts["accessLog"] = strings.Join(logs, ",")
+			}
+			if logs := apacheLogs(p.Command, apacheErrorLogRe); len(logs) > 0 {
+				o.Facts["errorLog"] = strings.Join(logs, ",")
 			}
 		}
 
@@ -714,8 +717,9 @@ func verifyCert(chain []*x509.Certificate) string {
 }
 
 var apacheCustomLogRe = regexp.MustCompile(`(?mi)^\s*CustomLog\s+"?([^"\s]+)`)
+var apacheErrorLogRe = regexp.MustCompile(`(?mi)^\s*ErrorLog\s+"?([^"\s]+)`)
 
-func apacheAccessLogs(cmd string) []string {
+func apacheLogs(cmd string, re *regexp.Regexp) []string {
 	confDir := "/etc/apache2"
 	logDir := "/var/log/apache2"
 	if cmd == "httpd" {
@@ -735,7 +739,7 @@ func apacheAccessLogs(cmd string) []string {
 		if err != nil {
 			return nil
 		}
-		for _, m := range apacheCustomLogRe.FindAllSubmatch(data, -1) {
+		for _, m := range re.FindAllSubmatch(data, -1) {
 			p := resolveApachePath(string(m[1]), logDir)
 			if p == "" || seen[p] {
 				continue
