@@ -3,8 +3,10 @@
 package defs
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,12 +52,11 @@ func runCIS(o *Outcome, service string) {
 		record(mode&0o077 == 0, "sshd-config-perm", "sshd_config readable beyond root", "medium", cisModeStr(mode))
 	}
 
-	sshd, sshdOK := cisReadFile("/etc/ssh/sshd_config")
-	if sshdOK {
-		record(!cisSshdYes(sshd, "PermitRootLogin"), "sshd-root-login", "sshd permits root login", "high", "PermitRootLogin should be no or prohibit-password")
-		record(!cisSshdYes(sshd, "PasswordAuthentication"), "sshd-password-auth", "sshd accepts password auth", "medium", "prefer key-based auth")
-		record(!cisSshdYes(sshd, "PermitEmptyPasswords"), "sshd-empty-pass", "sshd permits empty passwords", "critical", "PermitEmptyPasswords should be no")
-		record(!cisSshdYes(sshd, "X11Forwarding"), "sshd-x11", "sshd X11 forwarding enabled", "low", "disable unless needed")
+	if sshd, ok := cisSshdEffective(); ok {
+		record(sshd["permitrootlogin"] != "yes", "sshd-root-login", "sshd permits root login", "high", "PermitRootLogin should be no or prohibit-password")
+		record(sshd["passwordauthentication"] != "yes", "sshd-password-auth", "sshd accepts password auth", "medium", "prefer key-based auth")
+		record(sshd["permitemptypasswords"] != "yes", "sshd-empty-pass", "sshd permits empty passwords", "critical", "PermitEmptyPasswords should be no")
+		record(sshd["x11forwarding"] != "yes", "sshd-x11", "sshd X11 forwarding enabled", "low", "disable unless needed")
 	}
 
 	record(cisSysctl("net/ipv4/tcp_syncookies") == "1", "tcp-syncookies", "TCP SYN cookies disabled", "medium", "net.ipv4.tcp_syncookies should be 1")
@@ -110,23 +111,39 @@ func cisReadFile(path string) (string, bool) {
 
 var cisWSRe = regexp.MustCompile(`\s+`)
 
-func cisSshdYes(cfg, key string) bool {
-	for _, line := range strings.Split(cfg, "\n") {
+func cisSshdEffective() (map[string]string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "sshd", "-T").Output(); err == nil && len(out) > 0 {
+		return cisSshdParse(string(out), false), true
+	}
+	if cfg, ok := cisReadFile("/etc/ssh/sshd_config"); ok {
+		return cisSshdParse(cfg, true), true
+	}
+	return nil, false
+}
+
+func cisSshdParse(s string, stopAtMatch bool) map[string]string {
+	m := map[string]string{}
+	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		fields := cisWSRe.Split(line, 2)
-		if len(fields) != 2 || !strings.EqualFold(fields[0], key) {
+		if len(fields) != 2 {
 			continue
 		}
-		val := strings.ToLower(strings.TrimSpace(fields[1]))
-		if key == "PermitRootLogin" {
-			return val == "yes"
+		key := strings.ToLower(fields[0])
+		if stopAtMatch && key == "match" {
+			break
 		}
-		return val == "yes"
+		if _, seen := m[key]; seen {
+			continue
+		}
+		m[key] = strings.ToLower(strings.TrimSpace(fields[1]))
 	}
-	return false
+	return m
 }
 
 func cisSysctl(path string) string {

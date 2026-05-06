@@ -42,6 +42,7 @@ var execAllowlist = map[string]bool{
 	"varnishstat": true, "unbound-control": true, "exim": true, "exim4": true,
 	"pmgsh": true, "pmgversion": true,
 	"restic": true, "borg": true,
+	"sshd": true,
 }
 
 func RunProbe(service string, p protocol.Probe) Outcome {
