@@ -125,6 +125,10 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 		paths = append(paths, p.Path)
 	}
 	levelRe := l.compile(p.LevelRegex)
+	forced := ""
+	if p.ForceLevel != "" {
+		forced = normalizeLevel(p.ForceLevel)
+	}
 	for _, path := range paths {
 		lines, err := l.tailFile(path, now)
 		if err != nil && firstErr == nil {
@@ -132,6 +136,9 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 		}
 		for _, raw := range lines {
 			level := "info"
+			if forced != "" {
+				level = forced
+			}
 			if levelRe != nil {
 				if m := levelRe.FindStringSubmatch(raw); len(m) >= 2 {
 					level = normalizeLevel(m[1])

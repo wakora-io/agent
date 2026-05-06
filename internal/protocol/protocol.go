@@ -249,6 +249,7 @@ type Probe struct {
 	Paths        []string          `json:"paths,omitempty"`
 	LevelRegex   string            `json:"levelRegex,omitempty"`
 	MinLevel     string            `json:"minLevel,omitempty"`
+	ForceLevel   string            `json:"forceLevel,omitempty"`
 	Redact       []string          `json:"redact,omitempty"`
 }
 
