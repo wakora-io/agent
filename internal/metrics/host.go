@@ -15,6 +15,13 @@ type Collector struct {
 	prevNetTx    uint64
 	prevNetAt    time.Time
 	hasPrev      bool
+	prevTop      map[string]topSample
+	prevTopAt    time.Time
+}
+
+type topSample struct {
+	ticks uint64
+	io    uint64
 }
 
 func NewCollector() *Collector {
@@ -30,6 +37,7 @@ func (c *Collector) Collect() (int64, []Point) {
 	pts = append(pts, diskPoints()...)
 	pts = append(pts, c.cpuPoints()...)
 	pts = append(pts, c.netPoints(now)...)
+	pts = append(pts, c.topPoints(now)...)
 	c.hasPrev = true
 	return now.Unix(), pts
 }
