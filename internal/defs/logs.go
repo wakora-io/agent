@@ -211,7 +211,7 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 				continue
 			}
 			out = append(out, protocol.LogLine{
-				Ts: now.Unix(), Service: svc, Level: level, Message: l.scrub(raw),
+				Ts: parseLineTs(raw, now), Service: svc, Level: level, Message: l.scrub(raw),
 			})
 		}
 	}
@@ -576,6 +576,71 @@ func (l *LogTailer) futureDup(ln protocol.LogLine, now time.Time) bool {
 	}
 	l.futSeen[h] = true
 	return false
+}
+
+var syslogTsRe = regexp.MustCompile(`^[A-Z][a-z]{2} [ 0-9]\d \d{2}:\d{2}:\d{2}`)
+
+func parseLineTs(raw string, now time.Time) int64 {
+	ts, ok := lineTime(raw, now)
+	if !ok {
+		return now.Unix()
+	}
+	u := ts.Unix()
+	if u > now.Unix()+300 || u < now.Unix()-7*86400 {
+		return now.Unix()
+	}
+	return u
+}
+
+func lineTime(raw string, now time.Time) (time.Time, bool) {
+	head := raw
+	if len(head) > 40 {
+		head = head[:40]
+	}
+	if t, err := time.Parse(time.RFC3339Nano, firstField(head)); err == nil {
+		return t, true
+	}
+	if len(head) >= 19 && head[4] == '-' && head[7] == '-' && head[10] == ' ' {
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", head[:19], time.Local); err == nil {
+			return t, true
+		}
+	}
+	if len(head) >= 19 && head[4] == '/' && head[7] == '/' && head[10] == ' ' {
+		if t, err := time.ParseInLocation("2006/01/02 15:04:05", head[:19], time.Local); err == nil {
+			return t, true
+		}
+	}
+	if i := strings.IndexByte(raw, '['); i >= 0 && i < 64 {
+		rest := raw[i+1:]
+		if j := strings.IndexByte(rest, ']'); j > 0 && j < 48 {
+			in := rest[:j]
+			if t, err := time.Parse("02/Jan/2006:15:04:05 -0700", in); err == nil {
+				return t, true
+			}
+			for _, layout := range []string{"Mon Jan 02 15:04:05.000000 2006", "Mon Jan _2 15:04:05.000000 2006", "Mon Jan 02 15:04:05 2006", "Mon Jan _2 15:04:05 2006"} {
+				if t, err := time.ParseInLocation(layout, in, time.Local); err == nil {
+					return t, true
+				}
+			}
+		}
+	}
+	if m := syslogTsRe.FindString(head); m != "" {
+		if t, err := time.ParseInLocation("Jan _2 15:04:05", strings.ReplaceAll(m, "  ", " "), time.Local); err == nil {
+			t = t.AddDate(now.Year(), 0, 0)
+			if t.After(now.Add(24 * time.Hour)) {
+				t = t.AddDate(-1, 0, 0)
+			}
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func firstField(s string) string {
+	if i := strings.IndexByte(s, ' '); i > 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func newestLogIn(dir string) string {
