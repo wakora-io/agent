@@ -539,9 +539,11 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 func splitPaths(v string) []string {
 	var out []string
 	for _, p := range strings.Split(v, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
+		p = strings.TrimSpace(p)
+		if p == "" || p == "off" || p == "/dev/null" || strings.HasPrefix(p, "syslog:") || strings.HasPrefix(p, "stderr") {
+			continue
 		}
+		out = append(out, p)
 	}
 	return out
 }
