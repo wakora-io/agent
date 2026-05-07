@@ -33,36 +33,33 @@ func (l *LogTailer) winEventLines(channels []string, now time.Time) ([]protocol.
 	var firstErr error
 	for _, ch := range channels {
 		since, seen := l.winSince[ch]
-		if !seen {
-			l.winSince[ch] = now.UnixMilli()
-			continue
-		}
-		windowMs := now.UnixMilli() - since
-		if windowMs <= 0 {
-			continue
-		}
-		lines, err := winEventQueryLines(ch, windowMs)
+		lines, maxNano, err := winEventQueryLines(ch, 15*60*1000, since)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		l.winSince[ch] = now.UnixMilli()
+		if maxNano > since {
+			l.winSince[ch] = maxNano
+		}
+		if !seen {
+			continue
+		}
 		out = append(out, lines...)
 	}
 	return out, firstErr
 }
 
-func winEventQueryLines(channel string, windowMs int64) ([]protocol.LogLine, error) {
+func winEventQueryLines(channel string, windowMs, sinceNano int64) ([]protocol.LogLine, int64, error) {
 	chPtr, err := windows.UTF16PtrFromString(channel)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	query := "*[System[TimeCreated[timediff(@SystemTime) <= " + strconv.FormatInt(windowMs, 10) + "]]]"
 	qPtr, err := windows.UTF16PtrFromString(query)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	h, _, callErr := procEvtQuery.Call(
 		0,
@@ -71,14 +68,16 @@ func winEventQueryLines(channel string, windowMs int64) ([]protocol.LogLine, err
 		uintptr(evtQueryChannelPath|evtQueryReverseDirection),
 	)
 	if h == 0 {
-		return nil, callErr
+		return nil, 0, callErr
 	}
 	defer procEvtClose.Call(h)
 
 	const batch = 64
 	events := make([]uintptr, batch)
 	var out []protocol.LogLine
-	for len(out) < winEventLineCap {
+	maxNano := sinceNano
+	scanned := 0
+	for scanned < 2000 && len(out) < winEventLineCap {
 		var returned uint32
 		ret, _, _ := procEvtNext.Call(
 			h,
@@ -91,30 +90,40 @@ func winEventQueryLines(channel string, windowMs int64) ([]protocol.LogLine, err
 		if ret == 0 || returned == 0 {
 			break
 		}
+		stop := false
 		for i := 0; i < int(returned); i++ {
-			if ln, ok := winEventLine(events[i]); ok && len(out) < winEventLineCap {
-				out = append(out, ln)
+			if ln, nano, ok := winEventLine(events[i]); ok {
+				if nano > maxNano {
+					maxNano = nano
+				}
+				if nano > sinceNano && len(out) < winEventLineCap {
+					out = append(out, ln)
+				}
+				if nano <= sinceNano {
+					stop = true
+				}
 			}
 			procEvtClose.Call(events[i])
 		}
-		if returned < batch {
+		scanned += int(returned)
+		if stop || returned < batch {
 			break
 		}
 	}
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
-	return out, nil
+	return out, maxNano, nil
 }
 
-func winEventLine(ev uintptr) (protocol.LogLine, bool) {
+func winEventLine(ev uintptr) (protocol.LogLine, int64, bool) {
 	raw := renderEventXML(ev)
 	if raw == "" {
-		return protocol.LogLine{}, false
+		return protocol.LogLine{}, 0, false
 	}
 	var e evtXML
 	if err := xml.Unmarshal([]byte(raw), &e); err != nil {
-		return protocol.LogLine{}, false
+		return protocol.LogLine{}, 0, false
 	}
 	msg := formatEventMessage(e.System.Provider.Name, ev)
 	if msg == "" {
@@ -122,15 +131,17 @@ func winEventLine(ev uintptr) (protocol.LogLine, bool) {
 	}
 	msg = strings.Join(strings.Fields(msg), " ")
 	if msg == "" {
-		return protocol.LogLine{}, false
+		return protocol.LogLine{}, 0, false
 	}
 	ts := time.Now().Unix()
+	var nano int64
 	if t, err := time.Parse(time.RFC3339Nano, e.System.TimeCreated.SystemTime); err == nil {
 		ts = t.Unix()
+		nano = t.UnixNano()
 	}
 	return protocol.LogLine{
 		Ts:      ts,
 		Level:   winEventLevel(e.System.Level),
 		Message: e.System.Provider.Name + "#" + e.System.EventID + ": " + msg,
-	}, true
+	}, nano, true
 }
