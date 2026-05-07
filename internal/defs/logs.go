@@ -47,11 +47,12 @@ type LogTailer struct {
 	ctrSince map[string]int64
 	winSince map[string]int64
 	podSince map[string]string
+	futSeen  map[uint64]bool
 }
 
 func NewLogTailer() *LogTailer {
 	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, res: map[string]*regexp.Regexp{},
-		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}}
+		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{}}
 }
 
 func (l *LogTailer) compile(pattern string) *regexp.Regexp {
@@ -149,6 +150,9 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 		}
 		for _, ln := range lines {
 			if logLevelRank[ln.Level] > minRank {
+				continue
+			}
+			if l.futureDup(ln, now) {
 				continue
 			}
 			ln.Service = svc
@@ -518,6 +522,25 @@ func splitDockerTimestamp(line string) (int64, string) {
 	return t.Unix(), strings.TrimSpace(line[sp+1:])
 }
 
+func (l *LogTailer) futureDup(ln protocol.LogLine, now time.Time) bool {
+	if ln.Ts <= now.Unix()+300 {
+		return false
+	}
+	h := uint64(14695981039346656037)
+	for _, b := range []byte(ln.Message) {
+		h = (h ^ uint64(b)) * 1099511628211
+	}
+	h ^= uint64(ln.Ts)
+	if l.futSeen[h] {
+		return true
+	}
+	if len(l.futSeen) > 256 {
+		l.futSeen = map[uint64]bool{}
+	}
+	l.futSeen[h] = true
+	return false
+}
+
 func newestLogIn(dir string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -581,8 +604,6 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 	return lines, nil
 }
 
-// decodeMaybeUTF16 handles UTF-16LE log files (the MSSQL ERRORLOG): a BOM at
-// the file start switches the whole tail to utf16 decoding
 func decodeMaybeUTF16(f *os.File, data []byte) string {
 	var bom [2]byte
 	if n, err := f.ReadAt(bom[:], 0); err != nil || n < 2 || bom[0] != 0xFF || bom[1] != 0xFE {

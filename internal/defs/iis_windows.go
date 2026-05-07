@@ -88,9 +88,6 @@ func runIIS(o *Outcome, service string, p protocol.Probe, timeout time.Duration)
 
 var iisSiteIDRe = regexp.MustCompile(`SITE "([^"]+)" \(id:(\d+)`)
 
-// iisLogDirs resolves each site's REAL W3C log folder (logFile.directory is
-// per-site configurable) - the config-derived-paths canon; the tailer picks
-// the newest .log inside a directory by itself
 func iisLogDirs(ctx context.Context, appcmd, sitesOut string) []string {
 	seen := map[string]bool{}
 	var out []string

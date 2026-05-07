@@ -147,8 +147,6 @@ func indexAfterPri(line string) int {
 	return 0
 }
 
-// DrainLines hands the buffered device lines to the logs pipeline and resets
-// the ring; severity maps straight onto the log levels at the caller
 func (s *SyslogListener) DrainLines() []SyslogLine {
 	s.mu.Lock()
 	defer s.mu.Unlock()

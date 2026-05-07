@@ -837,8 +837,6 @@ type probeDone struct {
 	o       defs.Outcome
 }
 
-// the paced vhost sweep of a big portfolio takes minutes by design - run it detached
-// so the 15s probe tick keeps serving every other check, and emit on completion
 func (a *Agent) startVhosts(service string, p protocol.Probe) {
 	key := service + "/" + p.Name
 	a.mu.Lock()
@@ -1398,9 +1396,6 @@ func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe)
 
 var syslogSevLevel = [8]string{"error", "error", "error", "error", "warn", "notice", "info", "debug"}
 
-// sendSyslogLines feeds the device syslog stream into the logs pipeline:
-// severity maps onto the log levels, the default log policy (error/warn/
-// notice) drops the info chatter, the volume cap guards the rest
 func (a *Agent) sendSyslogLines(conn transport.Conn, raw []defs.SyslogLine) error {
 	if len(raw) == 0 {
 		return nil
