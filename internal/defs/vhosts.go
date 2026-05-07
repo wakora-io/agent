@@ -246,8 +246,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			}
 			if !dnsEmitted[h.Name] {
 				dnsEmitted[h.Name] = true
-				// a first, unconfirmed NXDOMAIN emits NOTHING: a transient resolver
-				// flap must not open (or resolve) incidents
+
 				if res.alive || confirmedDead {
 					v := 0.0
 					if res.alive {
@@ -280,8 +279,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 						Tags: map[string]string{"vhost": reg},
 					})
 				}
-				// negative = the registration lapsed but the zone still answers: the
-				// grace window where the client can still save the domain
+
 				if info.hasExpiry {
 					left := time.Until(info.expiry).Hours() / 24
 					o.Metrics = append(o.Metrics, protocol.MetricPoint{
@@ -333,9 +331,7 @@ func dnsProbeName(raw string) string {
 }
 
 var vhostLookupHost = func(ctx context.Context, name string) ([]string, error) {
-	// rooted lookup: the trailing dot keeps the resolver from appending
-	// resolv.conf search suffixes - found live on example, where a DEAD .org
-	// "resolved" through search example.lab into a wildcard lab address
+
 	return net.DefaultResolver.LookupHost(ctx, name+".")
 }
 
@@ -344,16 +340,11 @@ type dnsSweepResult struct {
 	ips   []string
 }
 
-// nxdomain debounce: a flapping resolver (rotating nameservers with different
-// views) must not paint a live domain dead or ring twice - the verdict flips to
-// dead only on the SECOND consecutive NXDOMAIN sweep
 var dnsSuspect = struct {
 	sync.Mutex
 	m map[string]int
 }{m: map[string]int{}}
 
-// dnsConfirmedDead counts consecutive NXDOMAIN sweeps for a name and reports
-// whether the death is confirmed; a live sweep resets the counter.
 func dnsConfirmedDead(name string, alive bool) bool {
 	dnsSuspect.Lock()
 	defer dnsSuspect.Unlock()

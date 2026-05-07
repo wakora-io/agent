@@ -30,9 +30,7 @@ func restartService() {
 }
 
 func exitForRestart() {
-	// systemd Restart=always and openrc supervise-daemon respawn relaunch the new binary
-	// on exit. sysvinit's start-stop-daemon --background does NOT supervise, so we must
-	// relaunch ourselves via a detached helper before exiting, or the agent stays dead.
+
 	if detectInit() == "sysvinit" {
 		cmd := exec.Command("sh", "-c",
 			"sleep 1; /etc/init.d/wakora-agent restart 2>/dev/null || service wakora-agent restart")

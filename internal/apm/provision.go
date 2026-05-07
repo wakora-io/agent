@@ -143,8 +143,6 @@ func (p *Provisioner) LocalSha(name string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// NeedsRefresh reports whether the channel manifest carries a different sha than the
-// locally provisioned artifact (a new signed build was published). Manifest is cached.
 func (p *Provisioner) NeedsRefresh(name string) bool {
 	art, err := p.lookup(name)
 	if err != nil || art.Sha256 == "" {

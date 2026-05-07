@@ -34,7 +34,7 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 		o.Check.Error = "no php-fpm worker processes found"
 		return
 	}
-	// random order so the capped attach set rotates across pools between windows
+
 	rand.Shuffle(len(pids), func(i, j int) { pids[i], pids[j] = pids[j], pids[i] })
 	forced := p.Options["phpVersion"]
 	verByExe := map[string]string{}
@@ -42,8 +42,7 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 	var pools []string
 	seen := map[string]bool{}
 	for _, pid := range pids {
-		// a big shared-hosting box runs hundreds of fpm workers; attaching to every
-		// one multiplies the sampling cost with no extra signal (idle workers dominate)
+
 		if len(samplers) >= profileMaxWorkers {
 			break
 		}
@@ -95,8 +94,7 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 	folded := map[string]uint32{}
 	owners := map[string]uint32{}
 	var total, hits uint32
-	// hz is the TOTAL sampling budget per second, not per worker: one tick samples
-	// one worker round-robin, so cpu cost stays flat no matter the worker count
+
 	interval := time.Second / time.Duration(rate)
 	deadline := time.Now().Add(time.Duration(windowSec) * time.Second)
 	cursor := 0
@@ -148,8 +146,7 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 					Value: float64(int(pct*10+0.5)) / 10,
 					Tags:  map[string]string{"owner": ow},
 				},
-				// raw per-batch sample count: percentages of one batch cannot be
-				// aggregated across a time window, counts can (sum-by-tag)
+
 				protocol.MetricPoint{
 					Name:  prefix + "owner_samples",
 					Value: float64(owners[ow]),
