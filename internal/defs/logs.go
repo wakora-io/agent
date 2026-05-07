@@ -322,6 +322,18 @@ func parseMicros(s string) (int64, bool) {
 
 var dockerLevelRe = regexp.MustCompile(`(?i)\b(fatal|panic|critical|crit|error|err|warning|warn|notice|info|debug|trace)\b`)
 
+var klogRe = regexp.MustCompile(`^([EWIF])\d{4} `)
+
+func contentLevel(msg string) string {
+	if m := klogRe.FindStringSubmatch(msg); len(m) == 2 {
+		return normalizeLevel(m[1])
+	}
+	if m := dockerLevelRe.FindStringSubmatch(msg); len(m) >= 2 && len(msg) < 4096 {
+		return normalizeLevel(m[1])
+	}
+	return ""
+}
+
 var embeddedLevelRes = []struct {
 	re    *regexp.Regexp
 	level string
@@ -421,12 +433,9 @@ func (l *LogTailer) dockerLogs(sock string, now time.Time) ([]protocol.LogLine, 
 			if ts > last {
 				last = ts
 			}
-			level := ""
-			if m := dockerLevelRe.FindStringSubmatch(msg); len(m) >= 2 && len(msg) < 4096 {
-				level = normalizeLevel(m[1])
-			}
+			level := contentLevel(msg)
 			if level == "" || level == "info" {
-				if ln.stderr {
+				if ln.stderr && !klogRe.MatchString(msg) {
 					level = "notice"
 				} else {
 					level = "info"
@@ -498,9 +507,9 @@ func (l *LogTailer) k8sPodLogs(kubeconfig string, now time.Time) ([]protocol.Log
 			if msg == "" {
 				continue
 			}
-			level := "info"
-			if m := dockerLevelRe.FindStringSubmatch(msg); len(m) >= 2 {
-				level = normalizeLevel(m[1])
+			level := contentLevel(msg)
+			if level == "" {
+				level = "info"
 			}
 			out = append(out, protocol.LogLine{Ts: ts.Unix(), Level: level, Message: key + ": " + msg})
 		}
