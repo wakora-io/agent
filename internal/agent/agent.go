@@ -1403,7 +1403,7 @@ func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe)
 var syslogSevLevel = [8]string{"error", "error", "error", "error", "warn", "notice", "info", "debug"}
 
 func (a *Agent) sendSyslogLines(conn transport.Conn, raw []defs.SyslogLine) error {
-	if len(raw) == 0 {
+	if len(raw) == 0 || a.denied("logs") {
 		return nil
 	}
 	minRank := defs.LogRank("notice")
@@ -1419,7 +1419,7 @@ func (a *Agent) sendSyslogLines(conn transport.Conn, raw []defs.SyslogLine) erro
 		}
 		lines = append(lines, protocol.LogLine{
 			Ts: s.Ts, Service: "syslog", Level: level,
-			Message: s.Source + " " + s.Message,
+			Message: defs.ScrubDefault(s.Source + " " + s.Message),
 		})
 	}
 	if len(lines) == 0 {

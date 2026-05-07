@@ -91,6 +91,13 @@ func (l *LogTailer) scrub(msg string) string {
 	return msg
 }
 
+func ScrubDefault(msg string) string {
+	for _, re := range defaultRedact {
+		msg = re.ReplaceAllString(msg, "***")
+	}
+	return msg
+}
+
 func logPriorityLevel(p string) string {
 	switch p {
 	case "0", "1", "2", "3":
