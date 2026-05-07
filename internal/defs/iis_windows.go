@@ -45,17 +45,24 @@ func runIIS(o *Outcome, service string, p protocol.Probe, timeout time.Duration)
 
 	prefix := "svc." + service + "."
 	var sites, sitesStarted float64
-	for name, state := range parseAppcmd(string(sitesOut), "SITE") {
+	for _, st := range parseIISSites(string(sitesOut)) {
 		sites++
 		up := 0.0
-		if strings.EqualFold(state, "Started") {
+		if strings.EqualFold(st.state, "Started") {
 			up = 1
 			sitesStarted++
 		}
-		tags := map[string]string{"site": name}
+		tags := map[string]string{"site": st.name}
 		o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + "site.started", Value: up, Tags: tags})
-		payload, _ := json.Marshal(map[string]string{"state": state})
-		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: name, Payload: string(payload)})
+		if len(st.hosts) > 0 {
+			for _, h := range st.hosts {
+				payload, _ := json.Marshal(map[string]string{"state": st.state, "site": st.name})
+				o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: h, Payload: string(payload)})
+			}
+		} else {
+			payload, _ := json.Marshal(map[string]string{"state": st.state})
+			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: st.name, Payload: string(payload)})
+		}
 	}
 	var pools, poolsStarted float64
 	for name, state := range parseAppcmd(string(poolsOut), "APPPOOL") {
