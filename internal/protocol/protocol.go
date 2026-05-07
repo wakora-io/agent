@@ -126,6 +126,7 @@ type DefinitionSet struct {
 	Allow        []string           `json:"allow,omitempty"`
 	RumSites     []string           `json:"rumSites,omitempty"`
 	DenyServices []string           `json:"denyServices,omitempty"`
+	LogDeep      []string           `json:"logDeep,omitempty"`
 }
 
 type RumError struct {

@@ -122,6 +122,7 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 			firstErr = err
 		}
 		for _, ln := range lines {
+			ln.Level = downgradeTransportError(ln.Level, ln.Message)
 			if logLevelRank[ln.Level] > minRank {
 				continue
 			}
@@ -205,6 +206,7 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 					level = normalizeLevel(m[1])
 				}
 			}
+			level = downgradeTransportError(level, raw)
 			if logLevelRank[level] > minRank {
 				continue
 			}
@@ -319,6 +321,41 @@ func parseMicros(s string) (int64, bool) {
 }
 
 var dockerLevelRe = regexp.MustCompile(`(?i)\b(fatal|panic|critical|crit|error|err|warning|warn|notice|info|debug|trace)\b`)
+
+var embeddedLevelRes = []struct {
+	re    *regexp.Regexp
+	level string
+}{
+	{regexp.MustCompile(`PHP (Fatal error|Parse error|Recoverable fatal error):`), "error"},
+	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?(fatal|panic|crit(?:ical)?|err(?:or)?)\b`), "error"},
+	{regexp.MustCompile(`(?i)"(?:level|severity|loglevel)"\s*:\s*"(?:fatal|panic|critical|error)"`), "error"},
+	{regexp.MustCompile(`\[(?:ERROR|FATAL|CRIT)\]`), "error"},
+	{regexp.MustCompile(`PHP Warning:`), "warn"},
+	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?warn(?:ing)?\b`), "warn"},
+	{regexp.MustCompile(`(?i)"(?:level|severity|loglevel)"\s*:\s*"warn(?:ing)?"`), "warn"},
+	{regexp.MustCompile(`\[(?:WARN|WARNING)\]`), "warn"},
+	{regexp.MustCompile(`PHP (?:Notice|Deprecated):`), "notice"},
+	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?notice\b`), "notice"},
+	{regexp.MustCompile(`\[NOTICE\]`), "notice"},
+	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?(?:info|debug|trace)\b`), "info"},
+	{regexp.MustCompile(`(?i)"(?:level|severity|loglevel)"\s*:\s*"(?:info|debug|trace)"`), "info"},
+	{regexp.MustCompile(`\[(?:INFO|DEBUG)\]`), "info"},
+}
+
+func downgradeTransportError(level, msg string) string {
+	if level != "error" {
+		return level
+	}
+	for _, m := range embeddedLevelRes {
+		if m.re.MatchString(msg) {
+			if logLevelRank[m.level] > logLevelRank["error"] {
+				return m.level
+			}
+			return level
+		}
+	}
+	return level
+}
 
 func dockerImageShort(image string) string {
 	if i := strings.LastIndex(image, "/"); i >= 0 {

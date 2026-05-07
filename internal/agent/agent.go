@@ -42,6 +42,7 @@ type Agent struct {
 	roles        map[string]string
 	deny         map[string]bool
 	denySvc      map[string]bool
+	logDeep      map[string]bool
 	active       []protocol.Definition
 	lastRun      map[string]time.Time
 	serviceFacts map[string]map[string]string
@@ -1141,6 +1142,11 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 		t = defs.NewLogTailer()
 		a.logTailers[key] = t
 	}
+	a.mu.Lock()
+	if a.logDeep[service] {
+		p.MinLevel = "debug"
+	}
+	a.mu.Unlock()
 	if p.PathFrom != "" {
 		var fromPaths []string
 		if ov, ok := a.locationOverride(service, p.PathFrom); ok {
@@ -1708,11 +1714,16 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		for _, sv := range set.DenyServices {
 			denySvc[sv] = true
 		}
+		logDeep := map[string]bool{}
+		for _, sv := range set.LogDeep {
+			logDeep[sv] = true
+		}
 		a.mu.Lock()
 		a.defs = verified
 		a.roles = set.Roles
 		a.deny = deny
 		a.denySvc = denySvc
+		a.logDeep = logDeep
 		a.mu.Unlock()
 		if len(set.Deny) > 0 {
 			log.Printf("console denies: %v", set.Deny)
