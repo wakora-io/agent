@@ -37,22 +37,46 @@ var defaultRedact = []*regexp.Regexp{
 	regexp.MustCompile(`\b(?:\d[ -]?){13,16}\b`),
 }
 
+const (
+	tailCatchup     = 1 << 20
+	floodCycleBytes = 4 << 20
+	floodStreakN    = 3
+	floodBackoff    = 5 * time.Minute
+	floodNoteEvery  = time.Hour
+)
+
+type FloodNote struct {
+	Path       string
+	BytesCycle int64
+}
+
 type LogTailer struct {
-	cursor   string
-	offsets  map[string]int64
-	seenF    map[string]bool
-	res      map[string]*regexp.Regexp
-	redact   []*regexp.Regexp
-	pattern  string
-	ctrSince map[string]int64
-	winSince map[string]int64
-	podSince map[string]string
-	futSeen  map[uint64]bool
+	cursor      string
+	offsets     map[string]int64
+	seenF       map[string]bool
+	res         map[string]*regexp.Regexp
+	redact      []*regexp.Regexp
+	pattern     string
+	ctrSince    map[string]int64
+	winSince    map[string]int64
+	podSince    map[string]string
+	futSeen     map[uint64]bool
+	floodStreak map[string]int
+	floodNext   map[string]time.Time
+	floodTold   map[string]time.Time
+	floodNotes  []FloodNote
 }
 
 func NewLogTailer() *LogTailer {
 	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, res: map[string]*regexp.Regexp{},
-		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{}}
+		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{},
+		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{}}
+}
+
+func (l *LogTailer) FloodNotes() []FloodNote {
+	out := l.floodNotes
+	l.floodNotes = nil
+	return out
 }
 
 func (l *LogTailer) compile(pattern string) *regexp.Regexp {
@@ -705,8 +729,25 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 	if size < start {
 		start = 0
 	}
-	if size-start > maxTailRead {
-		start = size - maxTailRead
+	grow := size - start
+	if grow > floodCycleBytes {
+		l.floodStreak[path]++
+	} else {
+		l.floodStreak[path] = 0
+	}
+	if l.floodStreak[path] >= floodStreakN {
+		if now.Before(l.floodNext[path]) {
+			l.offsets[path] = size
+			return nil, nil
+		}
+		l.floodNext[path] = now.Add(floodBackoff)
+		if now.Sub(l.floodTold[path]) >= floodNoteEvery {
+			l.floodTold[path] = now
+			l.floodNotes = append(l.floodNotes, FloodNote{Path: path, BytesCycle: grow})
+		}
+	}
+	if grow > maxTailRead {
+		start = size - tailCatchup
 	}
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return nil, err

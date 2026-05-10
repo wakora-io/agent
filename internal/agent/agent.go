@@ -1169,6 +1169,19 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 	if err != nil {
 		log.Printf("logs %s: %v", key, err)
 	}
+	for _, fn := range t.FloodNotes() {
+		detail, _ := json.Marshal(map[string]any{
+			"service": service, "path": fn.Path,
+			"mbPerCycle": float64(int(float64(fn.BytesCycle)/1048576*10+0.5)) / 10,
+		})
+		a.seq++
+		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+			ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
+			Kind: "log_source_flooding", Detail: string(detail), Timestamp: time.Now().Unix(),
+		}); err == nil {
+			conn.Send(msg)
+		}
+	}
 	if len(lines) == 0 {
 		return nil
 	}
