@@ -191,6 +191,9 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 	if p.ForceLevel != "" {
 		forced = normalizeLevel(p.ForceLevel)
 	}
+	if forced != "" && levelRe == nil && logLevelRank[forced] > minRank {
+		paths = nil
+	}
 	for _, path := range paths {
 		path = strings.ReplaceAll(path, "%s", "main")
 		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
