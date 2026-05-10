@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -78,31 +79,69 @@ func NewPHPSampler(pid int, versionShort string) (*PHPSampler, error) {
 	return &PHPSampler{pid: pid, eg: eg, off: off, owners: map[uint64]string{}}, nil
 }
 
+type egSym struct {
+	stValue  uint64
+	minVaddr uint64
+	ok       bool
+}
+
+var (
+	egSymMu    sync.Mutex
+	egSymCache = map[string]egSym{}
+)
+
 func executorGlobalsAddr(pid int, exe string) (uint64, error) {
-	f, err := elf.Open(fmt.Sprintf("/proc/%d/exe", pid))
+	procExe := fmt.Sprintf("/proc/%d/exe", pid)
+	key := exe
+	if st, err := os.Stat(procExe); err == nil {
+		key = fmt.Sprintf("%s|%d|%d", exe, st.Size(), st.ModTime().UnixNano())
+	}
+	egSymMu.Lock()
+	c, hit := egSymCache[key]
+	egSymMu.Unlock()
+	if !hit {
+		c = readEGSym(procExe)
+		egSymMu.Lock()
+		if len(egSymCache) > 64 {
+			egSymCache = map[string]egSym{}
+		}
+		egSymCache[key] = c
+		egSymMu.Unlock()
+	}
+	if !c.ok {
+		return 0, errors.New("executor_globals symbol not found")
+	}
+	base, err := exeBase(pid, exe)
 	if err != nil {
 		return 0, err
 	}
+	return base + (c.stValue - c.minVaddr), nil
+}
+
+func readEGSym(procExe string) egSym {
+	f, err := elf.Open(procExe)
+	if err != nil {
+		return egSym{}
+	}
 	defer f.Close()
 
-	var stValue uint64
-	found := false
+	var out egSym
 	syms, _ := f.Symbols()
 	dyn, _ := f.DynamicSymbols()
 	for _, list := range [][]elf.Symbol{syms, dyn} {
 		for _, s := range list {
 			if s.Name == "executor_globals" {
-				stValue = s.Value
-				found = true
+				out.stValue = s.Value
+				out.ok = true
 				break
 			}
 		}
-		if found {
+		if out.ok {
 			break
 		}
 	}
-	if !found {
-		return 0, errors.New("executor_globals symbol not found")
+	if !out.ok {
+		return egSym{}
 	}
 
 	var minVaddr uint64 = ^uint64(0)
@@ -114,11 +153,8 @@ func executorGlobalsAddr(pid int, exe string) (uint64, error) {
 	if minVaddr == ^uint64(0) {
 		minVaddr = 0
 	}
-	base, err := exeBase(pid, exe)
-	if err != nil {
-		return 0, err
-	}
-	return base + (stValue - minVaddr), nil
+	out.minVaddr = minVaddr
+	return out
 }
 
 func exeBase(pid int, exe string) (uint64, error) {
