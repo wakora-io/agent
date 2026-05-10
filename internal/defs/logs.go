@@ -54,6 +54,7 @@ type LogTailer struct {
 	cursor      string
 	offsets     map[string]int64
 	seenF       map[string]bool
+	utf16F      map[string]bool
 	res         map[string]*regexp.Regexp
 	redact      []*regexp.Regexp
 	pattern     string
@@ -68,7 +69,7 @@ type LogTailer struct {
 }
 
 func NewLogTailer() *LogTailer {
-	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, res: map[string]*regexp.Regexp{},
+	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, utf16F: map[string]bool{}, res: map[string]*regexp.Regexp{},
 		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{},
 		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{}}
 }
@@ -77,6 +78,15 @@ func (l *LogTailer) FloodNotes() []FloodNote {
 	out := l.floodNotes
 	l.floodNotes = nil
 	return out
+}
+
+func (l *LogTailer) bomCheck(f *os.File, path string, size int64) {
+	if _, done := l.utf16F[path]; done || size < 2 {
+		return
+	}
+	var bom [2]byte
+	n, err := f.ReadAt(bom[:], 0)
+	l.utf16F[path] = err == nil && n == 2 && bom[0] == 0xFF && bom[1] == 0xFE
 }
 
 func (l *LogTailer) compile(pattern string) *regexp.Regexp {
@@ -723,8 +733,11 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 	if !l.seenF[path] {
 		l.offsets[path] = size
 		l.seenF[path] = true
+		l.bomCheck(f, path, size)
 		return nil, nil
 	}
+	tailAdvise(f)
+	l.bomCheck(f, path, size)
 	start := l.offsets[path]
 	if size < start {
 		start = 0
@@ -756,8 +769,12 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	text := string(data)
+	if l.utf16F[path] {
+		text = decodeUTF16(data)
+	}
 	var lines []string
-	for _, t := range strings.Split(decodeMaybeUTF16(f, data), "\n") {
+	for _, t := range strings.Split(text, "\n") {
 		if t = strings.TrimSpace(t); t != "" {
 			lines = append(lines, t)
 		}
@@ -766,11 +783,7 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 	return lines, nil
 }
 
-func decodeMaybeUTF16(f *os.File, data []byte) string {
-	var bom [2]byte
-	if n, err := f.ReadAt(bom[:], 0); err != nil || n < 2 || bom[0] != 0xFF || bom[1] != 0xFE {
-		return string(data)
-	}
+func decodeUTF16(data []byte) string {
 	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xFE {
 		data = data[2:]
 	}
