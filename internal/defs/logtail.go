@@ -91,6 +91,7 @@ func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []i
 		t.offsets[path] = size
 		return nil
 	}
+	tailAdvise(f)
 	start := t.offsets[path]
 	if size < start {
 		start = 0
