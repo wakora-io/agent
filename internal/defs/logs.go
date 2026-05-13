@@ -66,12 +66,17 @@ type LogTailer struct {
 	floodNext   map[string]time.Time
 	floodTold   map[string]time.Time
 	floodNotes  []FloodNote
+	fds         *fdCache
 }
 
 func NewLogTailer() *LogTailer {
 	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, utf16F: map[string]bool{}, res: map[string]*regexp.Regexp{},
 		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{},
-		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{}}
+		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{}, fds: newFdCache()}
+}
+
+func (l *LogTailer) CloseFDs() {
+	l.fds.closeAll()
 }
 
 func (l *LogTailer) FloodNotes() []FloodNote {
@@ -228,14 +233,18 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 	if forced != "" && levelRe == nil && logLevelRank[forced] > minRank {
 		paths = nil
 	}
+	seen := map[string]bool{}
 	for _, path := range paths {
 		path = strings.ReplaceAll(path, "%s", "main")
-		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
-			path = newestLogIn(path)
-			if path == "" {
-				continue
+		if !l.fds.has(path) {
+			if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+				path = newestLogIn(path)
+				if path == "" {
+					continue
+				}
 			}
 		}
+		seen[path] = true
 		lines, err := l.tailFile(path, now)
 		if err != nil && firstErr == nil {
 			firstErr = err
@@ -259,6 +268,7 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 			})
 		}
 	}
+	l.fds.sweep(seen)
 	return out, firstErr
 }
 
@@ -720,24 +730,22 @@ func newestLogIn(dir string) string {
 }
 
 func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
-	f, err := os.Open(path)
+	h, err := l.fds.get(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	size := st.Size()
+	defer h.done()
+	size := h.st.Size()
 	if !l.seenF[path] {
 		l.offsets[path] = size
 		l.seenF[path] = true
-		l.bomCheck(f, path, size)
+		l.bomCheck(h.f, path, size)
 		return nil, nil
 	}
-	tailAdvise(f)
-	l.bomCheck(f, path, size)
+	l.bomCheck(h.f, path, size)
+	if h.rotated {
+		l.offsets[path] = 0
+	}
 	start := l.offsets[path]
 	if size < start {
 		start = 0
@@ -762,10 +770,10 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 	if grow > maxTailRead {
 		start = size - tailCatchup
 	}
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
+	if _, err := h.f.Seek(start, io.SeekStart); err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxTailRead))
+	data, err := io.ReadAll(io.LimitReader(h.f, maxTailRead))
 	if err != nil {
 		return nil, err
 	}

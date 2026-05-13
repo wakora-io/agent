@@ -3,7 +3,6 @@ package defs
 import (
 	"bufio"
 	"io"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -19,14 +18,19 @@ type Tailer struct {
 	lastAt  time.Time
 	res     map[string]*regexp.Regexp
 	srcLast map[string]time.Time
+	fds     *fdCache
 }
 
 func NewTailer(paths []string) *Tailer {
-	return &Tailer{paths: paths, offsets: map[string]int64{}, res: map[string]*regexp.Regexp{}, srcLast: map[string]time.Time{}}
+	return &Tailer{paths: paths, offsets: map[string]int64{}, res: map[string]*regexp.Regexp{}, srcLast: map[string]time.Time{}, fds: newFdCache()}
 }
 
 func (t *Tailer) Key() string {
 	return strings.Join(t.paths, ",")
+}
+
+func (t *Tailer) CloseFDs() {
+	t.fds.closeAll()
 }
 
 func (t *Tailer) compile(pattern string) *regexp.Regexp {
@@ -77,21 +81,19 @@ func (t *Tailer) Sample(counters []protocol.Counter, now time.Time) ([]protocol.
 }
 
 func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []int, sources []map[string]int, first bool) error {
-	f, err := os.Open(path)
+	h, err := t.fds.get(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	size := st.Size()
+	defer h.done()
+	size := h.st.Size()
 	if first {
 		t.offsets[path] = size
 		return nil
 	}
-	tailAdvise(f)
+	if h.rotated {
+		t.offsets[path] = 0
+	}
 	start := t.offsets[path]
 	if size < start {
 		start = 0
@@ -99,10 +101,10 @@ func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []i
 	if size-start > maxTailRead {
 		start = size - maxTailRead
 	}
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
+	if _, err := h.f.Seek(start, io.SeekStart); err != nil {
 		return err
 	}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(h.f)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for sc.Scan() {
 		line := sc.Bytes()

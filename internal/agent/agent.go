@@ -50,6 +50,7 @@ type Agent struct {
 	tailers      map[string]*defs.Tailer
 	journals     map[string]*defs.JournalTailer
 	logTailers   map[string]*defs.LogTailer
+	dropTailFDs  atomic.Bool
 	logBudget    int
 	logBudgetAt  time.Time
 	logCapped    bool
@@ -715,6 +716,14 @@ func selectDueProbes(active []protocol.Definition, lastRun map[string]time.Time,
 }
 
 func (a *Agent) runDueProbes(conn transport.Conn) error {
+	if a.dropTailFDs.Swap(false) {
+		for _, t := range a.tailers {
+			t.CloseFDs()
+		}
+		for _, lt := range a.logTailers {
+			lt.CloseFDs()
+		}
+	}
 	a.mu.Lock()
 	due := selectDueProbes(a.active, a.lastRun, time.Now())
 	a.mu.Unlock()
@@ -1058,6 +1067,9 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 	key := service + "/" + p.Name
 	t := a.tailers[key]
 	if t == nil || t.Key() != strings.Join(paths, ",") {
+		if t != nil {
+			t.CloseFDs()
+		}
 		t = defs.NewTailer(paths)
 		a.tailers[key] = t
 	}
@@ -1747,6 +1759,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 			log.Printf("console denies services: %v", set.DenyServices)
 		}
 		log.Printf("definitions received: %d verified of %d", len(verified), len(set.Definitions))
+		a.dropTailFDs.Store(true)
 		a.refreshActive()
 	case protocol.TypeCommand:
 		var c protocol.Command
