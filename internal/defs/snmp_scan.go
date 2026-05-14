@@ -88,7 +88,7 @@ func scanOne(ip string, port uint16, community string, timeout time.Duration) (d
 	}
 	defer g.Conn.Close()
 	res, err := g.Get([]string{".1.3.6.1.2.1.1.1.0", ".1.3.6.1.2.1.1.2.0"})
-	if err != nil || len(res.Variables) == 0 {
+	if err != nil || len(res.Variables) < 2 {
 		return "", "", false
 	}
 	for _, pdu := range res.Variables {

@@ -75,6 +75,9 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 	if len(factOIDs) > 0 {
 		if res, err := g.Get(factOIDs); err == nil {
 			for i, pdu := range res.Variables {
+				if i >= len(p.DeviceFacts) {
+					break
+				}
 				facts[p.DeviceFacts[i].Name] = pduString(pdu)
 			}
 		} else {
@@ -89,6 +92,9 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 	if len(getOIDs) > 0 {
 		if res, err := g.Get(getOIDs); err == nil {
 			for i, pdu := range res.Variables {
+				if i >= len(p.Get) {
+					break
+				}
 				if v, ok := pduNum(pdu); ok {
 					o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: p.Get[i].Name, Value: v, Tags: copyTags(deviceTag)})
 				}

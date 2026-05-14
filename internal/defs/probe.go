@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +21,17 @@ import (
 	"wakora.io/agent/internal/protocol"
 	"wakora.io/agent/internal/secret"
 )
+
+func recoverProbe(o *Outcome, r any) {
+	o.Check.Status = "fail"
+	o.Check.Error = fmt.Sprintf("probe panicked: %v", r)
+	o.Metrics = nil
+	o.Extra = nil
+	o.InvFacts = nil
+	o.Events = nil
+	o.ProfileStacks = nil
+	log.Printf("probe %s panicked: %v\n%s", o.Check.CheckID, r, debug.Stack())
+}
 
 type Outcome struct {
 	Check         protocol.CheckResult
@@ -49,16 +62,21 @@ func RunProbe(service string, p protocol.Probe) Outcome {
 	return RunProbeWithSecrets(service, p, func(string) (secret.Cred, bool) { return secret.Cred{}, false })
 }
 
-func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver) Outcome {
+func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver) (o Outcome) {
 	timeout := time.Duration(p.TimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	o := Outcome{Check: protocol.CheckResult{
+	o = Outcome{Check: protocol.CheckResult{
 		CheckID:   service + "/" + p.Name,
 		Kind:      p.Type,
 		Timestamp: time.Now().Unix(),
 	}}
+	defer func() {
+		if r := recover(); r != nil {
+			recoverProbe(&o, r)
+		}
+	}()
 	start := time.Now()
 	switch p.Type {
 	case "http":

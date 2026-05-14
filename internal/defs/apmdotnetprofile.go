@@ -18,12 +18,17 @@ const (
 	dotnetProfileMaxStacks = 200
 )
 
-func RunAPMDotnetProfile(service string, p protocol.Probe, stateDir string) Outcome {
-	o := Outcome{Check: protocol.CheckResult{
+func RunAPMDotnetProfile(service string, p protocol.Probe, stateDir string) (o Outcome) {
+	o = Outcome{Check: protocol.CheckResult{
 		CheckID:   service + "/" + p.Name,
 		Kind:      p.Type,
 		Timestamp: time.Now().Unix(),
 	}}
+	defer func() {
+		if r := recover(); r != nil {
+			recoverProbe(&o, r)
+		}
+	}()
 	start := time.Now()
 	runAPMDotnetProfile(&o, service, p, stateDir)
 	o.Check.LatencyMs = float64(time.Since(start).Microseconds()) / 1000
