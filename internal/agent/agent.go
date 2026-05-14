@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"sort"
 	"strconv"
@@ -51,6 +52,8 @@ type Agent struct {
 	journals     map[string]*defs.JournalTailer
 	logTailers   map[string]*defs.LogTailer
 	dropTailFDs  atomic.Bool
+	lastTailSig  uint64
+	haveTailSig  bool
 	logBudget    int
 	logBudgetAt  time.Time
 	logCapped    bool
@@ -1716,6 +1719,26 @@ func (a *Agent) mergeServiceFacts(service string, facts map[string]string) (bool
 	return changed, integrity
 }
 
+func tailConfigSig(defsList []protocol.Definition, deny, denySvc, logDeep map[string]bool) uint64 {
+	items := make([]string, 0, len(defsList))
+	for _, d := range defsList {
+		b, _ := json.Marshal(d)
+		items = append(items, string(b))
+	}
+	sort.Strings(items)
+	h := fnv.New64a()
+	for _, it := range items {
+		h.Write([]byte(it))
+		h.Write([]byte{0})
+	}
+	for _, m := range []map[string]bool{deny, denySvc, logDeep} {
+		b, _ := json.Marshal(m)
+		h.Write(b)
+		h.Write([]byte{0})
+	}
+	return h.Sum64()
+}
+
 func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {
 	switch m.Type {
 	case protocol.TypeAck:
@@ -1745,7 +1768,11 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		for _, sv := range set.LogDeep {
 			logDeep[sv] = true
 		}
+		sig := tailConfigSig(verified, deny, denySvc, logDeep)
 		a.mu.Lock()
+		tailChanged := !a.haveTailSig || a.lastTailSig != sig
+		a.lastTailSig = sig
+		a.haveTailSig = true
 		a.defs = verified
 		a.roles = set.Roles
 		a.deny = deny
@@ -1759,7 +1786,9 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 			log.Printf("console denies services: %v", set.DenyServices)
 		}
 		log.Printf("definitions received: %d verified of %d", len(verified), len(set.Definitions))
-		a.dropTailFDs.Store(true)
+		if tailChanged {
+			a.dropTailFDs.Store(true)
+		}
 		a.refreshActive()
 	case protocol.TypeCommand:
 		var c protocol.Command
