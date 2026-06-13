@@ -214,7 +214,15 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	for i, h := range hosts {
 		r := results[i]
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
-		pm := map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || r.hasSSL}
+		sniffKey := service + "|" + key
+		if probed[i] {
+			vhostSniffedSSL.Store(sniffKey, r.hasSSL)
+		}
+		sniffed := false
+		if v, ok := vhostSniffedSSL.Load(sniffKey); ok {
+			sniffed, _ = v.(bool)
+		}
+		pm := map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || sniffed}
 		if info, ok := poolMinor[h.Name]; ok {
 			if info.Minor != "" {
 				pm["php"] = info.Minor
@@ -509,6 +517,8 @@ const (
 	vhostMaxSpacing = 5 * time.Second
 	vhostCacheMax   = 30 * time.Minute
 )
+
+var vhostSniffedSSL sync.Map
 
 type vhostParseEntry struct {
 	sig   string

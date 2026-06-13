@@ -137,21 +137,29 @@ func listenKeys() []string {
 	return keys
 }
 
-func processes() []Fact {
+func procPIDs() []int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
-	agg := map[string]*procInfo{}
+	pids := make([]int, 0, len(entries))
 	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
+		if pid, err := strconv.Atoi(e.Name()); err == nil {
+			pids = append(pids, pid)
+		}
+	}
+	sort.Ints(pids)
+	return pids
+}
+
+func processes() []Fact {
+	agg := map[string]*procInfo{}
+	for _, pid := range procPIDs() {
+		dir := strconv.Itoa(pid)
+		if cg, err := os.ReadFile(filepath.Join("/proc", dir, "cgroup")); err == nil && containerCgroup(string(cg)) {
 			continue
 		}
-		if cg, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cgroup")); err == nil && containerCgroup(string(cg)) {
-			continue
-		}
-		comm, err := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
+		comm, err := os.ReadFile(filepath.Join("/proc", dir, "comm"))
 		if err != nil {
 			continue
 		}
@@ -163,12 +171,12 @@ func processes() []Fact {
 			p.Count++
 			continue
 		}
-		cmdRaw, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		cmdRaw, _ := os.ReadFile(filepath.Join("/proc", dir, "cmdline"))
 		cmd := strings.TrimSpace(strings.ReplaceAll(string(cmdRaw), "\x00", " "))
 		if len(cmd) > 300 {
 			cmd = cmd[:300]
 		}
-		exe, _ := os.Readlink(filepath.Join("/proc", e.Name(), "exe"))
+		exe, _ := os.Readlink(filepath.Join("/proc", dir, "exe"))
 		if cmd == "" && exe == "" {
 			continue
 		}
@@ -255,21 +263,14 @@ func decodeAddr(hexAddr string) string {
 
 func socketInodes() map[string]int {
 	out := map[string]int{}
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		fds, err := os.ReadDir(filepath.Join("/proc", e.Name(), "fd"))
+	for _, pid := range procPIDs() {
+		dir := strconv.Itoa(pid)
+		fds, err := os.ReadDir(filepath.Join("/proc", dir, "fd"))
 		if err != nil {
 			continue
 		}
 		for _, fd := range fds {
-			link, err := os.Readlink(filepath.Join("/proc", e.Name(), "fd", fd.Name()))
+			link, err := os.Readlink(filepath.Join("/proc", dir, "fd", fd.Name()))
 			if err != nil || !strings.HasPrefix(link, "socket:[") {
 				continue
 			}

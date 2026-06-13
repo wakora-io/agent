@@ -3,6 +3,7 @@ package defs
 import (
 	"context"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +35,13 @@ func runVirsh(o *Outcome, service string, p protocol.Probe, timeout time.Duratio
 
 	prefix := "svc." + service + "."
 	var total, running float64
-	for name, state := range states {
+	names := make([]string, 0, len(states))
+	for name := range states {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		state := states[name]
 		total++
 		up := 0.0
 		if state == "running" {

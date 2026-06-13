@@ -3,6 +3,7 @@ package defs
 import (
 	"encoding/json"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +69,7 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 		}(ip)
 	}
 	wg.Wait()
+	sort.Slice(o.InvFacts, func(i, j int) bool { return o.InvFacts[i].Key < o.InvFacts[j].Key })
 
 	o.Metrics = append(o.Metrics, protocol.MetricPoint{
 		Name: "dev.scan.responders", Value: float64(found), Tags: map[string]string{"range": o.Check.Target},

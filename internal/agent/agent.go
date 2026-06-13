@@ -376,7 +376,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					return err
 				}
 				if ch {
-					if err := a.sendDiscovery(conn); err != nil {
+					if err := a.sendFacts(conn); err != nil {
 						return err
 					}
 				}
@@ -512,6 +512,13 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	a.facts = facts
 	a.mu.Unlock()
 	a.refreshActive()
+	return a.sendFacts(conn)
+}
+
+func (a *Agent) sendFacts(conn transport.Conn) error {
+	a.mu.Lock()
+	facts := a.facts
+	a.mu.Unlock()
 
 	pf := make([]protocol.Fact, len(facts))
 	for i, f := range facts {
@@ -842,7 +849,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 		}
 	}
 	if factsChanged {
-		return a.sendDiscovery(conn)
+		return a.sendFacts(conn)
 	}
 	return nil
 }
@@ -927,8 +934,10 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 			return false, err
 		}
 	}
-	if a.setProbeFacts(probeKey, o.InvFacts) {
-		factsChanged = true
+	if o.Check.Status == "ok" || len(o.InvFacts) > 0 {
+		if a.setProbeFacts(probeKey, o.InvFacts) {
+			factsChanged = true
+		}
 	}
 	for _, ev := range o.Events {
 		ev.ServerID = a.cfg.ServerID
