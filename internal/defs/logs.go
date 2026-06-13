@@ -1,8 +1,6 @@
 package defs
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -51,7 +48,7 @@ type FloodNote struct {
 }
 
 type LogTailer struct {
-	cursor      string
+	key         string
 	offsets     map[string]int64
 	seenF       map[string]bool
 	utf16F      map[string]bool
@@ -69,8 +66,8 @@ type LogTailer struct {
 	fds         *fdCache
 }
 
-func NewLogTailer() *LogTailer {
-	return &LogTailer{offsets: map[string]int64{}, seenF: map[string]bool{}, utf16F: map[string]bool{}, res: map[string]*regexp.Regexp{},
+func NewLogTailer(key string) *LogTailer {
+	return &LogTailer{key: key, offsets: map[string]int64{}, seenF: map[string]bool{}, utf16F: map[string]bool{}, res: map[string]*regexp.Regexp{},
 		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{},
 		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{}, fds: newFdCache()}
 }
@@ -137,22 +134,6 @@ func ScrubDefault(msg string) string {
 	return msg
 }
 
-func logPriorityLevel(p string) string {
-	switch p {
-	case "0", "1", "2", "3":
-		return "error"
-	case "4":
-		return "warn"
-	case "5":
-		return "notice"
-	case "6":
-		return "info"
-	case "7":
-		return "debug"
-	}
-	return "info"
-}
-
 func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]protocol.LogLine, error) {
 	l.setRedact(p.Redact)
 	minRank, ok := logLevelRank[strings.ToLower(p.MinLevel)]
@@ -163,7 +144,7 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 	var out []protocol.LogLine
 	var firstErr error
 	if len(p.Idents) > 0 {
-		lines, err := l.journal(p.Idents, now)
+		lines, err := l.journal(p.Idents)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -286,92 +267,16 @@ func normalizeLevel(s string) string {
 	return "info"
 }
 
-func (l *LogTailer) journal(idents []string, now time.Time) ([]protocol.LogLine, error) {
-	args := []string{"-q", "--no-pager", "-o", "json", "--show-cursor"}
-	matched := 0
-	for _, id := range idents {
-		if !identRe.MatchString(id) {
-			continue
-		}
-		args = append(args, "SYSLOG_IDENTIFIER="+id)
-		matched++
-	}
-	if matched == 0 {
-		return nil, nil
-	}
-	first := l.cursor == ""
-	if first {
-		args = append(args, "-n", "1")
-	} else {
-		args = append(args, "--after-cursor", l.cursor, "-n", "5000")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "journalctl", args...).Output()
+func (l *LogTailer) journal(idents []string) ([]protocol.LogLine, error) {
+	entries, err := journals.drain(l.key, idents)
 	if err != nil {
-		l.cursor = ""
 		return nil, err
 	}
-	var lines []protocol.LogLine
-	sc := bufio.NewScanner(bytes.NewReader(out))
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if bytes.HasPrefix(line, []byte("-- cursor: ")) {
-			l.cursor = strings.TrimSpace(string(line[len("-- cursor: "):]))
-			continue
-		}
-		if first {
-			continue
-		}
-		var e struct {
-			Priority string          `json:"PRIORITY"`
-			Message  json.RawMessage `json:"MESSAGE"`
-			Realtime string          `json:"__REALTIME_TIMESTAMP"`
-		}
-		if json.Unmarshal(line, &e) != nil {
-			continue
-		}
-		msg := decodeJournalMessage(e.Message)
-		if msg == "" {
-			continue
-		}
-		ts := now.Unix()
-		if us, ok := parseMicros(e.Realtime); ok {
-			ts = us / 1e6
-		}
-		lines = append(lines, protocol.LogLine{Ts: ts, Level: logPriorityLevel(e.Priority), Message: msg})
+	lines := make([]protocol.LogLine, 0, len(entries))
+	for _, e := range entries {
+		lines = append(lines, protocol.LogLine{Ts: e.ts, Level: e.level, Message: e.msg})
 	}
 	return lines, nil
-}
-
-func decodeJournalMessage(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var b []byte
-	if json.Unmarshal(raw, &b) == nil {
-		return string(b)
-	}
-	return ""
-}
-
-func parseMicros(s string) (int64, bool) {
-	if s == "" {
-		return 0, false
-	}
-	var n int64
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, false
-		}
-		n = n*10 + int64(c-'0')
-	}
-	return n, true
 }
 
 var dockerLevelRe = regexp.MustCompile(`(?i)\b(fatal|panic|critical|crit|error|err|warning|warn|notice|info|debug|trace)\b`)

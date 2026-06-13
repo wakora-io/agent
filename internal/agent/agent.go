@@ -719,6 +719,7 @@ func selectDueProbes(active []protocol.Definition, lastRun map[string]time.Time,
 }
 
 func (a *Agent) runDueProbes(conn transport.Conn) error {
+	defs.JournalCycle()
 	if a.dropTailFDs.Swap(false) {
 		for _, t := range a.tailers {
 			t.CloseFDs()
@@ -1126,7 +1127,7 @@ func (a *Agent) runJournal(conn transport.Conn, service string, p protocol.Probe
 	key := service + "/" + p.Name
 	j := a.journals[key]
 	if j == nil {
-		j = defs.NewJournalTailer()
+		j = defs.NewJournalTailer(key)
 		a.journals[key] = j
 	}
 	check := protocol.CheckResult{
@@ -1156,7 +1157,7 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 	key := service + "/" + p.Name
 	t := a.logTailers[key]
 	if t == nil {
-		t = defs.NewLogTailer()
+		t = defs.NewLogTailer(key)
 		a.logTailers[key] = t
 	}
 	a.mu.Lock()

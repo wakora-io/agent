@@ -1,15 +1,9 @@
 package defs
 
 import (
-	"bufio"
-	"bytes"
-	"context"
 	"encoding/json"
-	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"wakora.io/agent/internal/protocol"
@@ -20,14 +14,14 @@ var identRe = regexp.MustCompile(`^[A-Za-z0-9_.@/-]+$`)
 const srcCooldown = 30 * time.Minute
 
 type JournalTailer struct {
-	cursor  string
+	key     string
 	lastAt  time.Time
 	res     map[string]*regexp.Regexp
 	srcLast map[string]time.Time
 }
 
-func NewJournalTailer() *JournalTailer {
-	return &JournalTailer{res: map[string]*regexp.Regexp{}, srcLast: map[string]time.Time{}}
+func NewJournalTailer(key string) *JournalTailer {
+	return &JournalTailer{key: key, res: map[string]*regexp.Regexp{}, srcLast: map[string]time.Time{}}
 }
 
 func (j *JournalTailer) compile(pattern string) *regexp.Regexp {
@@ -46,37 +40,15 @@ func (j *JournalTailer) compile(pattern string) *regexp.Regexp {
 }
 
 func (j *JournalTailer) Sample(idents []string, counters []protocol.Counter, now time.Time) ([]protocol.MetricPoint, []protocol.AgentEvent, error) {
-	args := []string{"-q", "--no-pager", "-o", "cat", "--show-cursor"}
-	for _, id := range idents {
-		if !identRe.MatchString(id) {
-			return nil, nil, fmt.Errorf("bad syslog identifier %q", id)
-		}
-		args = append(args, "SYSLOG_IDENTIFIER="+id)
-	}
-	first := j.cursor == ""
-	if first {
-		args = append(args, "-n", "1")
-	} else {
-		args = append(args, "--after-cursor", j.cursor, "-n", "20000")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "journalctl", args...).CombinedOutput()
+	entries, err := journals.drain(j.key, idents)
 	if err != nil {
-		j.cursor = ""
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			msg = err.Error()
-		}
-		if len(msg) > 200 {
-			msg = msg[:200]
-		}
-		return nil, nil, fmt.Errorf("journalctl: %s", msg)
+		return nil, nil, err
 	}
+	first := j.lastAt.IsZero()
 	counts := make([]int, len(counters))
 	sources := make([]map[string]int, len(counters))
-	if cur := j.consume(out, counters, counts, sources, first); cur != "" {
-		j.cursor = cur
+	for _, e := range entries {
+		j.count([]byte(e.msg), counters, counts, sources)
 	}
 	if first {
 		j.lastAt = now
@@ -137,35 +109,25 @@ func foldSourceEvent(c protocol.Counter, src map[string]int, now time.Time, srcL
 	return protocol.AgentEvent{Kind: c.Event, Detail: string(detail), Timestamp: now.Unix()}, true
 }
 
-func (j *JournalTailer) consume(out []byte, counters []protocol.Counter, counts []int, sources []map[string]int, skipLines bool) string {
-	cursor := ""
-	sc := bufio.NewScanner(bytes.NewReader(out))
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if bytes.HasPrefix(line, []byte("-- cursor: ")) {
-			cursor = strings.TrimSpace(string(line[len("-- cursor: "):]))
+func (j *JournalTailer) count(line []byte, counters []protocol.Counter, counts []int, sources []map[string]int) {
+	for i, c := range counters {
+		re := j.compile(c.Regex)
+		if re != nil && !re.Match(line) {
 			continue
 		}
-		if skipLines {
+		counts[i]++
+		if c.Capture == "" {
 			continue
 		}
-		for i, c := range counters {
-			re := j.compile(c.Regex)
-			if re == nil || re.Match(line) {
-				counts[i]++
-				if c.Capture != "" {
-					if cre := j.compile(c.Capture); cre != nil {
-						if m := cre.FindSubmatch(line); len(m) >= 2 {
-							if sources[i] == nil {
-								sources[i] = map[string]int{}
-							}
-							sources[i][string(m[1])]++
-						}
-					}
-				}
+		cre := j.compile(c.Capture)
+		if cre == nil {
+			continue
+		}
+		if m := cre.FindSubmatch(line); len(m) >= 2 {
+			if sources[i] == nil {
+				sources[i] = map[string]int{}
 			}
+			sources[i][string(m[1])]++
 		}
 	}
-	return cursor
 }
