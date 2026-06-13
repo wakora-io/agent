@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"wakora.io/agent/internal/apm"
@@ -300,33 +301,81 @@ func runningFPMBinaries() []string {
 	return bins
 }
 
-func fpmTarget(bin, module string, opts map[string]string, apmDir string) (*sapiTarget, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-	defer cancel()
-	info, err := exec.CommandContext(ctx, bin, "-i").Output()
-	if err != nil {
-		return nil, "php-fpm -i: " + err.Error()
+type fpmBinaryState struct {
+	binSig     string
+	rt         apm.PHPRuntime
+	poolDir    string
+	module     string
+	scanSig    string
+	loaded     bool
+	modOk      bool
+	apmDir     string
+	poolSig    string
+	restricted int
+	total      int
+}
+
+var (
+	fpmStateMu sync.Mutex
+	fpmStates  = map[string]*fpmBinaryState{}
+)
+
+func fpmBinaryProbe(bin, module, apmDir string) (*fpmBinaryState, string) {
+	binSig := fileSig(bin)
+	fpmStateMu.Lock()
+	defer fpmStateMu.Unlock()
+	st := fpmStates[bin]
+	if st == nil || st.binSig != binSig {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		info, err := exec.CommandContext(ctx, bin, "-i").Output()
+		cancel()
+		if err != nil {
+			return nil, "php-fpm -i: " + err.Error()
+		}
+		rt := apm.ParsePHPInfo(string(info))
+		rt.Arch = apm.Arch()
+		rt.Libc = detectLibc(bin)
+		st = &fpmBinaryState{binSig: binSig, rt: rt, poolDir: fpmPoolDir(rt.IniDir)}
+		fpmStates[bin] = st
 	}
-	rt := apm.ParsePHPInfo(string(info))
-	rt.Arch = apm.Arch()
-	rt.Libc = detectLibc(bin)
-	modules, merr := exec.CommandContext(ctx, bin, "-m").Output()
-	poolDir := fpmPoolDir(rt.IniDir)
-	restricted, total := openBasedirPools(poolDir, rt.IniDir, apmDir)
+	scanSig := dirSig(st.rt.ScanDir, ".ini")
+	if st.rt.ScanDir == "" || st.module != module || st.scanSig != scanSig {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		modules, merr := exec.CommandContext(ctx, bin, "-m").Output()
+		cancel()
+		st.modOk = merr == nil
+		st.loaded = merr == nil && apm.ModuleLoaded(string(modules), module)
+		st.module = module
+		st.scanSig = scanSig
+	}
+	poolSig := dirSig(st.poolDir, ".conf") + "|" + fileSig(filepath.Join(st.rt.IniDir, "php-fpm.conf"))
+	if st.apmDir != apmDir || st.poolSig != poolSig {
+		st.restricted, st.total = openBasedirPools(st.poolDir, st.rt.IniDir, apmDir)
+		st.apmDir = apmDir
+		st.poolSig = poolSig
+	}
+	return st, ""
+}
+
+func fpmTarget(bin, module string, opts map[string]string, apmDir string) (*sapiTarget, string) {
+	st, errmsg := fpmBinaryProbe(bin, module, apmDir)
+	if st == nil {
+		return nil, errmsg
+	}
 	unit := fpmUnitFor(bin, opts)
 	return &sapiTarget{
-		rt:           rt,
-		loaded:       merr == nil && apm.ModuleLoaded(string(modules), module),
-		modOk:        merr == nil,
-		iniDir:       rt.ScanDir,
+		rt:           st.rt,
+		loaded:       st.loaded,
+		modOk:        st.modOk,
+		iniDir:       st.rt.ScanDir,
 		reloadCmd:    reloadCommand(initSystem(), unit),
 		unit:         unit,
 		testCmd:      bin + " -t",
 		checkName:    bin,
 		preBin:       bin,
-		poolDir:      poolDir,
-		basedirPools: restricted,
-		basedirTotal: total,
+		poolDir:      st.poolDir,
+		basedirPools: st.restricted,
+		basedirTotal: st.total,
 	}, ""
 }
 
