@@ -83,7 +83,7 @@ spec:
           resources:
             limits:
               cpu: 300m
-              memory: 256Mi
+              memory: 1Gi
           volumeMounts:
             - name: config
               mountPath: /etc/wakora
