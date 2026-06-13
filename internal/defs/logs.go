@@ -47,6 +47,13 @@ type FloodNote struct {
 	BytesCycle int64
 }
 
+const dirResolveTTL = 5 * time.Minute
+
+type dirTarget struct {
+	file string
+	when time.Time
+}
+
 type LogTailer struct {
 	key         string
 	offsets     map[string]int64
@@ -63,13 +70,15 @@ type LogTailer struct {
 	floodNext   map[string]time.Time
 	floodTold   map[string]time.Time
 	floodNotes  []FloodNote
+	dirF        map[string]dirTarget
 	fds         *fdCache
 }
 
 func NewLogTailer(key string) *LogTailer {
 	return &LogTailer{key: key, offsets: map[string]int64{}, seenF: map[string]bool{}, utf16F: map[string]bool{}, res: map[string]*regexp.Regexp{},
 		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{},
-		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{}, fds: newFdCache()}
+		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{},
+		dirF: map[string]dirTarget{}, fds: newFdCache()}
 }
 
 func (l *LogTailer) CloseFDs() {
@@ -217,13 +226,11 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 	seen := map[string]bool{}
 	for _, path := range paths {
 		path = strings.ReplaceAll(path, "%s", "main")
-		if !l.fds.has(path) {
-			if fi, err := os.Stat(path); err == nil && fi.IsDir() {
-				path = newestLogIn(path)
-				if path == "" {
-					continue
-				}
+		if resolved, ok := l.resolveDir(path, now); ok {
+			if resolved == "" {
+				continue
 			}
+			path = resolved
 		}
 		seen[path] = true
 		lines, err := l.tailFile(path, now)
@@ -609,6 +616,22 @@ func firstField(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+func (l *LogTailer) resolveDir(path string, now time.Time) (string, bool) {
+	if e, ok := l.dirF[path]; ok {
+		if now.Sub(e.when) < dirResolveTTL {
+			return e.file, true
+		}
+		delete(l.dirF, path)
+	}
+	fi, err := os.Stat(path)
+	if err != nil || !fi.IsDir() {
+		return "", false
+	}
+	file := newestLogIn(path)
+	l.dirF[path] = dirTarget{file: file, when: now}
+	return file, true
 }
 
 func newestLogIn(dir string) string {

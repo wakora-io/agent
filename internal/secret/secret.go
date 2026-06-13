@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 var localSeed string
@@ -47,14 +48,22 @@ func machineKey(withSeed bool) []byte {
 	return sum[:]
 }
 
+var machineIDOnce sync.Once
+var machineID string
+
 func MachineID() string {
-	if id := platformMachineID(); id != "" {
-		return id
-	}
-	if h, err := os.Hostname(); err == nil {
-		return h
-	}
-	return "wakora-fallback"
+	machineIDOnce.Do(func() {
+		if id := platformMachineID(); id != "" {
+			machineID = id
+			return
+		}
+		if h, err := os.Hostname(); err == nil {
+			machineID = h
+			return
+		}
+		machineID = "wakora-fallback"
+	})
+	return machineID
 }
 
 func Encrypt(plain string) (string, error) {
