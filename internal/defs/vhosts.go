@@ -555,7 +555,33 @@ func (c *vhostParseCacheSet) put(service, sig string, hosts []vhost) {
 	c.mu.Unlock()
 }
 
+type treeSigEntry struct {
+	sig  string
+	when time.Time
+}
+
+var (
+	treeSigMu    sync.Mutex
+	treeSigCache = map[string]treeSigEntry{}
+)
+
+const treeSigTTL = 60 * time.Second
+
 func configTreeSig(root string) string {
+	treeSigMu.Lock()
+	if e, ok := treeSigCache[root]; ok && time.Since(e.when) < treeSigTTL {
+		treeSigMu.Unlock()
+		return e.sig
+	}
+	treeSigMu.Unlock()
+	sig := walkTreeSig(root)
+	treeSigMu.Lock()
+	treeSigCache[root] = treeSigEntry{sig: sig, when: time.Now()}
+	treeSigMu.Unlock()
+	return sig
+}
+
+func walkTreeSig(root string) string {
 	h := sha256.New()
 	found := false
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -871,18 +897,67 @@ type fpmPoolInfo struct {
 	WP      bool
 }
 
+type wpAtEntry struct {
+	present bool
+	when    time.Time
+}
+
+var (
+	wpAtMu    sync.Mutex
+	wpAtCache = map[string]wpAtEntry{}
+)
+
+const wpAtTTL = 30 * time.Minute
+
 func wpAt(root string) bool {
 	if root == "" {
 		return false
 	}
+	wpAtMu.Lock()
+	if e, ok := wpAtCache[root]; ok && time.Since(e.when) < wpAtTTL {
+		wpAtMu.Unlock()
+		return e.present
+	}
+	wpAtMu.Unlock()
 	_, err := os.Stat(filepath.Join(root, "wp-settings.php"))
+	wpAtMu.Lock()
+	wpAtCache[root] = wpAtEntry{present: err == nil, when: time.Now()}
+	wpAtMu.Unlock()
 	return err == nil
 }
 
+var defaultPoolGlobs = []string{"/etc/php/*/fpm/pool.d/*.conf", "/etc/opt/remi/php*/php-fpm.d/*.conf"}
+
+type poolScanEntry struct {
+	sig   string
+	pools map[string]fpmPoolInfo
+}
+
+var (
+	poolScanMu    sync.Mutex
+	poolScanCache = map[string]poolScanEntry{}
+)
+
 func fpmListenPools(globs ...string) map[string]fpmPoolInfo {
 	if len(globs) == 0 {
-		globs = []string{"/etc/php/*/fpm/pool.d/*.conf", "/etc/opt/remi/php*/php-fpm.d/*.conf"}
+		globs = defaultPoolGlobs
 	}
+	cacheKey := strings.Join(globs, "\x00")
+	sig := globSig(globs...)
+	poolScanMu.Lock()
+	if e, ok := poolScanCache[cacheKey]; ok && e.sig == sig {
+		poolScanMu.Unlock()
+		return e.pools
+	}
+	poolScanMu.Unlock()
+	pools := scanFPMListenPools(globs)
+	poolScanMu.Lock()
+	poolScanCache[cacheKey] = poolScanEntry{sig: sig, pools: pools}
+	poolScanMu.Unlock()
+	return pools
+}
+
+func scanFPMListenPools(globs []string) map[string]fpmPoolInfo {
 	out := map[string]fpmPoolInfo{}
 	for _, g := range globs {
 		files, _ := filepath.Glob(g)
