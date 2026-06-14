@@ -313,6 +313,7 @@ var embeddedLevelRes = []struct {
 	{regexp.MustCompile(`(?i)"(?:level|severity|loglevel)"\s*:\s*"warn(?:ing)?"`), "warn"},
 	{regexp.MustCompile(`\[(?:WARN|WARNING)\]`), "warn"},
 	{regexp.MustCompile(`PHP (?:Notice|Deprecated):`), "notice"},
+	{regexp.MustCompile(`Primary script unknown`), "notice"},
 	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?notice\b`), "notice"},
 	{regexp.MustCompile(`\[NOTICE\]`), "notice"},
 	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?(?:info|debug|trace)\b`), "info"},
