@@ -413,9 +413,21 @@ func vhostDNSSweep(names []string, perLookup time.Duration) map[string]dnsSweepR
 var publicIP atomic.Value
 
 func SetPublicIP(ip string) {
-	if net.ParseIP(ip) != nil {
-		publicIP.Store(ip)
+	p := net.ParseIP(ip)
+	if p == nil || !routablePublic(p) {
+		return
 	}
+	publicIP.Store(ip)
+}
+
+func routablePublic(p net.IP) bool {
+	if p.IsUnspecified() || p.IsLoopback() || p.IsPrivate() || p.IsLinkLocalUnicast() || p.IsLinkLocalMulticast() || p.IsMulticast() {
+		return false
+	}
+	if v4 := p.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+		return false
+	}
+	return true
 }
 
 func hostAddrSet() map[string]bool {
