@@ -1151,10 +1151,7 @@ func parseNginxVhosts(out []byte) []vhost {
 			target = redir
 		}
 		for i, n := range names {
-			r := target
-			if r == nginxRedirSelf {
-				r = n
-			}
+			r := strings.ReplaceAll(target, nginxRedirSelf, n)
 			for _, l := range listens {
 				hosts = append(hosts, vhost{Name: n, Port: l.Port, SSL: l.SSL, Primary: i == 0, Redirect: r})
 			}
@@ -1269,6 +1266,8 @@ func applyNginxDirective(stmt string, names *[]string, listens *[]vhost, redir *
 	}
 }
 
+var nginxHostPrefixRe = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*\.$`)
+
 func redirectTargetHost(target string) (string, bool) {
 	rest := ""
 	for _, scheme := range []string{"https://", "http://", "$scheme://"} {
@@ -1280,17 +1279,36 @@ func redirectTargetHost(target string) (string, bool) {
 	if rest == "" {
 		return "", false
 	}
-	if strings.HasPrefix(rest, "$host") || strings.HasPrefix(rest, "$server_name") {
-		return nginxRedirSelf, true
-	}
-	if i := strings.IndexAny(rest, "/$:?"); i >= 0 {
+	if i := strings.IndexAny(rest, "/?"); i >= 0 {
 		rest = rest[:i]
 	}
-	rest = strings.ToLower(strings.TrimSuffix(rest, "."))
-	if rest == "" || strings.ContainsAny(rest, "{}*") {
+	host := strings.ToLower(rest)
+	for _, v := range []string{"$host", "$server_name"} {
+		i := strings.Index(host, v)
+		if i < 0 {
+			continue
+		}
+		tail := host[i+len(v):]
+		if tail != "" && tail[0] != '$' && tail[0] != ':' {
+			return "", false
+		}
+		prefix := host[:i]
+		if prefix == "" {
+			return nginxRedirSelf, true
+		}
+		if nginxHostPrefixRe.MatchString(prefix) {
+			return prefix + nginxRedirSelf, true
+		}
 		return "", false
 	}
-	return rest, true
+	if i := strings.IndexAny(host, "$:"); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || strings.ContainsAny(host, "{}*") {
+		return "", false
+	}
+	return host, true
 }
 
 var (
