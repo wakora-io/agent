@@ -194,6 +194,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	}
 	dnsAlive := vhostDNSSweep(dnsNames, 3*time.Second)
 	localAddrs := hostAddrSet()
+	cdn := cdnNets(p.Options["cdn"])
 	domInfo := vhostDomainScan(dnsNames, 5*time.Second)
 
 	dnsEmitted := map[string]bool{}
@@ -269,7 +270,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 						Tags: map[string]string{"vhost": h.Name},
 					})
 				}
-				if off, ok := vhostOffloaded(res, localAddrs); ok {
+				if off, ok := vhostOffloaded(res, localAddrs, cdn); ok {
 					ov := 0.0
 					if off {
 						ov = 1
@@ -451,17 +452,51 @@ func hostAddrSet() map[string]bool {
 	return set
 }
 
-func vhostOffloaded(res dnsSweepResult, local map[string]bool) (bool, bool) {
-	if !res.alive || len(res.ips) == 0 {
-		return false, false
+var cdnNetsCache struct {
+	raw  string
+	nets []*net.IPNet
+}
+
+func cdnNets(raw string) []*net.IPNet {
+	if raw == "" {
+		return nil
 	}
-	if p, ok := publicIP.Load().(string); !ok || p == "" {
+	if cdnNetsCache.raw == raw {
+		return cdnNetsCache.nets
+	}
+	var nets []*net.IPNet
+	for _, f := range strings.Fields(raw) {
+		if _, n, err := net.ParseCIDR(f); err == nil {
+			nets = append(nets, n)
+		}
+	}
+	cdnNetsCache.raw = raw
+	cdnNetsCache.nets = nets
+	return nets
+}
+
+func vhostOffloaded(res dnsSweepResult, local map[string]bool, cdn []*net.IPNet) (bool, bool) {
+	if !res.alive || len(res.ips) == 0 {
 		return false, false
 	}
 	for _, ip := range res.ips {
 		if p := net.ParseIP(ip); p != nil && (p.IsLoopback() || local[p.String()]) {
 			return false, true
 		}
+	}
+	for _, ip := range res.ips {
+		p := net.ParseIP(ip)
+		if p == nil {
+			continue
+		}
+		for _, n := range cdn {
+			if n.Contains(p) {
+				return true, true
+			}
+		}
+	}
+	if p, ok := publicIP.Load().(string); !ok || p == "" {
+		return false, false
 	}
 	return true, true
 }
