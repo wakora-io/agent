@@ -195,6 +195,16 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	dnsAlive := vhostDNSSweep(dnsNames, 3*time.Second)
 	localAddrs := hostAddrSet()
 	cdn := cdnNets(p.Options["cdn"])
+	cnameCDN := map[string]bool{}
+	if suffixes := cdnNameSuffixes(p.Options["cdnNames"]); len(suffixes) > 0 {
+		var pending []string
+		for name, res := range dnsAlive {
+			if _, known := vhostOffloaded(res, localAddrs, cdn); !known && res.alive {
+				pending = append(pending, name)
+			}
+		}
+		cnameCDN = vhostCNAMESweep(pending, suffixes, 3*time.Second)
+	}
 	domInfo := vhostDomainScan(dnsNames, 5*time.Second)
 
 	dnsEmitted := map[string]bool{}
@@ -270,7 +280,11 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 						Tags: map[string]string{"vhost": h.Name},
 					})
 				}
-				if off, ok := vhostOffloaded(res, localAddrs, cdn); ok {
+				off, ok := vhostOffloaded(res, localAddrs, cdn)
+				if !ok && cnameCDN[dnsProbeName(h.Name)] {
+					off, ok = true, true
+				}
+				if ok {
 					ov := 0.0
 					if off {
 						ov = 1
@@ -348,6 +362,58 @@ func dnsProbeName(raw string) string {
 var vhostLookupHost = func(ctx context.Context, name string) ([]string, error) {
 
 	return net.DefaultResolver.LookupHost(ctx, name+".")
+}
+
+var vhostLookupCNAME = func(ctx context.Context, name string) (string, error) {
+	return net.DefaultResolver.LookupCNAME(ctx, name+".")
+}
+
+func cdnNameSuffixes(raw string) []string {
+	var out []string
+	for _, f := range strings.Fields(strings.ToLower(raw)) {
+		if strings.HasPrefix(f, ".") && strings.Count(f, ".") >= 2 {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func vhostCNAMESweep(names []string, suffixes []string, perLookup time.Duration) map[string]bool {
+	out := map[string]bool{}
+	if len(names) == 0 || len(suffixes) == 0 {
+		return out
+	}
+	var mu sync.Mutex
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, name := range names {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ctx, cancel := context.WithTimeout(context.Background(), perLookup)
+			defer cancel()
+			cname, err := vhostLookupCNAME(ctx, name)
+			if err != nil {
+				return
+			}
+			cname = strings.ToLower(strings.TrimSuffix(cname, "."))
+			if cname == name {
+				return
+			}
+			for _, s := range suffixes {
+				if strings.HasSuffix(cname, s) {
+					mu.Lock()
+					out[name] = true
+					mu.Unlock()
+					return
+				}
+			}
+		}(name)
+	}
+	wg.Wait()
+	return out
 }
 
 type dnsSweepResult struct {
