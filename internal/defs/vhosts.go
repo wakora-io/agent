@@ -29,10 +29,11 @@ import (
 const probeUserAgent = "Wakora-Monitor/1.0 (+https://wakora.io)"
 
 type vhost struct {
-	Name    string
-	Port    int
-	SSL     bool
-	Primary bool
+	Name     string
+	Port     int
+	SSL      bool
+	Primary  bool
+	Redirect string
 }
 
 func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Duration) {
@@ -237,6 +238,9 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		if root, ok := apacheRoots[h.Name]; ok && wpAt(root) {
 			pm["wp"] = 1
 		}
+		if h.Redirect != "" {
+			pm["redirect"] = h.Redirect
+		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
 		if !probed[i] {
@@ -297,12 +301,14 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 				}
 			}
 		}
-		o.Extra = append(o.Extra, r.check)
+		if h.Redirect == "" {
+			o.Extra = append(o.Extra, r.check)
 
-		if r.check.Status == "ok" {
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{
-				Name: "svc." + service + ".vhost.latency_ms", Value: r.check.LatencyMs, Tags: tags,
-			})
+			if r.check.Status == "ok" {
+				o.Metrics = append(o.Metrics, protocol.MetricPoint{
+					Name: "svc." + service + ".vhost.latency_ms", Value: r.check.LatencyMs, Tags: tags,
+				})
+			}
 		}
 		if r.hasSSL {
 			trusted := 0.0
@@ -1130,6 +1136,8 @@ func parseNginxVhosts(out []byte) []vhost {
 	carry := ""
 	var names []string
 	var listens []vhost
+	redir := ""
+	pass := false
 
 	flush := func() {
 		if len(listens) == 0 {
@@ -1138,12 +1146,22 @@ func parseNginxVhosts(out []byte) []vhost {
 		if len(names) == 0 {
 			names = []string{"_"}
 		}
+		target := ""
+		if redir != "" && !pass {
+			target = redir
+		}
 		for i, n := range names {
+			r := target
+			if r == nginxRedirSelf {
+				r = n
+			}
 			for _, l := range listens {
-				hosts = append(hosts, vhost{Name: n, Port: l.Port, SSL: l.SSL, Primary: i == 0})
+				hosts = append(hosts, vhost{Name: n, Port: l.Port, SSL: l.SSL, Primary: i == 0, Redirect: r})
 			}
 		}
 		names, listens = nil, nil
+		redir = ""
+		pass = false
 	}
 
 	for _, raw := range strings.Split(string(out), "\n") {
@@ -1164,7 +1182,7 @@ func parseNginxVhosts(out []byte) []vhost {
 		if inServer {
 			stmts, tail := splitNginxStatements(carry + " " + trimmed)
 			for _, st := range stmts {
-				applyNginxDirective(st, &names, &listens)
+				applyNginxDirective(st, &names, &listens, &redir, &pass)
 			}
 			carry = ""
 			if f := strings.Fields(tail); len(f) > 0 && (f[0] == "server_name" || f[0] == "listen") {
@@ -1199,7 +1217,9 @@ func splitNginxStatements(line string) ([]string, string) {
 	return stmts, strings.TrimSpace(line[start:])
 }
 
-func applyNginxDirective(stmt string, names *[]string, listens *[]vhost) {
+const nginxRedirSelf = "$self"
+
+func applyNginxDirective(stmt string, names *[]string, listens *[]vhost, redir *string, pass *bool) {
 	fields := strings.Fields(stmt)
 	if len(fields) < 2 {
 		return
@@ -1223,7 +1243,54 @@ func applyNginxDirective(stmt string, names *[]string, listens *[]vhost) {
 			}
 		}
 		*listens = append(*listens, vhost{Port: port, SSL: ssl})
+	case "fastcgi_pass", "proxy_pass", "uwsgi_pass", "scgi_pass", "grpc_pass":
+		*pass = true
+	case "return":
+		if *redir != "" || len(fields) < 3 {
+			return
+		}
+		switch fields[1] {
+		case "301", "302", "303", "307", "308":
+			if host, ok := redirectTargetHost(fields[2]); ok {
+				*redir = host
+			}
+		}
+	case "rewrite":
+		if *redir != "" || len(fields) < 4 {
+			return
+		}
+		last := fields[len(fields)-1]
+		if last != "permanent" && last != "redirect" {
+			return
+		}
+		if host, ok := redirectTargetHost(fields[2]); ok {
+			*redir = host
+		}
 	}
+}
+
+func redirectTargetHost(target string) (string, bool) {
+	rest := ""
+	for _, scheme := range []string{"https://", "http://", "$scheme://"} {
+		if strings.HasPrefix(target, scheme) {
+			rest = strings.TrimPrefix(target, scheme)
+			break
+		}
+	}
+	if rest == "" {
+		return "", false
+	}
+	if strings.HasPrefix(rest, "$host") || strings.HasPrefix(rest, "$server_name") {
+		return nginxRedirSelf, true
+	}
+	if i := strings.IndexAny(rest, "/$:?"); i >= 0 {
+		rest = rest[:i]
+	}
+	rest = strings.ToLower(strings.TrimSuffix(rest, "."))
+	if rest == "" || strings.ContainsAny(rest, "{}*") {
+		return "", false
+	}
+	return rest, true
 }
 
 var (
