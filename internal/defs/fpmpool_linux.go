@@ -101,21 +101,22 @@ func fpmWorkerCensus(procRoot string) map[string]fpmPoolStat {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(procRoot, e.Name(), "stat"))
+		cmdRaw, err := os.ReadFile(filepath.Join(procRoot, e.Name(), "cmdline"))
 		if err != nil {
 			continue
 		}
-		comm, state, ok := statCommState(string(raw))
-		if !ok || !strings.HasPrefix(comm, "php-fpm: pool ") {
+		title := strings.TrimRight(string(cmdRaw), "\x00")
+		title = strings.ReplaceAll(title, "\x00", " ")
+		if !strings.HasPrefix(title, "php-fpm: pool ") {
 			continue
 		}
-		pool := strings.TrimSpace(strings.TrimPrefix(comm, "php-fpm: pool "))
+		pool := strings.TrimSpace(strings.TrimPrefix(title, "php-fpm: pool "))
 		if pool == "" {
 			continue
 		}
 		st := out[pool]
 		st.workers++
-		if state == 'D' {
+		if statState(filepath.Join(procRoot, e.Name(), "stat")) == 'D' {
 			st.blocked++
 		}
 		out[pool] = st
@@ -123,17 +124,20 @@ func fpmWorkerCensus(procRoot string) map[string]fpmPoolStat {
 	return out
 }
 
-func statCommState(raw string) (string, byte, bool) {
-	open := strings.IndexByte(raw, '(')
-	close := strings.LastIndexByte(raw, ')')
-	if open < 0 || close < open || close+2 >= len(raw) {
-		return "", 0, false
+func statState(path string) byte {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0
 	}
-	rest := strings.TrimSpace(raw[close+1:])
+	close := strings.LastIndexByte(string(raw), ')')
+	if close < 0 || close+2 >= len(raw) {
+		return 0
+	}
+	rest := strings.TrimSpace(string(raw[close+1:]))
 	if rest == "" {
-		return "", 0, false
+		return 0
 	}
-	return raw[open+1 : close], rest[0], true
+	return rest[0]
 }
 
 func fpmPoolLimits(globs []string) map[string]fpmPoolLimit {
