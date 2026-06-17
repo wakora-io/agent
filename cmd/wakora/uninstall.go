@@ -52,7 +52,7 @@ func runUninstall(configDir string, args []string) {
 	}
 
 	apmDir := filepath.Join(cfg.StateDir(), "apm")
-	keepApm := dirHasContent(apmDir)
+	keepApm := apmApplied(apmDir)
 
 	removePlatformService()
 
@@ -68,11 +68,6 @@ func runUninstall(configDir string, args []string) {
 	if keepApm {
 		fmt.Fprintf(os.Stderr, "note: APM is still active - detach it from the console (a php reload), then delete %s\n", apmDir)
 	}
-}
-
-func dirHasContent(dir string) bool {
-	ents, err := os.ReadDir(dir)
-	return err == nil && len(ents) > 0
 }
 
 func wipeAgentFiles(configDir, stateDir, logDir, apmDir string, keepApm bool) {

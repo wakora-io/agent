@@ -15,3 +15,5 @@ func removePlatformService() {
 func selfDeleteBinary(exe string) error {
 	return os.Remove(exe)
 }
+
+func apmApplied(string) bool { return false }

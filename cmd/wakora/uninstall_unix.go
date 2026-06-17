@@ -5,6 +5,8 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 func removePlatformService() {
@@ -27,4 +29,33 @@ func removePlatformService() {
 
 func selfDeleteBinary(exe string) error {
 	return os.Remove(exe)
+}
+
+func apmApplied(apmDir string) bool {
+	for _, g := range []string{
+		"/etc/php/*/fpm/conf.d/*.ini",
+		"/etc/php/*/apache2/conf.d/*.ini",
+		"/etc/php/*/cli/conf.d/*.ini",
+		"/etc/php*/conf.d/*.ini",
+		"/etc/php.d/*.ini",
+		"/etc/opt/remi/php*/php.d/*.ini",
+	} {
+		matches, _ := filepath.Glob(g)
+		for _, f := range matches {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				t := strings.TrimSpace(line)
+				if t == "" || t[0] == ';' || t[0] == '#' {
+					continue
+				}
+				if strings.Contains(t, apmDir) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
