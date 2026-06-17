@@ -21,6 +21,31 @@ type response struct {
 	Key      string `json:"key"`
 }
 
+func Deregister(client *http.Client, url, uuid, key string) error {
+	body, err := json.Marshal(map[string]string{"uuid": uuid})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Wakora-Key", key)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return fmt.Errorf("deregister: %s: %s", resp.Status, bytes.TrimSpace(msg))
+	}
+	return nil
+}
+
 func Register(client *http.Client, url, teamKey, machineID, hostname string) (string, string, error) {
 	body, err := json.Marshal(request{TeamKey: teamKey, MachineID: machineID, Hostname: hostname})
 	if err != nil {

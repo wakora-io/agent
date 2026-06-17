@@ -34,6 +34,33 @@ func Verify(set protocol.DefinitionSet, publisherKey string) []protocol.Definiti
 	return out
 }
 
+func VerifyUninstallOrder(envelope, publisherKey, wantUUID string) bool {
+	pub, err := base64.StdEncoding.DecodeString(publisherKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return false
+	}
+	dot := strings.LastIndexByte(envelope, '.')
+	if dot <= 0 {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(envelope[:dot])
+	if err != nil {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(envelope[dot+1:])
+	if err != nil || !ed25519.Verify(ed25519.PublicKey(pub), payload, sig) {
+		return false
+	}
+	var o struct {
+		UUID     string `json:"uuid"`
+		IssuedAt int64  `json:"issuedAt"`
+	}
+	if json.Unmarshal(payload, &o) != nil {
+		return false
+	}
+	return o.UUID != "" && o.UUID == wantUUID
+}
+
 func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 	has := func(kind, key string) bool {
 		for _, f := range facts {

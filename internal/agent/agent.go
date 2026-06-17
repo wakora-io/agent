@@ -1837,6 +1837,15 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 			if c.Key != "" {
 				defs.SetPublicIP(c.Key)
 			}
+		case "uninstall":
+			if !defs.VerifyUninstallOrder(c.Key, a.publisherKey, a.cfg.ServerID) {
+				log.Print("uninstall order rejected: signature or uuid mismatch")
+				return
+			}
+			log.Print("signed uninstall order accepted - removing the agent from this host")
+			if err := spawnUninstall(a.cfg.Dir()); err != nil {
+				log.Printf("uninstall spawn failed: %v", err)
+			}
 		}
 	}
 }

@@ -22,6 +22,8 @@ type Dialer interface {
 
 var ErrNoDialer = errors.New("transport: dialer not configured")
 
+var ErrDeregistered = errors.New("transport: deregistered")
+
 type Client struct {
 	Endpoint string
 	Dialer   Dialer
@@ -43,6 +45,10 @@ func (c *Client) Run(ctx context.Context, onConn func(Conn) error) error {
 		if conn, err := c.Dialer.Dial(ctx, c.Endpoint); err == nil {
 			_ = onConn(conn)
 			conn.Close()
+		} else if errors.Is(err, ErrDeregistered) {
+			log.Print("this host was removed from the console; idling. run 'wakora uninstall' to clean up, or 'wakora --key <TEAMKEY>' to re-enroll")
+			<-ctx.Done()
+			return ctx.Err()
 		} else {
 			log.Printf("dial %s: %v", c.Endpoint, err)
 		}

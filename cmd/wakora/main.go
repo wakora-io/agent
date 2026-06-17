@@ -65,6 +65,7 @@ func main() {
 	customPort := flag.Int("custom-metrics-port", 0, "loopback port for app custom-metric ingest (app.* only), 0 = off")
 	otlpPort := flag.Int("otlp-port", 0, "loopback port for OTLP/HTTP JSON span ingest (APM layer-2), 0 = off")
 	otlpBind := flag.String("otlp-bind", "", "extra OTLP bind addresses beyond loopback (comma-separated, e.g. a docker bridge gateway for container apps)")
+	flag.Usage = usage
 	flag.Parse()
 
 	if *showVersion {
@@ -81,6 +82,11 @@ func main() {
 
 	if args := flag.Args(); len(args) > 0 && args[0] == "service" {
 		runServiceCmd(args[1:])
+		return
+	}
+
+	if args := flag.Args(); len(args) > 0 && args[0] == "uninstall" {
+		runUninstall(*configDir, args[1:])
 		return
 	}
 
@@ -229,6 +235,34 @@ func main() {
 	if err := run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
+}
+
+func usage() {
+	out := flag.CommandLine.Output()
+	fmt.Fprintln(out, "Wakora monitoring agent "+buildinfo.Version)
+	fmt.Fprintln(out, "\nUsage:")
+	fmt.Fprintln(out, "  wakora [flags]                                 run the agent (service mode)")
+	fmt.Fprintln(out, "  wakora --key <TEAMKEY>                         register this host and exit")
+	fmt.Fprintln(out, "  wakora uninstall [--force]                     deregister and remove the agent from this host")
+	fmt.Fprintln(out, "  wakora service <install|uninstall|start|stop>  manage the OS service")
+	fmt.Fprintln(out, "  wakora secret <set NAME|list|rm NAME>          manage local service credentials")
+	fmt.Fprintln(out, "  wakora --set svc.key=value                     write a wakora.conf location override and exit")
+	fmt.Fprintln(out, "  wakora --update                                update to the latest release and exit")
+	fmt.Fprintln(out, "  wakora --version                               print version and exit")
+	fmt.Fprintln(out, "\nFlags:")
+	flag.VisitAll(func(f *flag.Flag) {
+		name, help := flag.UnquoteUsage(f)
+		line := "  --" + f.Name
+		if name != "" {
+			line += " " + name
+		}
+		fmt.Fprintln(out, line)
+		indent := "        "
+		fmt.Fprintln(out, indent+strings.ReplaceAll(help, "\n", "\n"+indent))
+		if f.DefValue != "" && f.DefValue != "0" && f.DefValue != "false" {
+			fmt.Fprintf(out, "%s(default %q)\n", indent, f.DefValue)
+		}
+	})
 }
 
 func runSecret(dir string, args []string) {

@@ -53,11 +53,14 @@ func PinnedClient(pin string) *http.Client {
 }
 
 func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
-	c, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{
+	c, resp, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{
 		HTTPClient: d.client,
 		HTTPHeader: http.Header{"X-Wakora-Key": {d.keyFn()}},
 	})
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusGone {
+			return nil, ErrDeregistered
+		}
 		return nil, err
 	}
 	c.SetReadLimit(1 << 20)
