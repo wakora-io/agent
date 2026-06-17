@@ -26,6 +26,7 @@ type fpmPoolStat struct {
 type fpmPoolLimit struct {
 	listen      string
 	maxChildren int
+	mode        string
 }
 
 var fpmPoolConfGlobs = []string{
@@ -73,6 +74,15 @@ func runFPMPool(o *Outcome, service string, p protocol.Probe) {
 		if lim.maxChildren > 0 {
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{
 				Name: "svc." + service + ".pool.max_children", Value: float64(lim.maxChildren), Tags: tags,
+			})
+		}
+		if lim.mode != "" {
+			static := 0.0
+			if lim.mode == "static" {
+				static = 1
+			}
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{
+				Name: "svc." + service + ".pool.static", Value: static, Tags: tags,
 			})
 		}
 		if q, ok := listenBacklog(lim.listen, unixQ, tcpQ); ok {
@@ -186,6 +196,10 @@ func parseFpmPoolConf(raw string, out map[string]fpmPoolLimit) {
 		case "listen":
 			if lim.listen == "" {
 				lim.listen = val
+			}
+		case "pm":
+			if lim.mode == "" {
+				lim.mode = val
 			}
 		case "pm.max_children":
 			if n, err := strconv.Atoi(val); err == nil {
