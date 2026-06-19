@@ -3,11 +3,15 @@ package buffer
 import (
 	"bufio"
 	"bytes"
+	"io"
+	"log"
 	"os"
 	"strconv"
 	"sync"
 	"time"
 )
+
+var maxDrainRecord = 16 << 20
 
 type Ring struct {
 	path    string
@@ -123,25 +127,54 @@ func (r *Ring) Drain(fn func([]byte) error) error {
 		return err
 	}
 	var sent int64
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
-	for sc.Scan() {
-		line := sc.Bytes()
-		lineLen := int64(len(line)) + 1
-		if r.stale(line) {
-			sent += lineLen
+	br := bufio.NewReaderSize(f, 64<<10)
+	for {
+		rec, n, oversized, rerr := readRecord(br, maxDrainRecord)
+		if n > 0 {
+			line := bytes.TrimSuffix(rec, []byte("\n"))
+			switch {
+			case oversized:
+				log.Printf("spool: dropping oversized record (%d bytes)", n)
+				sent += int64(n)
+			case r.stale(line):
+				sent += int64(n)
+			default:
+				_, payload, _ := splitStamp(line)
+				if ferr := fn(payload); ferr != nil {
+					f.Close()
+					r.dropPrefix(sent)
+					return ferr
+				}
+				sent += int64(n)
+			}
+		}
+		if rerr != nil {
+			f.Close()
+			if rerr == io.EOF {
+				return os.Remove(r.path)
+			}
+			r.dropPrefix(sent)
+			return rerr
+		}
+	}
+}
+
+func readRecord(br *bufio.Reader, cap int) (line []byte, n int, oversized bool, err error) {
+	for {
+		chunk, e := br.ReadSlice('\n')
+		n += len(chunk)
+		if !oversized {
+			line = append(line, chunk...)
+			if len(line) > cap {
+				oversized = true
+				line = nil
+			}
+		}
+		if e == bufio.ErrBufferFull {
 			continue
 		}
-		_, payload, _ := splitStamp(line)
-		if err := fn(payload); err != nil {
-			f.Close()
-			r.dropPrefix(sent)
-			return err
-		}
-		sent += lineLen
+		return line, n, oversized, e
 	}
-	f.Close()
-	return os.Remove(r.path)
 }
 
 func (r *Ring) dropPrefix(offset int64) {
