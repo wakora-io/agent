@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -79,11 +80,15 @@ type Agent struct {
 	updateNoteDone    chan struct{}
 	otlpAuto          atomic.Bool
 
-	pmu     sync.Mutex
-	pending map[uint64][]byte
+	pmu          sync.Mutex
+	pending      map[uint64][]byte
+	pendingFreed chan struct{}
 }
 
-const pendingCap = 8192
+var pendingCap = 8192
+var pendingStallTimeout = 30 * time.Second
+
+var errPendingStalled = errors.New("pending buffer full: gateway not acknowledging")
 
 var probeTick = 15 * time.Second
 
@@ -111,7 +116,13 @@ type trackedConn struct {
 
 func (t *trackedConn) Send(m protocol.Message) error {
 	if m.Seq != 0 {
-		t.a.trackPending(m)
+		raw, err := t.a.trackPending(m)
+		if err != nil {
+			if raw != nil {
+				_ = t.a.ring.Append(raw)
+			}
+			return err
+		}
 	}
 	return t.inner.Send(m)
 }
@@ -119,22 +130,43 @@ func (t *trackedConn) Recv() (protocol.Message, error) { return t.inner.Recv() }
 func (t *trackedConn) Ping(ctx context.Context) error  { return t.inner.Ping(ctx) }
 func (t *trackedConn) Close() error                    { return t.inner.Close() }
 
-func (a *Agent) trackPending(m protocol.Message) {
+func (a *Agent) trackPending(m protocol.Message) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
-		return
+		return nil, nil
 	}
 	a.pmu.Lock()
-	if len(a.pending) < pendingCap {
-		a.pending[m.Seq] = raw
+	deadline := time.Now().Add(pendingStallTimeout)
+	for len(a.pending) >= pendingCap {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			a.pmu.Unlock()
+			return raw, errPendingStalled
+		}
+		a.pmu.Unlock()
+		wait := remaining
+		if wait > 100*time.Millisecond {
+			wait = 100 * time.Millisecond
+		}
+		select {
+		case <-a.pendingFreed:
+		case <-time.After(wait):
+		}
+		a.pmu.Lock()
 	}
+	a.pending[m.Seq] = raw
 	a.pmu.Unlock()
+	return raw, nil
 }
 
 func (a *Agent) ackPending(seq uint64) {
 	a.pmu.Lock()
 	delete(a.pending, seq)
 	a.pmu.Unlock()
+	select {
+	case a.pendingFreed <- struct{}{}:
+	default:
+	}
 }
 
 func (a *Agent) spoolPending() {
@@ -186,6 +218,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		updateNote:        make(chan [2]string, 1),
 		updateNoteDone:    make(chan struct{}, 1),
 		pending:           map[uint64][]byte{},
+		pendingFreed:      make(chan struct{}, 1),
 	}
 	a.key.Store(cfg.Key)
 	return a
@@ -228,16 +261,6 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		defer a.connected.Store(false)
 		conn = &trackedConn{inner: conn, a: a}
 		defer a.spoolPending()
-		if err := a.sendHeartbeat(conn); err != nil {
-			return err
-		}
-		a.drainSpool(conn)
-		if err := a.sendMetrics(conn); err != nil {
-			return err
-		}
-		if err := a.sendDiscovery(conn); err != nil {
-			return err
-		}
 
 		kick := make(chan struct{}, 1)
 		dkick := make(chan struct{}, 1)
@@ -252,6 +275,17 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				a.handleDownstream(m, kick, dkick)
 			}
 		}()
+
+		if err := a.sendHeartbeat(conn); err != nil {
+			return err
+		}
+		a.drainSpool(conn)
+		if err := a.sendMetrics(conn); err != nil {
+			return err
+		}
+		if err := a.sendDiscovery(conn); err != nil {
+			return err
+		}
 
 		mt := time.NewTicker(interval)
 		defer mt.Stop()
