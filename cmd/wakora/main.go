@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -161,8 +162,10 @@ func main() {
 		relURL = deriveURL(cfg.Endpoint, "/release")
 	}
 
+	manifestState := filepath.Join(cfg.StateDir(), "update-manifest")
+
 	if *doUpd {
-		runUpdateOnce(relURL, httpc, pubKey)
+		runUpdateOnce(relURL, httpc, pubKey, manifestState)
 		return
 	}
 
@@ -208,7 +211,7 @@ func main() {
 		if relURL != "" {
 			updateKick := make(chan struct{}, 1)
 			a.SetUpdateKick(updateKick)
-			go autoUpdate(ctx, relURL, httpc, pubKey, *updateEvery, updateKick, a.AnnounceUpdate)
+			go autoUpdate(ctx, relURL, httpc, pubKey, manifestState, *updateEvery, updateKick, a.AnnounceUpdate)
 		}
 		if cfg.Key == "" {
 			if config.LoadPendingKey(*configDir) != "" {
@@ -408,11 +411,11 @@ func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client
 	}
 }
 
-func runUpdateOnce(relURL string, httpc *http.Client, pubKey string) {
+func runUpdateOnce(relURL string, httpc *http.Client, pubKey, statePath string) {
 	if relURL == "" {
 		log.Fatal("update: no release url; use --update-url or --endpoint")
 	}
-	u := update.New(relURL, httpc, pubKey)
+	u := update.New(relURL, httpc, pubKey, statePath)
 	latest, err := u.LatestVersion()
 	if err != nil {
 		log.Fatal(err)
@@ -436,8 +439,8 @@ func runUpdateOnce(relURL string, httpc *http.Client, pubKey string) {
 	restartService()
 }
 
-func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey string, every time.Duration, kick <-chan struct{}, announce func(from, to string)) {
-	u := update.New(relURL, httpc, pubKey)
+func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey, statePath string, every time.Duration, kick <-chan struct{}, announce func(from, to string)) {
+	u := update.New(relURL, httpc, pubKey, statePath)
 	exe, err := os.Executable()
 	if err != nil {
 		return

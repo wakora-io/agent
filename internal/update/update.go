@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,24 +14,38 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"wakora.io/agent/internal/atomicfile"
 )
 
 type Updater struct {
-	baseURL string
-	client  *http.Client
-	pubKey  string
+	baseURL   string
+	client    *http.Client
+	pubKey    string
+	statePath string
+
+	mu     sync.Mutex
+	cached *manifest
 }
 
-func New(baseURL string, client *http.Client, pubKey string) *Updater {
+type manifest struct {
+	Version  string            `json:"version"`
+	IssuedAt int64             `json:"issuedAt"`
+	Assets   map[string]string `json:"assets"`
+}
+
+func New(baseURL string, client *http.Client, pubKey, statePath string) *Updater {
 	c := &http.Client{Timeout: 10 * time.Minute}
 	if client != nil {
 		c.Transport = client.Transport
 	}
 	return &Updater{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  c,
-		pubKey:  pubKey,
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		client:    c,
+		pubKey:    pubKey,
+		statePath: statePath,
 	}
 }
 
@@ -55,32 +70,44 @@ func Newer(latest, current string) bool {
 }
 
 func (u *Updater) LatestVersion() (string, error) {
-	body, err := u.get("/version")
+	mf, err := u.fetchManifest()
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(body)), nil
+	u.mu.Lock()
+	u.cached = mf
+	u.mu.Unlock()
+	return mf.Version, nil
 }
 
 func (u *Updater) Apply(target string) error {
-	asset, sumAsset := assetNames()
-	sumBody, err := u.get(sumAsset)
-	if err != nil {
-		return err
+	asset, _ := assetNames()
+	name := strings.TrimPrefix(asset, "/")
+
+	u.mu.Lock()
+	mf := u.cached
+	u.mu.Unlock()
+	if mf == nil {
+		var err error
+		mf, err = u.fetchManifest()
+		if err != nil {
+			return err
+		}
 	}
-	fields := strings.Fields(string(sumBody))
-	if len(fields) == 0 {
-		return errors.New("update: empty checksum")
+
+	wantSha, ok := mf.Assets[name]
+	if !ok || wantSha == "" {
+		return fmt.Errorf("update: asset %s absent from the signed manifest", name)
 	}
 	bin, err := u.get(asset)
 	if err != nil {
 		return err
 	}
 	sum := sha256.Sum256(bin)
-	if hex.EncodeToString(sum[:]) != fields[0] {
-		return errors.New("update: checksum mismatch")
+	if hex.EncodeToString(sum[:]) != wantSha {
+		return errors.New("update: checksum mismatch against signed manifest")
 	}
-	if err := u.verifySignature(asset, bin); err != nil {
+	if err := u.verifyBinarySig(asset, bin); err != nil {
 		return err
 	}
 
@@ -89,47 +116,96 @@ func (u *Updater) Apply(target string) error {
 	if err != nil {
 		return err
 	}
-	name := tmp.Name()
+	tmpName := tmp.Name()
 	if _, err := tmp.Write(bin); err != nil {
 		tmp.Close()
-		os.Remove(name)
+		os.Remove(tmpName)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(name)
+		os.Remove(tmpName)
 		return err
 	}
-	if err := os.Chmod(name, 0o755); err != nil {
-		os.Remove(name)
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		os.Remove(tmpName)
 		return err
 	}
-	if err := replaceBinary(name, target); err != nil {
-		os.Remove(name)
+	if err := replaceBinary(tmpName, target); err != nil {
+		os.Remove(tmpName)
 		return err
 	}
 	return nil
 }
 
-func (u *Updater) verifySignature(asset string, bin []byte) error {
+func (u *Updater) fetchManifest() (*manifest, error) {
+	body, err := u.get("/manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	sigBody, err := u.get("/manifest.json.sig")
+	if err != nil {
+		return nil, fmt.Errorf("update: manifest signature unavailable: %w", err)
+	}
+	if err := u.verifyBlob(body, sigBody); err != nil {
+		return nil, err
+	}
+	var mf manifest
+	if err := json.Unmarshal(body, &mf); err != nil {
+		return nil, fmt.Errorf("update: manifest parse: %w", err)
+	}
+	if mf.Version == "" || len(mf.Assets) == 0 {
+		return nil, errors.New("update: manifest incomplete")
+	}
+	if last := u.lastIssuedAt(); mf.IssuedAt < last {
+		return nil, fmt.Errorf("update: manifest issuedAt %d older than last seen %d, refusing rollback", mf.IssuedAt, last)
+	}
+	u.storeIssuedAt(mf.IssuedAt)
+	return &mf, nil
+}
+
+func (u *Updater) verifyBinarySig(asset string, bin []byte) error {
+	sigBody, err := u.get(asset + ".sig")
+	if err != nil {
+		return fmt.Errorf("update: binary signature unavailable: %w", err)
+	}
+	return u.verifyBlob(bin, sigBody)
+}
+
+func (u *Updater) verifyBlob(data, sigBody []byte) error {
 	if u.pubKey == "" {
-		return errors.New("update: no publisher key built in, refusing unsigned binary")
+		return errors.New("update: no publisher key built in, refusing unverified content")
 	}
 	pub, err := base64.StdEncoding.DecodeString(u.pubKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return errors.New("update: invalid publisher key")
 	}
-	sigBody, err := u.get(asset + ".sig")
-	if err != nil {
-		return fmt.Errorf("update: signature unavailable: %w", err)
-	}
 	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigBody)))
 	if err != nil {
 		return errors.New("update: malformed signature")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(pub), bin, sig) {
-		return errors.New("update: binary signature invalid")
+	if !ed25519.Verify(ed25519.PublicKey(pub), data, sig) {
+		return errors.New("update: signature invalid")
 	}
 	return nil
+}
+
+func (u *Updater) lastIssuedAt() int64 {
+	if u.statePath == "" {
+		return 0
+	}
+	b, err := os.ReadFile(u.statePath)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	return n
+}
+
+func (u *Updater) storeIssuedAt(ts int64) {
+	if u.statePath == "" || ts <= u.lastIssuedAt() {
+		return
+	}
+	_ = atomicfile.Write(u.statePath, []byte(strconv.FormatInt(ts, 10)), 0o600)
 }
 
 func (u *Updater) get(path string) ([]byte, error) {
