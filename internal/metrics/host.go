@@ -1,6 +1,9 @@
 package metrics
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 type Point struct {
 	Name  string
@@ -9,6 +12,7 @@ type Point struct {
 }
 
 type Collector struct {
+	mu           sync.Mutex
 	prevCPUIdle  uint64
 	prevCPUTotal uint64
 	prevNetRx    uint64
@@ -29,6 +33,8 @@ func NewCollector() *Collector {
 }
 
 func (c *Collector) Collect() (int64, []Point) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	now := time.Now()
 	var pts []Point
 	pts = append(pts, loadPoints()...)
