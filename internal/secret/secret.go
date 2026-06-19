@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"wakora.io/agent/internal/atomicfile"
 )
 
 var localSeed string
@@ -33,7 +35,7 @@ func InitSeed(dir string) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
-	if err := os.WriteFile(path, []byte(s), 0o600); err != nil {
+	if err := atomicfile.Write(path, []byte(s), 0o600); err != nil {
 		return
 	}
 	localSeed = s

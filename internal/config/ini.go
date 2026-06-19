@@ -3,9 +3,10 @@ package config
 import (
 	"bufio"
 	"io"
-	"os"
 	"sort"
 	"strings"
+
+	"wakora.io/agent/internal/atomicfile"
 )
 
 func parseINI(r io.Reader) map[string]map[string]string {
@@ -62,5 +63,5 @@ func writeINI(path string, sections map[string]map[string]string) error {
 		}
 		b.WriteString("\n")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	return atomicfile.Write(path, []byte(b.String()), 0o600)
 }

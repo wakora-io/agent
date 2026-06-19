@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"wakora.io/agent/internal/atomicfile"
 )
 
 type Cred struct {
@@ -150,5 +152,5 @@ func writeRaw(dir string, all map[string]map[string]string) error {
 			b.WriteString(n + "." + k + " = " + fields[k] + "\n")
 		}
 	}
-	return os.WriteFile(storePath(dir), []byte(b.String()), 0o600)
+	return atomicfile.Write(storePath(dir), []byte(b.String()), 0o600)
 }
