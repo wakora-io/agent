@@ -17,6 +17,7 @@ import (
 )
 
 var rumTraceRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var rumSiteRe = regexp.MustCompile(`^[a-z0-9.-]+$`)
 
 func (a *Agent) setRumSites(sites []string) {
 	norm := make([]string, 0, len(sites))
@@ -25,6 +26,10 @@ func (a *Agent) setRumSites(sites []string) {
 		s = strings.ToLower(strings.TrimSpace(s))
 		s = strings.TrimPrefix(s, "www.")
 		if s == "" || seen[s] {
+			continue
+		}
+		if !rumSiteRe.MatchString(s) {
+			log.Printf("rum sites: invalid site name dropped: %q", s)
 			continue
 		}
 		seen[s] = true
@@ -71,11 +76,16 @@ func writeRumSites(dir string, sites []string) {
 	}
 	var b strings.Builder
 	b.WriteString("<?php return [")
-	for i, s := range sites {
-		if i > 0 {
+	n := 0
+	for _, s := range sites {
+		if !rumSiteRe.MatchString(s) {
+			continue
+		}
+		if n > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString("'" + strings.ReplaceAll(s, "'", "") + "'=>1")
+		b.WriteString("'" + s + "'=>1")
+		n++
 	}
 	b.WriteString("];\n")
 	tmp := path + ".tmp"
