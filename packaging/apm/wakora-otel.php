@@ -387,7 +387,8 @@ WAKORARUMJS;
                             if ($wakoraRumPos === false) {
                                 return $wakoraHtml;
                             }
-                            return substr($wakoraHtml, 0, $wakoraRumPos) . $wakoraRumSnippet . substr($wakoraHtml, $wakoraRumPos);
+                            $wakoraRumOneLine = str_replace(["\r", "\n"], '', $wakoraRumSnippet);
+                            return substr($wakoraHtml, 0, $wakoraRumPos) . "\n" . $wakoraRumOneLine . "\n" . substr($wakoraHtml, $wakoraRumPos);
                         } catch (\Throwable $wakoraRumCbErr) {
                             return $wakoraHtml;
                         }
