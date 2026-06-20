@@ -1,6 +1,6 @@
 set -eu
-mkdir -p /tmp/w
-tar -C /tmp/w -xzf /art/opentelemetry-node.tar.gz
+mkdir -p /tmp/w/opentelemetry-node
+tar -C /tmp/w/opentelemetry-node -xzf /art/opentelemetry-node.tar.gz
 node /in/e2e-node-receiver.js /tmp/spans.log &
 sleep 1
 
