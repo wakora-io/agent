@@ -916,6 +916,8 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				o = defs.RunAPMPhp(d.Service, p, a.cfg.StateDir())
 			case "apmdotnet":
 				o = defs.RunAPMDotnet(d.Service, p, a.cfg.StateDir())
+			case "apmnode":
+				o = defs.RunAPMNode(d.Service, p, a.cfg.StateDir())
 			default:
 				o = defs.RunProbeWithSecrets(d.Service, p, a.resolveSecret)
 			}
