@@ -165,7 +165,7 @@ func main() {
 	manifestState := filepath.Join(cfg.StateDir(), "update-manifest")
 
 	if *doUpd {
-		runUpdateOnce(relURL, httpc, pubKey, manifestState)
+		runUpdateOnce(relURL, httpc, pubKey, manifestState, cfg.Pin)
 		return
 	}
 
@@ -211,7 +211,7 @@ func main() {
 		if relURL != "" {
 			updateKick := make(chan struct{}, 1)
 			a.SetUpdateKick(updateKick)
-			go autoUpdate(ctx, relURL, httpc, pubKey, manifestState, *updateEvery, updateKick, a.AnnounceUpdate)
+			go autoUpdate(ctx, relURL, httpc, pubKey, manifestState, *updateEvery, updateKick, a.AnnounceUpdate, a.EffectivePin)
 		}
 		if cfg.Key == "" {
 			if config.LoadPendingKey(*configDir) != "" {
@@ -411,11 +411,27 @@ func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client
 	}
 }
 
-func runUpdateOnce(relURL string, httpc *http.Client, pubKey, statePath string) {
+func runUpdateOnce(relURL string, httpc *http.Client, pubKey, statePath, pin string) {
 	if relURL == "" {
 		log.Fatal("update: no release url; use --update-url or --endpoint")
 	}
 	u := update.New(relURL, httpc, pubKey, statePath)
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if pin != "" {
+		if pin == buildinfo.Version {
+			log.Printf("already on pinned %s", buildinfo.Version)
+			return
+		}
+		if err := u.ApplyPinned(exe, pin); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("converged to pinned %s from %s", pin, buildinfo.Version)
+		restartService()
+		return
+	}
 	latest, err := u.LatestVersion()
 	if err != nil {
 		log.Fatal(err)
@@ -428,10 +444,6 @@ func runUpdateOnce(relURL string, httpc *http.Client, pubKey, statePath string) 
 		log.Printf("release %s is not newer than %s, skipping (no downgrade)", latest, buildinfo.Version)
 		return
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		log.Fatal(err)
-	}
 	if err := u.Apply(exe); err != nil {
 		log.Fatal(err)
 	}
@@ -439,13 +451,30 @@ func runUpdateOnce(relURL string, httpc *http.Client, pubKey, statePath string) 
 	restartService()
 }
 
-func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey, statePath string, every time.Duration, kick <-chan struct{}, announce func(from, to string)) {
+func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey, statePath string, every time.Duration, kick <-chan struct{}, announce func(from, to string), pinOf func() string) {
 	u := update.New(relURL, httpc, pubKey, statePath)
 	exe, err := os.Executable()
 	if err != nil {
 		return
 	}
 	check := func() {
+		if pinOf != nil {
+			if pin := pinOf(); pin != "" {
+				if pin == buildinfo.Version {
+					return
+				}
+				if err := u.ApplyPinned(exe, pin); err != nil {
+					log.Printf("pinned update to %s failed: %v", pin, err)
+					return
+				}
+				if announce != nil {
+					announce(buildinfo.Version, pin)
+				}
+				log.Printf("converged to pinned %s from %s, restarting", pin, buildinfo.Version)
+				exitForRestart()
+				return
+			}
+		}
 		latest, err := u.LatestVersion()
 		if err != nil {
 			log.Printf("update check failed: %v", err)

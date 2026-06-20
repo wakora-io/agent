@@ -83,6 +83,9 @@ type Agent struct {
 	pmu          sync.Mutex
 	pending      map[uint64][]byte
 	pendingFreed chan struct{}
+
+	pin         atomic.Value
+	pinFromPush atomic.Bool
 }
 
 var pendingCap = 8192
@@ -221,12 +224,48 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		pendingFreed:      make(chan struct{}, 1),
 	}
 	a.key.Store(cfg.Key)
+	a.pin.Store(cfg.Pin)
 	return a
 }
 
 func (a *Agent) Key() string {
 	v, _ := a.key.Load().(string)
 	return v
+}
+
+func (a *Agent) EffectivePin() string {
+	v, _ := a.pin.Load().(string)
+	return v
+}
+
+func (a *Agent) kickUpdate() {
+	if a.updateKick != nil {
+		select {
+		case a.updateKick <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (a *Agent) applyPushedPin(p string) {
+	cur := a.EffectivePin()
+	if p == "" {
+		if !a.pinFromPush.Load() || cur == "" {
+			return
+		}
+		a.pin.Store("")
+		a.pinFromPush.Store(false)
+		_ = config.WriteOverride(a.cfg.Dir(), "agent", "pin", "")
+		a.kickUpdate()
+		return
+	}
+	a.pinFromPush.Store(true)
+	if p == cur {
+		return
+	}
+	a.pin.Store(p)
+	_ = config.WriteOverride(a.cfg.Dir(), "agent", "pin", p)
+	a.kickUpdate()
 }
 
 func (a *Agent) RefreshIdentity() {
@@ -530,6 +569,7 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
 		Version:   buildinfo.Version,
+		Pin:       a.EffectivePin(),
 		Timestamp: time.Now().Unix(),
 	})
 	if err != nil {
@@ -1833,6 +1873,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		if tailChanged {
 			a.dropTailFDs.Store(true)
 		}
+		a.applyPushedPin(set.Pin)
 		a.refreshActive()
 	case protocol.TypeCommand:
 		var c protocol.Command

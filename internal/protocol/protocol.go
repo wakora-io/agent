@@ -43,6 +43,7 @@ type Heartbeat struct {
 	ServerID  string `json:"serverId"`
 	Hostname  string `json:"hostname,omitempty"`
 	Version   string `json:"version,omitempty"`
+	Pin       string `json:"pin,omitempty"`
 	Timestamp int64  `json:"ts"`
 }
 
@@ -127,6 +128,7 @@ type DefinitionSet struct {
 	RumSites     []string           `json:"rumSites,omitempty"`
 	DenyServices []string           `json:"denyServices,omitempty"`
 	LogDeep      []string           `json:"logDeep,omitempty"`
+	Pin          string             `json:"pin,omitempty"`
 }
 
 type RumError struct {

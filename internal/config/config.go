@@ -28,6 +28,7 @@ type Config struct {
 	Hostname          string
 	Key               string
 	Baseline          bool
+	Pin               string
 	CustomMetricsPort int
 	OTLPPort          int
 	OTLPBind          []string
@@ -50,6 +51,7 @@ func Load(dir string) (*Config, error) {
 		f.Close()
 	}
 	c.Baseline = c.Overrides["agent"]["baseline"] == "true"
+	c.Pin = strings.TrimSpace(c.Overrides["agent"]["pin"])
 	if v := c.Overrides["agent"]["custom-metrics-port"]; v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.CustomMetricsPort = n

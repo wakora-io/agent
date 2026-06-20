@@ -81,9 +81,6 @@ func (u *Updater) LatestVersion() (string, error) {
 }
 
 func (u *Updater) Apply(target string) error {
-	asset, _ := assetNames()
-	name := strings.TrimPrefix(asset, "/")
-
 	u.mu.Lock()
 	mf := u.cached
 	u.mu.Unlock()
@@ -94,12 +91,25 @@ func (u *Updater) Apply(target string) error {
 			return err
 		}
 	}
+	return u.applyManifest(target, mf, "")
+}
 
+func (u *Updater) ApplyPinned(target, version string) error {
+	mf, err := u.PinnedManifest(version)
+	if err != nil {
+		return err
+	}
+	return u.applyManifest(target, mf, "/"+version)
+}
+
+func (u *Updater) applyManifest(target string, mf *manifest, dirPrefix string) error {
+	asset, _ := assetNames()
+	name := strings.TrimPrefix(asset, "/")
 	wantSha, ok := mf.Assets[name]
 	if !ok || wantSha == "" {
 		return fmt.Errorf("update: asset %s absent from the signed manifest", name)
 	}
-	bin, err := u.get(asset)
+	bin, err := u.get(dirPrefix + asset)
 	if err != nil {
 		return err
 	}
@@ -107,7 +117,7 @@ func (u *Updater) Apply(target string) error {
 	if hex.EncodeToString(sum[:]) != wantSha {
 		return errors.New("update: checksum mismatch against signed manifest")
 	}
-	if err := u.verifyBinarySig(asset, bin); err != nil {
+	if err := u.verifyBinarySig(dirPrefix+asset, bin); err != nil {
 		return err
 	}
 
@@ -138,11 +148,19 @@ func (u *Updater) Apply(target string) error {
 }
 
 func (u *Updater) fetchManifest() (*manifest, error) {
-	body, err := u.get("/manifest.json")
+	return u.manifestAt("/manifest.json", "", true)
+}
+
+func (u *Updater) PinnedManifest(version string) (*manifest, error) {
+	return u.manifestAt("/"+version+"/manifest.json", version, false)
+}
+
+func (u *Updater) manifestAt(path, wantVersion string, monotonic bool) (*manifest, error) {
+	body, err := u.get(path)
 	if err != nil {
 		return nil, err
 	}
-	sigBody, err := u.get("/manifest.json.sig")
+	sigBody, err := u.get(path + ".sig")
 	if err != nil {
 		return nil, fmt.Errorf("update: manifest signature unavailable: %w", err)
 	}
@@ -156,10 +174,15 @@ func (u *Updater) fetchManifest() (*manifest, error) {
 	if mf.Version == "" || len(mf.Assets) == 0 {
 		return nil, errors.New("update: manifest incomplete")
 	}
-	if last := u.lastIssuedAt(); mf.IssuedAt < last {
-		return nil, fmt.Errorf("update: manifest issuedAt %d older than last seen %d, refusing rollback", mf.IssuedAt, last)
+	if wantVersion != "" && mf.Version != wantVersion {
+		return nil, fmt.Errorf("update: manifest at %s declares %s, expected %s", path, mf.Version, wantVersion)
 	}
-	u.storeIssuedAt(mf.IssuedAt)
+	if monotonic {
+		if last := u.lastIssuedAt(); mf.IssuedAt < last {
+			return nil, fmt.Errorf("update: manifest issuedAt %d older than last seen %d, refusing rollback", mf.IssuedAt, last)
+		}
+		u.storeIssuedAt(mf.IssuedAt)
+	}
 	return &mf, nil
 }
 
