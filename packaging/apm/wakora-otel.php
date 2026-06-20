@@ -333,8 +333,13 @@ try {
 } catch (\Throwable $wakoraStRegErr) {
 }
 try {
+    $wakoraRumDest = isset($_SERVER['HTTP_SEC_FETCH_DEST']) ? (string) $_SERVER['HTTP_SEC_FETCH_DEST'] : '';
+    $wakoraRumAccept = isset($_SERVER['HTTP_ACCEPT']) ? (string) $_SERVER['HTTP_ACCEPT'] : '';
+    $wakoraRumIsDoc = $wakoraRumDest === 'document'
+        || ($wakoraRumDest === '' && stripos($wakoraRumAccept, 'text/html') !== false);
     if (isset($_SERVER['REQUEST_METHOD'], $_SERVER['HTTP_HOST'])
         && $_SERVER['REQUEST_METHOD'] === 'GET'
+        && $wakoraRumIsDoc
         && !isset($_SERVER['HTTP_X_REQUESTED_WITH'])
         && (!isset($_SERVER['HTTP_ACCEPT']) || strpos((string) $_SERVER['HTTP_ACCEPT'], 'text/event-stream') === false)) {
         $wakoraRumUri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '/';
