@@ -268,7 +268,7 @@ cat > /docroot/feed.php <<'EOF'
 header('Content-Type: application/json');
 echo '{"a":"<html><head></head></html>"}';
 EOF
-body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/page.php");')
+body=$(php -r '$c=stream_context_create(["http"=>["header"=>"Accept: text/html"]]);echo file_get_contents("http://127.0.0.1:8080/page.php",false,$c);')
 case "$body" in
   *data-wakora-rum*) echo "rum snippet must NOT inject without rum-sites.php"; exit 1;;
 esac
@@ -280,7 +280,7 @@ esac
 echo "e2e ok: rum stays fully inert without rum-sites.php"
 
 echo "<?php return ['127.0.0.1'=>1];" > /rum-sites.php
-body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/page.php");')
+body=$(php -r '$c=stream_context_create(["http"=>["header"=>"Accept: text/html"]]);echo file_get_contents("http://127.0.0.1:8080/page.php",false,$c);')
 case "$body" in
   *data-wakora-rum*) : ;;
   *) echo "rum snippet missing on an enabled site"; exit 1;;
@@ -291,7 +291,13 @@ case "$body" in
 esac
 echo "e2e ok: rum snippet injects before </head> on the enabled site"
 
-body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/feed.php");')
+body=$(php -r '$c=stream_context_create(["http"=>["header"=>"Sec-Fetch-Dest: style"]]);echo file_get_contents("http://127.0.0.1:8080/page.php",false,$c);')
+case "$body" in
+  *data-wakora-rum*) echo "rum must not wrap non-document requests (css/js served via php would 500)"; exit 1;;
+esac
+echo "e2e ok: a non-document request is not wrapped by the rum ob_start"
+
+body=$(php -r '$c=stream_context_create(["http"=>["header"=>"Accept: text/html"]]);echo file_get_contents("http://127.0.0.1:8080/feed.php",false,$c);')
 case "$body" in
   *data-wakora-rum*) echo "rum snippet must not inject into non-html responses"; exit 1;;
 esac
@@ -306,7 +312,7 @@ lines_after=$(grep -c 'POST /v1/rum' /tmp/otlp.log || true)
 echo "e2e ok: beacon answers 204 and relays to the agent"
 
 echo "<?php return ['other.example.com'=>1];" > /rum-sites.php
-body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/page.php");')
+body=$(php -r '$c=stream_context_create(["http"=>["header"=>"Accept: text/html"]]);echo file_get_contents("http://127.0.0.1:8080/page.php",false,$c);')
 case "$body" in
   *data-wakora-rum*) echo "rum snippet must not inject on a not-enabled site"; exit 1;;
 esac
@@ -323,7 +329,7 @@ cat > /docroot/hosted.php <<'EOF'
 <?php
 echo '<html><head><title>t</title><script async src="https://rum.wakora.io/w.js" data-site="example.com"></script></head><body>hosted</body></html>';
 EOF
-body=$(php -r 'echo file_get_contents("http://127.0.0.1:8080/hosted.php");')
+body=$(php -r '$c=stream_context_create(["http"=>["header"=>"Accept: text/html"]]);echo file_get_contents("http://127.0.0.1:8080/hosted.php",false,$c);')
 case "$body" in
   *data-wakora-rum*) echo "prepend must yield to a hosted w.js snippet already on the page (double beacons bill twice)"; exit 1;;
 esac
