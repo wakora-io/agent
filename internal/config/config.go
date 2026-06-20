@@ -9,6 +9,7 @@ import (
 
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/secret"
+	"wakora.io/agent/internal/winsec"
 )
 
 func splitList(v string) []string {
@@ -39,6 +40,7 @@ func Load(dir string) (*Config, error) {
 	if dir == "" {
 		dir = defaultDir
 	}
+	_ = winsec.ProtectDir(dir)
 	c := &Config{dir: dir, stateDir: defaultStateDir, Endpoint: buildinfo.Endpoint, Overrides: map[string]map[string]string{}}
 	if h, err := os.Hostname(); err == nil {
 		c.Hostname = h
@@ -120,6 +122,7 @@ func SaveIdentity(dir, serverID, key string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	_ = winsec.ProtectDir(dir)
 	enc, err := secret.Encrypt(key)
 	if err != nil {
 		return err

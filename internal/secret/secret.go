@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"wakora.io/agent/internal/atomicfile"
+	"wakora.io/agent/internal/winsec"
 )
 
 var localSeed string
@@ -35,6 +36,7 @@ func InitSeed(dir string) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
+	_ = winsec.ProtectDir(dir)
 	if err := atomicfile.Write(path, []byte(s), 0o600); err != nil {
 		return
 	}

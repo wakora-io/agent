@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 
@@ -161,7 +162,7 @@ func installService() error {
 		if err != nil {
 			return err
 		}
-		cur.BinaryPathName = exe
+		cur.BinaryPathName = windows.EscapeArg(exe)
 		cur.DisplayName = cfg.DisplayName
 		cur.Description = cfg.Description
 		cur.StartType = cfg.StartType

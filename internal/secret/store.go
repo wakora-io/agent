@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"wakora.io/agent/internal/atomicfile"
+	"wakora.io/agent/internal/winsec"
 )
 
 type Cred struct {
@@ -24,6 +25,7 @@ func SetCred(dir, name string, c Cred) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	_ = winsec.ProtectDir(dir)
 	all, err := loadRaw(dir)
 	if err != nil {
 		return err
