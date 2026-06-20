@@ -212,6 +212,12 @@ func main() {
 			updateKick := make(chan struct{}, 1)
 			a.SetUpdateKick(updateKick)
 			go autoUpdate(ctx, relURL, httpc, pubKey, manifestState, *updateEvery, updateKick, a.AnnounceUpdate, a.EffectivePin)
+			if cfg.Pin != "" && cfg.Pin != buildinfo.Version {
+				select {
+				case updateKick <- struct{}{}:
+				default:
+				}
+			}
 		}
 		if cfg.Key == "" {
 			if config.LoadPendingKey(*configDir) != "" {
