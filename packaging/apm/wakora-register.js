@@ -11,5 +11,6 @@ try {
 	if (!process.env.OTEL_LOGS_EXPORTER) process.env.OTEL_LOGS_EXPORTER = 'none';
 	if (!process.env.OTEL_EXPORTER_OTLP_PROTOCOL) process.env.OTEL_EXPORTER_OTLP_PROTOCOL = 'http/protobuf';
 	if (!process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS) process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns,net';
-	require('./node_modules/@opentelemetry/auto-instrumentations-node/register');
+	if (!process.env.OTEL_NODE_RESOURCE_DETECTORS) process.env.OTEL_NODE_RESOURCE_DETECTORS = 'env,host,os,process';
+	require(require.resolve('@opentelemetry/auto-instrumentations-node/register', { paths: [__dirname] }));
 } catch (e) {}
