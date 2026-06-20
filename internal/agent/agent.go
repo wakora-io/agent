@@ -63,6 +63,11 @@ type Agent struct {
 	listenerPrev map[string]listenerCounts
 	apmEngine    *apm.Engine
 	apmErr       error
+	apmWant      map[string]apmWantSet
+	apmCurPorts  []int
+	apmCurDown   map[string][]int
+	apmPass      uint64
+	apmDrainPass uint64
 
 	lastSignal        string
 	baselineTold      bool
@@ -800,6 +805,7 @@ func selectDueProbes(active []protocol.Definition, lastRun map[string]time.Time,
 }
 
 func (a *Agent) runDueProbes(conn transport.Conn) error {
+	a.apmPass++
 	defs.JournalCycle()
 	if a.dropTailFDs.Swap(false) {
 		for _, t := range a.tailers {
@@ -1631,6 +1637,9 @@ func (a *Agent) serviceDenied(svc string) bool {
 }
 
 func (a *Agent) stopEBPF() {
+	a.apmWant = nil
+	a.apmCurPorts = nil
+	a.apmCurDown = nil
 	if a.apmEngine == nil {
 		a.apmErr = nil
 		return
@@ -1642,27 +1651,63 @@ func (a *Agent) stopEBPF() {
 }
 
 func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Probe) error {
+	ports := append([]int(nil), p.Ports...)
+	if p.PortProcess != "" {
+		for _, rp := range a.resolvePorts(p.PortProcess) {
+			found := false
+			for _, e := range ports {
+				if e == rp {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ports = append(ports, rp)
+			}
+		}
+	}
+	sort.Ints(ports)
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
 		CheckID:   service + "/" + p.Name,
 		Kind:      "ebpfhttp",
-		Target:    fmt.Sprintf("kprobe tcp ports %v", p.Ports),
+		Target:    fmt.Sprintf("kprobe tcp ports %v", ports),
 		Timestamp: time.Now().Unix(),
+	}
+	if len(ports) == 0 {
+		delete(a.apmWant, service)
+		check.Status = "fail"
+		check.Error = "no listening tcp ports discovered for process " + p.PortProcess
+		return a.sendCheck(conn, check)
+	}
+	down := map[string][]int{}
+	for _, c := range p.Downstream {
+		down[c.Name] = c.Ports
+	}
+	if a.apmWant == nil {
+		a.apmWant = map[string]apmWantSet{}
+	}
+	a.apmWant[service] = apmWantSet{ports: ports, down: down, seen: time.Now()}
+	unionPorts, unionDown := apmUnion(a.apmWant, time.Now())
+	if a.apmEngine != nil && (!intsEqual(unionPorts, a.apmCurPorts) || !downEqual(unionDown, a.apmCurDown)) {
+		a.apmEngine.Close()
+		a.apmEngine = nil
+		a.apmErr = nil
+		log.Printf("ebpf http engine restarting: ports %v -> %v", a.apmCurPorts, unionPorts)
 	}
 	if a.apmEngine == nil {
 		if a.apmErr == nil {
-			downstream := map[string][]int{}
-			for _, c := range p.Downstream {
-				downstream[c.Name] = c.Ports
-			}
 			a.apmEngine = apm.NewEngine()
-			if err := a.apmEngine.Start(p.Ports, downstream); err != nil {
+			if err := a.apmEngine.Start(unionPorts, unionDown); err != nil {
 				a.apmErr = err
 				a.apmEngine = nil
 				log.Printf("ebpf http engine unavailable: %v", err)
 			} else {
-				log.Printf("ebpf http engine started, ports %v downstream %v", p.Ports, downstream)
+				a.apmCurPorts = unionPorts
+				a.apmCurDown = unionDown
+				a.apmDrainPass = a.apmPass
+				log.Printf("ebpf http engine started, ports %v downstream %v", unionPorts, unionDown)
 			}
 		}
 		if a.apmEngine == nil {
@@ -1670,7 +1715,14 @@ func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Prob
 			check.Error = a.apmErr.Error()
 			return a.sendCheck(conn, check)
 		}
+		check.Status = "ok"
+		return a.sendCheck(conn, check)
 	}
+	if a.apmDrainPass == a.apmPass {
+		check.Status = "ok"
+		return a.sendCheck(conn, check)
+	}
+	a.apmDrainPass = a.apmPass
 	snap, derr := a.apmEngine.Drain()
 	if derr != nil {
 		check.Status = "fail"
