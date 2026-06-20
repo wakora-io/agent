@@ -1,0 +1,15 @@
+'use strict';
+try {
+	var parts = process.versions.node.split('.');
+	var major = parseInt(parts[0], 10);
+	var minor = parseInt(parts[1], 10);
+	if (major < 18 || (major === 18 && minor < 19)) return;
+	if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) return;
+	if (process.env.OTEL_SDK_DISABLED === 'true') return;
+	if (!process.env.OTEL_TRACES_EXPORTER) process.env.OTEL_TRACES_EXPORTER = 'otlp';
+	if (!process.env.OTEL_METRICS_EXPORTER) process.env.OTEL_METRICS_EXPORTER = 'none';
+	if (!process.env.OTEL_LOGS_EXPORTER) process.env.OTEL_LOGS_EXPORTER = 'none';
+	if (!process.env.OTEL_EXPORTER_OTLP_PROTOCOL) process.env.OTEL_EXPORTER_OTLP_PROTOCOL = 'http/protobuf';
+	if (!process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS) process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns,net';
+	require('./node_modules/@opentelemetry/auto-instrumentations-node/register');
+} catch (e) {}
