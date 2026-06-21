@@ -109,6 +109,22 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 	targets := nodeTargets(masters)
 	anyActive := false
 	for _, t := range targets {
+		if t.perApp {
+			errL, outL := pm2LogFiles(t.masters)
+			if errL != "" {
+				o.Facts["pm2LogsErr"] = errL
+			}
+			if outL != "" {
+				o.Facts["pm2LogsOut"] = outL
+			}
+		}
+		if u, ok := strings.CutPrefix(t.launch, "systemd:"); ok {
+			up, crashes := nodeUnitState(u)
+			o.Metrics = append(o.Metrics,
+				protocol.MetricPoint{Name: "svc." + service + ".up", Value: up, Tags: map[string]string{"unit": t.label}},
+				protocol.MetricPoint{Name: "svc." + service + ".crash_restarts", Value: crashes, Tags: map[string]string{"unit": t.label}})
+		}
+		o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + ".restarts_seen", Value: nodeRestartsSeen(t), Tags: map[string]string{"unit": t.label}})
 		key := "stage." + t.label
 		if len(targets) == 1 {
 			key = "otelStage"
@@ -227,6 +243,86 @@ func nodeTargets(masters []nodeMaster) []nodeTarget {
 		add("bare", nodeTarget{label: "bare", launch: m.launch}, m)
 	}
 	return out
+}
+
+func pm2LogFiles(masters []nodeMaster) (string, string) {
+	home := ""
+	for _, m := range masters {
+		environ, err := os.ReadFile("/proc/" + strconv.Itoa(m.pid) + "/environ")
+		if err != nil {
+			continue
+		}
+		for _, kv := range strings.Split(string(environ), "\x00") {
+			if v, ok := strings.CutPrefix(kv, "PM2_HOME="); ok && v != "" {
+				home = v
+				break
+			}
+			if v, ok := strings.CutPrefix(kv, "HOME="); ok && home == "" && v != "" {
+				home = filepath.Join(v, ".pm2")
+			}
+		}
+		if home != "" {
+			break
+		}
+	}
+	if home == "" {
+		home = "/root/.pm2"
+	}
+	entries, err := os.ReadDir(filepath.Join(home, "logs"))
+	if err != nil {
+		return "", ""
+	}
+	var errL, outL []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
+			continue
+		}
+		full := filepath.Join(home, "logs", e.Name())
+		if strings.HasSuffix(e.Name(), "-error.log") {
+			if len(errL) < 20 {
+				errL = append(errL, full)
+			}
+		} else if len(outL) < 20 {
+			outL = append(outL, full)
+		}
+	}
+	return strings.Join(errL, ","), strings.Join(outL, ",")
+}
+
+func nodeUnitState(unit string) (up, crashes float64) {
+	out, err := exec.Command("systemctl", "show", "-p", "ActiveState,NRestarts", unit).Output()
+	if err != nil {
+		return 0, 0
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(line, "ActiveState="); ok && strings.TrimSpace(v) == "active" {
+			up = 1
+		}
+		if v, ok := strings.CutPrefix(line, "NRestarts="); ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				crashes = float64(n)
+			}
+		}
+	}
+	return up, crashes
+}
+
+var nodePrevPids = map[string]string{}
+var nodeRestartCounts = map[string]float64{}
+
+func nodeRestartsSeen(t nodeTarget) float64 {
+	pids := make([]string, 0, len(t.masters))
+	for _, m := range t.masters {
+		pids = append(pids, strconv.Itoa(m.pid))
+	}
+	sort.Strings(pids)
+	sig := strings.Join(pids, ",")
+	prev, seen := nodePrevPids[t.label]
+	if seen && prev != sig {
+		nodeRestartCounts[t.label]++
+	}
+	nodePrevPids[t.label] = sig
+	return nodeRestartCounts[t.label]
 }
 
 func nodeExistingOptions(environ string) string {
