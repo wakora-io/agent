@@ -29,7 +29,10 @@ func (a *Agent) resolvePorts(process string) []int {
 		var info struct {
 			Process string `json:"process"`
 		}
-		if json.Unmarshal([]byte(f.Payload), &info) != nil || info.Process != process {
+		if json.Unmarshal([]byte(f.Payload), &info) != nil {
+			continue
+		}
+		if info.Process != process && !strings.HasPrefix(info.Process, process+" ") {
 			continue
 		}
 		p, err := strconv.Atoi(strings.TrimSuffix(f.Key, "/tcp"))

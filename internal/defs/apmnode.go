@@ -293,26 +293,30 @@ func nodeDropin(env map[string]string, sha string) string {
 }
 
 func nodeMasters(proc string) []nodeMaster {
-	out, err := exec.Command("pgrep", "-x", proc).Output()
+	dirs, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
 	seen := map[string]bool{}
 	var ms []nodeMaster
-	for _, f := range strings.Fields(string(out)) {
-		pid, err := strconv.Atoi(f)
+	for _, d := range dirs {
+		pid, err := strconv.Atoi(d.Name())
 		if err != nil {
 			continue
 		}
-		cg, _ := os.ReadFile("/proc/" + f + "/cgroup")
+		exe, err := os.Readlink("/proc/" + d.Name() + "/exe")
+		if err != nil || filepath.Base(exe) != proc {
+			continue
+		}
+		raw, _ := os.ReadFile("/proc/" + d.Name() + "/cmdline")
+		if strings.HasPrefix(string(raw), "PM2 ") {
+			continue
+		}
+		cg, _ := os.ReadFile("/proc/" + d.Name() + "/cgroup")
 		if nodeInContainer(string(cg)) {
 			continue
 		}
-		exe, _ := os.Readlink("/proc/" + f + "/exe")
-		if exe == "" {
-			continue
-		}
-		app := nodeAppOf("/proc/" + f + "/cmdline")
+		app := nodeAppOf(string(raw))
 		key := exe + "|" + app
 		if seen[key] {
 			continue
@@ -359,14 +363,13 @@ func nodeLaunchOf(cgroup string) string {
 	return "bare"
 }
 
-func nodeAppOf(cmdlinePath string) string {
-	raw, err := os.ReadFile(cmdlinePath)
-	if err != nil {
+func nodeAppOf(cmdline string) string {
+	args := strings.Split(cmdline, "\x00")
+	if len(args) == 0 {
 		return ""
 	}
-	args := strings.Split(string(raw), "\x00")
-	if len(args) < 2 {
-		return ""
+	if f := strings.Fields(args[0]); len(f) > 1 && len(args) < 3 && !strings.HasPrefix(f[1], "-") {
+		return f[1]
 	}
 	for _, a := range args[1:] {
 		if a == "" || strings.HasPrefix(a, "-") {
