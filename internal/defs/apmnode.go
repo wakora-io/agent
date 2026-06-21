@@ -250,14 +250,20 @@ func stageNodeTarget(o *Outcome, service, stateDir string, t nodeTarget, key, st
 	var content, command string
 	if t.perApp {
 		content = nodeEnvFile(env, sha)
-		command = "set -a; . " + stagedPath + "; set +a; pm2 restart all --update-env && pm2 save"
+		command = "set -a; . " + stagedPath + "; set +a; pm2 restart all --update-env && pm2 save || { " +
+			"export NODE_OPTIONS=\"" + existing + "\" OTEL_EXPORTER_OTLP_ENDPOINT=; pm2 restart all --update-env; pm2 save; " +
+			"echo 'wakora: pm2 activation failed - env reverted, apps restarted clean'; false; }"
 	} else {
 		content = nodeDropin(env, sha)
 		dst := "/etc/systemd/system/" + t.unit + ".d/10-wakora-otel.conf"
-		command = "mkdir -p /etc/systemd/system/" + t.unit + ".d && " +
-			"{ [ ! -e " + dst + " ] || cp -a " + dst + " " + dst + ".wakora-prev; } && cp " +
+		bdir := "/var/lib/wakora/backups/node-" + t.label + "-$(date +%Y%m%d-%H%M%S)"
+		command = "B=" + bdir + " && mkdir -p $B /etc/systemd/system/" + t.unit + ".d && " +
+			"{ [ ! -e " + dst + " ] || cp -a " + dst + " $B/; } && cp " +
 			stagedPath + " " + dst +
-			" && systemctl daemon-reload && systemctl restart " + t.unit
+			" && systemctl daemon-reload && systemctl restart " + t.unit + " || { " +
+			"rm -f " + dst + "; [ ! -e $B/10-wakora-otel.conf ] || cp -a $B/10-wakora-otel.conf " + dst + "; " +
+			"systemctl daemon-reload; systemctl restart " + t.unit + "; " +
+			"echo \"wakora: node activation failed - dropin reverted, original restored from $B\"; false; }"
 	}
 	change := apm.StagedChange{ID: stageID, Service: service, Kind: "node-otel", Impact: "restart", Command: command}
 	staged, isNew, err := apm.Stage(stateDir, change, []byte(content))
