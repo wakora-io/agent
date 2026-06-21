@@ -246,13 +246,19 @@ func stageNodeTarget(o *Outcome, service, stateDir string, t nodeTarget, key, st
 		svcName = ""
 	}
 	env := apm.NodeEnv(register, svcName, endpoint, existing)
-	content := nodeDropin(env, sha)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
-	dst := "/etc/systemd/system/" + t.unit + ".d/10-wakora-otel.conf"
-	command := "mkdir -p /etc/systemd/system/" + t.unit + ".d && " +
-		"{ [ ! -e " + dst + " ] || cp -a " + dst + " " + dst + ".wakora-prev; } && cp " +
-		stagedPath + " " + dst +
-		" && systemctl daemon-reload && systemctl restart " + t.unit
+	var content, command string
+	if t.perApp {
+		content = nodeEnvFile(env, sha)
+		command = "set -a; . " + stagedPath + "; set +a; pm2 restart all --update-env && pm2 save"
+	} else {
+		content = nodeDropin(env, sha)
+		dst := "/etc/systemd/system/" + t.unit + ".d/10-wakora-otel.conf"
+		command = "mkdir -p /etc/systemd/system/" + t.unit + ".d && " +
+			"{ [ ! -e " + dst + " ] || cp -a " + dst + " " + dst + ".wakora-prev; } && cp " +
+			stagedPath + " " + dst +
+			" && systemctl daemon-reload && systemctl restart " + t.unit
+	}
 	change := apm.StagedChange{ID: stageID, Service: service, Kind: "node-otel", Impact: "restart", Command: command}
 	staged, isNew, err := apm.Stage(stateDir, change, []byte(content))
 	if err != nil {
@@ -287,6 +293,19 @@ func nodeDropin(env map[string]string, sha string) string {
 	for _, k := range nodeEnvOrder {
 		if v := env[k]; v != "" {
 			fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", k, v)
+		}
+	}
+	return b.String()
+}
+
+func nodeEnvFile(env map[string]string, sha string) string {
+	var b strings.Builder
+	if sha != "" {
+		fmt.Fprintf(&b, "# wakora-artifact-sha %s\n", sha)
+	}
+	for _, k := range nodeEnvOrder {
+		if v := env[k]; v != "" {
+			fmt.Fprintf(&b, "%s=\"%s\"\n", k, v)
 		}
 	}
 	return b.String()
