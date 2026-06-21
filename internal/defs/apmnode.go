@@ -196,7 +196,8 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 			continue
 		}
 		if t.unit == "" {
-			o.Facts[key] = "unsupported launch: " + t.launch + " - start the app with NODE_OPTIONS=--require " + register + " to activate"
+			o.Facts[key] = "unsupported launch: " + t.launch
+			o.Facts["bareRecipe"] = "NODE_OPTIONS=\"--require " + register + "\" OTEL_EXPORTER_OTLP_ENDPOINT=\"" + endpoint + "\""
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(stateDir, "apm", nodeBundle)); err != nil {
