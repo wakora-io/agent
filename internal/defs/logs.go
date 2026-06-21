@@ -152,12 +152,18 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 	svc := service
 	var out []protocol.LogLine
 	var firstErr error
+	jLevelRe := l.compile(p.LevelRegex)
 	if len(p.Idents) > 0 {
 		lines, err := l.journal(p.Idents)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 		for _, ln := range lines {
+			if jLevelRe != nil {
+				if m := jLevelRe.FindStringSubmatch(ln.Message); len(m) >= 2 {
+					ln.Level = normalizeLevel(m[1])
+				}
+			}
 			ln.Level = downgradeTransportError(ln.Level, ln.Message)
 			if logLevelRank[ln.Level] > minRank {
 				continue
@@ -262,13 +268,13 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 
 func normalizeLevel(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "emerg", "alert", "crit", "critical", "err", "error", "fatal", "panic", "e", "f", "#":
+	case "emerg", "alert", "crit", "critical", "err", "error", "fatal", "panic", "e", "f", "#", "50", "60":
 		return "error"
-	case "warn", "warning", "w":
+	case "warn", "warning", "w", "40":
 		return "warn"
 	case "notice", "note", "log", "*":
 		return "notice"
-	case "debug", "trace", "d", ".":
+	case "debug", "trace", "d", ".", "10", "20":
 		return "debug"
 	}
 	return "info"
