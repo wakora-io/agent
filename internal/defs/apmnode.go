@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -352,6 +353,12 @@ func nodeMasters(proc string) []nodeMaster {
 			break
 		}
 	}
+	sort.Slice(ms, func(i, j int) bool {
+		if ms[i].launch != ms[j].launch {
+			return ms[i].launch < ms[j].launch
+		}
+		return ms[i].app < ms[j].app
+	})
 	for i := range ms {
 		ms[i].version = nodeVersionOf(ms[i].exe)
 	}
