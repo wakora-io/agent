@@ -2,6 +2,7 @@ package defs
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,10 +120,11 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 			}
 		}
 		if u, ok := strings.CutPrefix(t.launch, "systemd:"); ok {
-			up, crashes := nodeUnitState(u)
-			o.Metrics = append(o.Metrics,
-				protocol.MetricPoint{Name: "svc." + service + ".up", Value: up, Tags: map[string]string{"unit": t.label}},
-				protocol.MetricPoint{Name: "svc." + service + ".crash_restarts", Value: crashes, Tags: map[string]string{"unit": t.label}})
+			if up, crashes, stateOk := nodeUnitState(u); stateOk {
+				o.Metrics = append(o.Metrics,
+					protocol.MetricPoint{Name: "svc." + service + ".up", Value: up, Tags: map[string]string{"unit": t.label}},
+					protocol.MetricPoint{Name: "svc." + service + ".crash_restarts", Value: crashes, Tags: map[string]string{"unit": t.label}})
+			}
 		}
 		o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + ".restarts_seen", Value: nodeRestartsSeen(t), Tags: map[string]string{"unit": t.label}})
 		key := "stage." + t.label
@@ -289,22 +291,30 @@ func pm2LogFiles(masters []nodeMaster) (string, string) {
 	return strings.Join(errL, ","), strings.Join(outL, ",")
 }
 
-func nodeUnitState(unit string) (up, crashes float64) {
+func nodeUnitState(unit string) (up, crashes float64, ok bool) {
 	out, err := exec.Command("systemctl", "show", "-p", "ActiveState,NRestarts", unit).Output()
 	if err != nil {
-		return 0, 0
+		log.Printf("apmnode: systemctl show %s: %v", unit, err)
+		return 0, 0, false
 	}
+	seen := false
 	for _, line := range strings.Split(string(out), "\n") {
-		if v, ok := strings.CutPrefix(line, "ActiveState="); ok && strings.TrimSpace(v) == "active" {
-			up = 1
+		if v, found := strings.CutPrefix(line, "ActiveState="); found {
+			seen = true
+			if strings.TrimSpace(v) == "active" {
+				up = 1
+			}
 		}
-		if v, ok := strings.CutPrefix(line, "NRestarts="); ok {
+		if v, found := strings.CutPrefix(line, "NRestarts="); found {
 			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 				crashes = float64(n)
 			}
 		}
 	}
-	return up, crashes
+	if !seen {
+		log.Printf("apmnode: systemctl show %s returned no ActiveState", unit)
+	}
+	return up, crashes, seen
 }
 
 var nodePrevPids = map[string]string{}
