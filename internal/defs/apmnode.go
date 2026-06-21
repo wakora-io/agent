@@ -353,7 +353,20 @@ func nodeMasters(proc string) []nodeMaster {
 			break
 		}
 	}
+	rank := func(l string) int {
+		if strings.HasPrefix(l, "systemd:") {
+			return 0
+		}
+		if strings.HasPrefix(l, "pm2:") {
+			return 1
+		}
+		return 2
+	}
 	sort.Slice(ms, func(i, j int) bool {
+		ri, rj := rank(ms[i].launch), rank(ms[j].launch)
+		if ri != rj {
+			return ri < rj
+		}
 		if ms[i].launch != ms[j].launch {
 			return ms[i].launch < ms[j].launch
 		}
