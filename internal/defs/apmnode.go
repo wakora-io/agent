@@ -1,6 +1,7 @@
 package defs
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"wakora.io/agent/internal/apm"
 	"wakora.io/agent/internal/protocol"
 )
 
@@ -96,6 +98,134 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 	} else {
 		o.Facts["artifact"] = "artifact required: " + nodeBundle + " (OTel Node.js bundle)"
 	}
+
+	autostage := p.Options["autostage"] == "1"
+	endpoint := p.Options["otelEndpoint"]
+	if endpoint == "" {
+		endpoint = "http://127.0.0.1:4318"
+	}
+	register := filepath.Join(stateDir, "apm", nodeBundle, "wakora-register.js")
+	anyActive := false
+	for i, m := range masters {
+		label := nodeStageLabel(m, i)
+		key := "stage." + label
+		if len(masters) == 1 {
+			key = "otelStage"
+		}
+		environ, envErr := os.ReadFile("/proc/" + strconv.Itoa(m.pid) + "/environ")
+		active := envErr == nil && apm.NodeEnvActive(string(environ))
+		stageID := "apmnode-" + service + "-" + label
+		inst := 0.0
+		if active {
+			inst = 1
+		}
+		o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + ".instrumented", Value: inst, Tags: map[string]string{"unit": label}})
+		if active {
+			anyActive = true
+			o.Facts[key] = "active"
+			if apm.StagedState(stateDir, stageID) == "pending_activation" {
+				_ = apm.MarkActivated(stateDir, stageID)
+				o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{"service": service, "layer": "node-otel", "unit": label}))
+			}
+			if autostage && p.Options["autoprovision"] == "1" && Provision != nil {
+				if Provision.NeedsRefresh(nodeBundle) {
+					Provision.Ensure(nodeBundle, true)
+					o.Facts[key] = "active (fetching new signed build)"
+				} else if sha := Provision.LocalSha(nodeBundle); sha != "" && sha != stagedArtifactSha(stateDir, stageID) && !stagingDenied.Load() && strings.HasPrefix(m.launch, "systemd:") {
+					stageNode(o, service, stateDir, m, label, key, stageID, register, endpoint, sha)
+					o.Facts[key] = "active (new build staged; restart to apply)"
+				}
+			}
+			continue
+		}
+		if envErr == nil && apm.StagedState(stateDir, stageID) == "active" {
+			_ = apm.ResetStaged(stateDir, stageID)
+			o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{"service": service, "layer": "node-otel", "unit": label}))
+		}
+		if !autostage {
+			continue
+		}
+		if stagingDenied.Load() {
+			if apm.StagedState(stateDir, stageID) == "pending_activation" {
+				_ = apm.ResetStaged(stateDir, stageID)
+			}
+			o.Facts[key] = "disabled from the console"
+			continue
+		}
+		if !nodeVersionOK(m.version) {
+			o.Facts[key] = "blocked: node " + m.version + " (spans need >= 18.19)"
+			continue
+		}
+		if !strings.HasPrefix(m.launch, "systemd:") {
+			o.Facts[key] = "unsupported launch: " + m.launch + " (systemd services only for now)"
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(stateDir, "apm", nodeBundle)); err != nil {
+			continue
+		}
+		sha := ""
+		if Provision != nil {
+			sha = Provision.LocalSha(nodeBundle)
+		}
+		stageNode(o, service, stateDir, m, label, key, stageID, register, endpoint, sha)
+	}
+	if anyActive || autostage {
+		ensureOTLPFor(p.Options["otelEndpoint"])
+	}
+}
+
+func stageNode(o *Outcome, service, stateDir string, m nodeMaster, label, key, stageID, register, endpoint, sha string) {
+	unit := strings.TrimPrefix(m.launch, "systemd:")
+	env := apm.NodeEnv(register, label, endpoint)
+	content := nodeDropin(env, sha)
+	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
+	dst := "/etc/systemd/system/" + unit + ".d/10-wakora-otel.conf"
+	command := "mkdir -p /etc/systemd/system/" + unit + ".d && " +
+		"{ [ ! -e " + dst + " ] || cp -a " + dst + " " + dst + ".wakora-prev; } && cp " +
+		stagedPath + " " + dst +
+		" && systemctl daemon-reload && systemctl restart " + unit
+	change := apm.StagedChange{ID: stageID, Service: service, Kind: "node-otel", Impact: "restart", Command: command}
+	staged, isNew, err := apm.Stage(stateDir, change, []byte(content))
+	if err != nil {
+		o.Facts[key] = "stage failed: " + err.Error()
+		return
+	}
+	o.Facts[key] = staged.State
+	if isNew {
+		o.Events = append(o.Events, apmEvent("action_required", map[string]string{
+			"service": service, "change": "node-otel", "impact": "restart",
+			"command": staged.Command, "stagedPath": staged.StagedPath, "unit": label, "host": "systemd",
+		}))
+	}
+}
+
+var nodeEnvOrder = []string{"NODE_OPTIONS", "OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT"}
+
+func nodeDropin(env map[string]string, sha string) string {
+	var b strings.Builder
+	b.WriteString("[Service]\n")
+	if sha != "" {
+		fmt.Fprintf(&b, "# wakora-artifact-sha %s\n", sha)
+	}
+	for _, k := range nodeEnvOrder {
+		if v := env[k]; v != "" {
+			fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", k, v)
+		}
+	}
+	return b.String()
+}
+
+func nodeStageLabel(m nodeMaster, i int) string {
+	if u, ok := strings.CutPrefix(m.launch, "systemd:"); ok {
+		return strings.TrimSuffix(u, ".service")
+	}
+	if strings.HasPrefix(m.launch, "pm2:") {
+		return "pm2"
+	}
+	if i == 0 {
+		return "bare"
+	}
+	return "bare-" + strconv.Itoa(i+1)
 }
 
 func nodeMasters(proc string) []nodeMaster {
