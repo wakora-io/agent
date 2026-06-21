@@ -105,42 +105,55 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 		endpoint = "http://127.0.0.1:4318"
 	}
 	register := filepath.Join(stateDir, "apm", nodeBundle, "wakora-register.js")
+	targets := nodeTargets(masters)
 	anyActive := false
-	for i, m := range masters {
-		label := nodeStageLabel(m, i)
-		key := "stage." + label
-		if len(masters) == 1 {
+	for _, t := range targets {
+		key := "stage." + t.label
+		if len(targets) == 1 {
 			key = "otelStage"
 		}
-		environ, envErr := os.ReadFile("/proc/" + strconv.Itoa(m.pid) + "/environ")
-		active := envErr == nil && apm.NodeEnvActive(string(environ))
-		stageID := "apmnode-" + service + "-" + label
-		inst := 0.0
-		if active {
-			inst = 1
+		stageID := "apmnode-" + service + "-" + t.label
+		activeN := 0
+		detectOk := false
+		existing := ""
+		for _, m := range t.masters {
+			environ, envErr := os.ReadFile("/proc/" + strconv.Itoa(m.pid) + "/environ")
+			if envErr != nil {
+				continue
+			}
+			detectOk = true
+			if apm.NodeEnvActive(string(environ)) {
+				activeN++
+			} else if existing == "" {
+				existing = nodeExistingOptions(string(environ))
+			}
 		}
-		o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + ".instrumented", Value: inst, Tags: map[string]string{"unit": label}})
-		if active {
+		o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + ".instrumented", Value: float64(activeN) / float64(len(t.masters)), Tags: map[string]string{"unit": t.label}})
+		if detectOk && activeN == len(t.masters) {
 			anyActive = true
 			o.Facts[key] = "active"
 			if apm.StagedState(stateDir, stageID) == "pending_activation" {
 				_ = apm.MarkActivated(stateDir, stageID)
-				o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{"service": service, "layer": "node-otel", "unit": label}))
+				o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{"service": service, "layer": "node-otel", "unit": t.label}))
 			}
 			if autostage && p.Options["autoprovision"] == "1" && Provision != nil {
 				if Provision.NeedsRefresh(nodeBundle) {
 					Provision.Ensure(nodeBundle, true)
 					o.Facts[key] = "active (fetching new signed build)"
-				} else if sha := Provision.LocalSha(nodeBundle); sha != "" && sha != stagedArtifactSha(stateDir, stageID) && !stagingDenied.Load() && strings.HasPrefix(m.launch, "systemd:") {
-					stageNode(o, service, stateDir, m, label, key, stageID, register, endpoint, sha)
+				} else if sha := Provision.LocalSha(nodeBundle); sha != "" && sha != stagedArtifactSha(stateDir, stageID) && !stagingDenied.Load() && t.unit != "" {
+					stageNodeTarget(o, service, stateDir, t, key, stageID, register, endpoint, sha, "")
 					o.Facts[key] = "active (new build staged; restart to apply)"
 				}
 			}
 			continue
 		}
-		if envErr == nil && apm.StagedState(stateDir, stageID) == "active" {
+		if detectOk && activeN == 0 && apm.StagedState(stateDir, stageID) == "active" {
 			_ = apm.ResetStaged(stateDir, stageID)
-			o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{"service": service, "layer": "node-otel", "unit": label}))
+			o.Events = append(o.Events, apmEvent("apm_deactivated", map[string]string{"service": service, "layer": "node-otel", "unit": t.label}))
+		}
+		if activeN > 0 {
+			o.Facts[key] = fmt.Sprintf("partial: %d/%d instrumented", activeN, len(t.masters))
+			continue
 		}
 		if !autostage {
 			continue
@@ -152,12 +165,19 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 			o.Facts[key] = "disabled from the console"
 			continue
 		}
-		if !nodeVersionOK(m.version) {
-			o.Facts[key] = "blocked: node " + m.version + " (spans need >= 18.19)"
+		verBad := ""
+		for _, m := range t.masters {
+			if !nodeVersionOK(m.version) {
+				verBad = m.version
+				break
+			}
+		}
+		if verBad != "" {
+			o.Facts[key] = "blocked: node " + verBad + " (spans need >= 18.19)"
 			continue
 		}
-		if !strings.HasPrefix(m.launch, "systemd:") {
-			o.Facts[key] = "unsupported launch: " + m.launch + " (systemd services only for now)"
+		if t.unit == "" {
+			o.Facts[key] = "unsupported launch: " + t.launch + " - start the app with NODE_OPTIONS=--require " + register + " to activate"
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(stateDir, "apm", nodeBundle)); err != nil {
@@ -167,23 +187,72 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 		if Provision != nil {
 			sha = Provision.LocalSha(nodeBundle)
 		}
-		stageNode(o, service, stateDir, m, label, key, stageID, register, endpoint, sha)
+		stageNodeTarget(o, service, stateDir, t, key, stageID, register, endpoint, sha, existing)
 	}
 	if anyActive || autostage {
 		ensureOTLPFor(p.Options["otelEndpoint"])
 	}
 }
 
-func stageNode(o *Outcome, service, stateDir string, m nodeMaster, label, key, stageID, register, endpoint, sha string) {
-	unit := strings.TrimPrefix(m.launch, "systemd:")
-	env := apm.NodeEnv(register, label, endpoint)
+type nodeTarget struct {
+	label   string
+	unit    string
+	launch  string
+	perApp  bool
+	masters []nodeMaster
+}
+
+func nodeTargets(masters []nodeMaster) []nodeTarget {
+	var out []nodeTarget
+	idx := map[string]int{}
+	add := func(gk string, t nodeTarget, m nodeMaster) {
+		if i, ok := idx[gk]; ok {
+			out[i].masters = append(out[i].masters, m)
+			return
+		}
+		idx[gk] = len(out)
+		t.masters = []nodeMaster{m}
+		out = append(out, t)
+	}
+	for _, m := range masters {
+		if u, ok := strings.CutPrefix(m.launch, "systemd:"); ok {
+			add("s:"+u, nodeTarget{label: strings.TrimSuffix(u, ".service"), unit: u, launch: m.launch}, m)
+			continue
+		}
+		if u, ok := strings.CutPrefix(m.launch, "pm2:"); ok {
+			add("pm2", nodeTarget{label: "pm2", unit: u, launch: m.launch, perApp: true}, m)
+			continue
+		}
+		add("bare", nodeTarget{label: "bare", launch: m.launch}, m)
+	}
+	return out
+}
+
+func nodeExistingOptions(environ string) string {
+	for _, kv := range strings.Split(environ, "\x00") {
+		if v, ok := strings.CutPrefix(kv, "NODE_OPTIONS="); ok {
+			if strings.Contains(v, "wakora-register.js") {
+				return ""
+			}
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func stageNodeTarget(o *Outcome, service, stateDir string, t nodeTarget, key, stageID, register, endpoint, sha, existing string) {
+	svcName := t.label
+	if t.perApp {
+		svcName = ""
+	}
+	env := apm.NodeEnv(register, svcName, endpoint, existing)
 	content := nodeDropin(env, sha)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
-	dst := "/etc/systemd/system/" + unit + ".d/10-wakora-otel.conf"
-	command := "mkdir -p /etc/systemd/system/" + unit + ".d && " +
+	dst := "/etc/systemd/system/" + t.unit + ".d/10-wakora-otel.conf"
+	command := "mkdir -p /etc/systemd/system/" + t.unit + ".d && " +
 		"{ [ ! -e " + dst + " ] || cp -a " + dst + " " + dst + ".wakora-prev; } && cp " +
 		stagedPath + " " + dst +
-		" && systemctl daemon-reload && systemctl restart " + unit
+		" && systemctl daemon-reload && systemctl restart " + t.unit
 	change := apm.StagedChange{ID: stageID, Service: service, Kind: "node-otel", Impact: "restart", Command: command}
 	staged, isNew, err := apm.Stage(stateDir, change, []byte(content))
 	if err != nil {
@@ -192,10 +261,18 @@ func stageNode(o *Outcome, service, stateDir string, m nodeMaster, label, key, s
 	}
 	o.Facts[key] = staged.State
 	if isNew {
-		o.Events = append(o.Events, apmEvent("action_required", map[string]string{
+		det := map[string]string{
 			"service": service, "change": "node-otel", "impact": "restart",
-			"command": staged.Command, "stagedPath": staged.StagedPath, "unit": label, "host": "systemd",
-		}))
+			"command": staged.Command, "stagedPath": staged.StagedPath, "unit": t.label, "host": "systemd",
+		}
+		if t.perApp {
+			det["host"] = "pm2"
+			det["scope"] = strconv.Itoa(len(t.masters)) + " pm2 apps restart together"
+		}
+		if existing != "" {
+			det["merged"] = existing
+		}
+		o.Events = append(o.Events, apmEvent("action_required", det))
 	}
 }
 
@@ -213,19 +290,6 @@ func nodeDropin(env map[string]string, sha string) string {
 		}
 	}
 	return b.String()
-}
-
-func nodeStageLabel(m nodeMaster, i int) string {
-	if u, ok := strings.CutPrefix(m.launch, "systemd:"); ok {
-		return strings.TrimSuffix(u, ".service")
-	}
-	if strings.HasPrefix(m.launch, "pm2:") {
-		return "pm2"
-	}
-	if i == 0 {
-		return "bare"
-	}
-	return "bare-" + strconv.Itoa(i+1)
 }
 
 func nodeMasters(proc string) []nodeMaster {

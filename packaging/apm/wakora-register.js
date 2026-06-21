@@ -6,6 +6,8 @@ try {
 	if (major < 18 || (major === 18 && minor < 19)) return;
 	if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) return;
 	if (process.env.OTEL_SDK_DISABLED === 'true') return;
+	if (process.env.PM2_HOME && process.env.pm_id === undefined) return;
+	if (!process.env.OTEL_SERVICE_NAME && process.env.pm_id !== undefined && process.env.name) process.env.OTEL_SERVICE_NAME = process.env.name;
 	if (!process.env.OTEL_TRACES_EXPORTER) process.env.OTEL_TRACES_EXPORTER = 'otlp';
 	if (!process.env.OTEL_METRICS_EXPORTER) process.env.OTEL_METRICS_EXPORTER = 'none';
 	if (!process.env.OTEL_LOGS_EXPORTER) process.env.OTEL_LOGS_EXPORTER = 'none';
