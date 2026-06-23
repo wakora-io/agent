@@ -396,7 +396,7 @@ func stageNodeTarget(o *Outcome, service, stateDir string, t nodeTarget, key, st
 	}
 }
 
-var nodeEnvOrder = []string{"NODE_OPTIONS", "OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT"}
+var nodeEnvOrder = []string{"NODE_OPTIONS", "OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER"}
 
 func nodeDropin(env map[string]string, sha string) string {
 	var b strings.Builder

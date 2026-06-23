@@ -10,6 +10,8 @@ func NodeEnv(register, serviceName, endpoint, existingOptions string) map[string
 	m := map[string]string{
 		"NODE_OPTIONS":                opts,
 		"OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
+		"OTEL_TRACES_EXPORTER":        "otlp",
+		"OTEL_METRICS_EXPORTER":       "otlp",
 	}
 	if serviceName != "" {
 		m["OTEL_SERVICE_NAME"] = serviceName
