@@ -64,11 +64,11 @@ func runAPMNodeProfile(o *Outcome, service string, p protocol.Probe) {
 	}
 	data := filepath.Join(os.TempDir(), "wk-nodeperf-"+strconv.Itoa(pids[0])+".data")
 	defer os.Remove(data)
-	args := []string{"record", "-F", strconv.Itoa(nodeProfileHz), "-g", "-o", data}
-	for _, pid := range pids {
-		args = append(args, "-p", strconv.Itoa(pid))
+	pidList := make([]string, len(pids))
+	for i, pid := range pids {
+		pidList[i] = strconv.Itoa(pid)
 	}
-	args = append(args, "--", "sleep", strconv.Itoa(windowSec))
+	args := []string{"record", "-F", strconv.Itoa(nodeProfileHz), "-g", "-o", data, "-p", strings.Join(pidList, ","), "--", "sleep", strconv.Itoa(windowSec)}
 	if err := exec.Command("perf", args...).Run(); err != nil {
 		o.Check.Status = "fail"
 		o.Check.Error = "perf record: " + err.Error()
