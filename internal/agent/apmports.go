@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,12 +30,19 @@ func (a *Agent) resolvePorts(process string) []int {
 		}
 		var info struct {
 			Process string `json:"process"`
+			Pid     int    `json:"pid"`
 		}
 		if json.Unmarshal([]byte(f.Payload), &info) != nil {
 			continue
 		}
 		if info.Process != process && !strings.HasPrefix(info.Process, process+" ") {
-			continue
+			if info.Pid <= 0 {
+				continue
+			}
+			exe, err := os.Readlink("/proc/" + strconv.Itoa(info.Pid) + "/exe")
+			if err != nil || path.Base(exe) != process {
+				continue
+			}
 		}
 		p, err := strconv.Atoi(strings.TrimSuffix(f.Key, "/tcp"))
 		if err != nil || p <= 0 || seen[p] {

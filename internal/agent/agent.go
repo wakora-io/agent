@@ -826,6 +826,14 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			continue
 		}
 		for _, p := range run.probes {
+			if p.Capability != "" {
+				a.mu.Lock()
+				facts := a.facts
+				a.mu.Unlock()
+				if !defs.HasCapability(facts, p.Capability) {
+					continue
+				}
+			}
 			if p.Type == "logtail" {
 				if err := a.runLogtail(conn, d.Service, p); err != nil {
 					return err

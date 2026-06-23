@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"path"
 	"strings"
 
 	"wakora.io/agent/internal/discovery"
@@ -78,14 +79,31 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 		}
 		return false
 	}
+	hasProcess := func(want string) bool {
+		for _, f := range facts {
+			if f.Kind != "process" {
+				continue
+			}
+			if f.Key == want {
+				return true
+			}
+			var info struct {
+				Exe string `json:"exe"`
+			}
+			if json.Unmarshal([]byte(f.Payload), &info) == nil && info.Exe != "" && path.Base(info.Exe) == want {
+				return true
+			}
+		}
+		return false
+	}
 	m := d.Match
 	if m.Process == "" && m.ProcessPrefix == "" && m.Port == "" && m.Package == "" && m.Unit == "" && m.Init == "" && m.Capability == "" {
 		return false
 	}
-	if m.Capability != "" && !hasCapability(facts, m.Capability) {
+	if m.Capability != "" && !HasCapability(facts, m.Capability) {
 		return false
 	}
-	if m.Process != "" && !has("process", m.Process) {
+	if m.Process != "" && !hasProcess(m.Process) {
 		return false
 	}
 	if m.ProcessPrefix != "" && !hasPrefix("process", m.ProcessPrefix) {
@@ -119,7 +137,7 @@ func Matches(d protocol.Definition, facts []discovery.Fact) bool {
 	return true
 }
 
-func hasCapability(facts []discovery.Fact, key string) bool {
+func HasCapability(facts []discovery.Fact, key string) bool {
 	for _, f := range facts {
 		if f.Kind != "capability" || f.Key != key {
 			continue

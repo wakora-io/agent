@@ -232,6 +232,7 @@ type Probe struct {
 	Port         int               `json:"port,omitempty"`
 	Ports        []int             `json:"ports,omitempty"`
 	Downstream   []Component       `json:"downstream,omitempty"`
+	Capability   string            `json:"capability,omitempty"`
 	Options      map[string]string `json:"options,omitempty"`
 	AllowFrom    []string          `json:"allowFrom,omitempty"`
 	OKCodes      []int             `json:"okCodes,omitempty"`

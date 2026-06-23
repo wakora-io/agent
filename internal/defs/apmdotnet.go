@@ -171,10 +171,14 @@ func stageDotnet(o *Outcome, service string, p protocol.Probe, stateDir, bundle,
 		}
 		content = systemdDropin(env, sha)
 		dst := "/etc/systemd/system/" + unit + ".service.d/10-wakora-otel.conf"
-		command = "mkdir -p /etc/systemd/system/" + unit + ".service.d && " +
-			"{ [ ! -e " + dst + " ] || cp -a " + dst + " " + dst + ".wakora-prev; } && cp " +
+		bdir := "/var/lib/wakora/backups/dotnet-" + unit + "-$(date +%Y%m%d-%H%M%S)"
+		command = "B=" + bdir + " && mkdir -p $B /etc/systemd/system/" + unit + ".service.d && " +
+			"{ [ ! -e " + dst + " ] || cp -a " + dst + " $B/; } && cp " +
 			stagedPath + " " + dst +
-			" && systemctl daemon-reload && systemctl restart " + unit
+			" && systemctl daemon-reload && systemctl restart " + unit + " || { " +
+			"rm -f " + dst + "; [ ! -e $B/10-wakora-otel.conf ] || cp -a $B/10-wakora-otel.conf " + dst + "; " +
+			"systemctl daemon-reload; systemctl restart " + unit + "; " +
+			"echo \"wakora: dotnet activation failed - dropin reverted, original restored from $B\"; false; }"
 	}
 
 	change := apm.StagedChange{ID: stageID, Service: service, Kind: "dotnet-otel", Impact: "restart", Command: command}
