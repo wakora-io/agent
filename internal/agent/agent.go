@@ -1908,6 +1908,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		}
 		defs.SetStagingDenied(deny["staged"])
 		defs.SetDeepTraceAllowed(allow["deeptrace"])
+		defs.SetNodeProfileAllowed(allow["nodeprofile"])
 		a.setRumSites(set.RumSites)
 		denySvc := map[string]bool{}
 		for _, sv := range set.DenyServices {

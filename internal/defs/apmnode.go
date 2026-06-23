@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"wakora.io/agent/internal/apm"
@@ -18,6 +19,10 @@ import (
 )
 
 const nodeBundle = "opentelemetry-node"
+
+var nodeProfileAllowed atomic.Bool
+
+func SetNodeProfileAllowed(v bool) { nodeProfileAllowed.Store(v) }
 
 type nodeMaster struct {
 	pid     int
@@ -107,7 +112,7 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 		endpoint = "http://127.0.0.1:4318"
 	}
 	register := filepath.Join(stateDir, "apm", nodeBundle, "wakora-register.js")
-	profile := p.Options["profile"] == "1"
+	profile := p.Options["profile"] == "1" || nodeProfileAllowed.Load()
 	targets := nodeTargets(masters)
 	anyActive := false
 	for _, t := range targets {
