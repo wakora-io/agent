@@ -82,6 +82,7 @@ func (a *Agent) ensureOTLP(ctx context.Context, port int) {
 func (a *Agent) serveOTLP(ctx context.Context, port int, binds []string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", a.handleOTLPTraces)
+	mux.HandleFunc("/v1/metrics", a.handleOTLPMetrics)
 	mux.HandleFunc("/v1/rum", a.handleRumBeacon)
 	srv := &http.Server{Handler: mux, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
 
@@ -104,7 +105,7 @@ func (a *Agent) serveOTLP(ctx context.Context, port int, binds []string) {
 		if h != "127.0.0.1" {
 			scope = "container bridge"
 		}
-		log.Printf("otlp: accepting spans on http://%s/v1/traces (%s, JSON)", addr, scope)
+		log.Printf("otlp: accepting spans and metrics on http://%s (%s)", addr, scope)
 		go func(l net.Listener) { _ = srv.Serve(l) }(ln)
 	}
 	if bound == 0 {
@@ -162,6 +163,56 @@ func (a *Agent) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{}"))
+	default:
+		http.Error(w, "agent busy or offline, retry later", http.StatusTooManyRequests)
+	}
+}
+
+func (a *Agent) handleOTLPMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	ct := r.Header.Get("Content-Type")
+	proto := strings.Contains(ct, "protobuf") || strings.Contains(ct, "x-protobuf")
+	var pts []protocol.MetricPoint
+	if proto {
+		pts, err = convertOTLPMetricsProto(body)
+		if err != nil {
+			http.Error(w, "invalid OTLP protobuf", http.StatusBadRequest)
+			return
+		}
+	} else {
+		var exp otlpMetricsExport
+		if err := json.Unmarshal(body, &exp); err != nil {
+			http.Error(w, "invalid OTLP JSON", http.StatusBadRequest)
+			return
+		}
+		pts = convertOTLPMetrics(exp)
+	}
+	writeOK := func() {
+		if proto {
+			w.Header().Set("Content-Type", "application/x-protobuf")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(otlpMetricsProtoResponse())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{}"))
+	}
+	if len(pts) == 0 {
+		writeOK()
+		return
+	}
+	select {
+	case a.custom <- pts:
+		writeOK()
 	default:
 		http.Error(w, "agent busy or offline, retry later", http.StatusTooManyRequests)
 	}
