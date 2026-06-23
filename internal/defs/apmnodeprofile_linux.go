@@ -23,6 +23,11 @@ const (
 var perfOffsetRe = regexp.MustCompile(`\+0x[0-9a-f]+$`)
 
 func runAPMNodeProfile(o *Outcome, service string, p protocol.Probe) {
+	if !nodeProfileAllowed.Load() && p.Options["profile"] != "1" {
+		o.Check.Status = "ok"
+		o.Check.Target = "cpu profiler not enabled for this host"
+		return
+	}
 	if os.Geteuid() != 0 {
 		o.Check.Status = "fail"
 		o.Check.Error = "node cpu profiling needs root (perf CAP_PERFMON)"
