@@ -2,10 +2,13 @@ package apm
 
 import "strings"
 
-func NodeEnv(register, serviceName, endpoint, existingOptions string) map[string]string {
+func NodeEnv(register, serviceName, endpoint, existingOptions string, perf bool) map[string]string {
 	opts := "--require " + register
 	if existingOptions != "" {
 		opts = existingOptions + " " + opts
+	}
+	if perf {
+		opts += " --perf-basic-prof-only-functions"
 	}
 	m := map[string]string{
 		"NODE_OPTIONS":                opts,

@@ -107,6 +107,7 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 		endpoint = "http://127.0.0.1:4318"
 	}
 	register := filepath.Join(stateDir, "apm", nodeBundle, "wakora-register.js")
+	profile := p.Options["profile"] == "1"
 	targets := nodeTargets(masters)
 	anyActive := false
 	for _, t := range targets {
@@ -160,7 +161,7 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 					Provision.Ensure(nodeBundle, true)
 					o.Facts[key] = "active (fetching new signed build)"
 				} else if sha := Provision.LocalSha(nodeBundle); sha != "" && sha != stagedArtifactSha(stateDir, stageID) && !stagingDenied.Load() && t.unit != "" {
-					stageNodeTarget(o, service, stateDir, t, key, stageID, register, endpoint, sha, "")
+					stageNodeTarget(o, service, stateDir, t, key, stageID, register, endpoint, sha, "", profile)
 					o.Facts[key] = "active (new build staged; restart to apply)"
 				}
 			}
@@ -207,7 +208,7 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 		if Provision != nil {
 			sha = Provision.LocalSha(nodeBundle)
 		}
-		stageNodeTarget(o, service, stateDir, t, key, stageID, register, endpoint, sha, existing)
+		stageNodeTarget(o, service, stateDir, t, key, stageID, register, endpoint, sha, existing, profile)
 	}
 	if anyActive || autostage {
 		ensureOTLPFor(p.Options["otelEndpoint"])
@@ -348,12 +349,12 @@ func nodeExistingOptions(environ string) string {
 	return ""
 }
 
-func stageNodeTarget(o *Outcome, service, stateDir string, t nodeTarget, key, stageID, register, endpoint, sha, existing string) {
+func stageNodeTarget(o *Outcome, service, stateDir string, t nodeTarget, key, stageID, register, endpoint, sha, existing string, perf bool) {
 	svcName := t.label
 	if t.perApp {
 		svcName = ""
 	}
-	env := apm.NodeEnv(register, svcName, endpoint, existing)
+	env := apm.NodeEnv(register, svcName, endpoint, existing, perf)
 	stagedPath := filepath.Join(stateDir, "staged", stageID+".staged")
 	var content, command string
 	if t.perApp {

@@ -892,7 +892,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
-			if p.Type == "apmprofile" || p.Type == "apmdotnetprofile" {
+			if p.Type == "apmprofile" || p.Type == "apmdotnetprofile" || p.Type == "apmnodeprofile" {
 				if a.denied("profiler") {
 					continue
 				}
@@ -1581,9 +1581,12 @@ func (a *Agent) startProfile(service string, p protocol.Probe) {
 	a.mu.Unlock()
 	go func() {
 		var o defs.Outcome
-		if p.Type == "apmdotnetprofile" {
+		switch p.Type {
+		case "apmdotnetprofile":
 			o = defs.RunAPMDotnetProfile(service, p, a.cfg.StateDir())
-		} else {
+		case "apmnodeprofile":
+			o = defs.RunAPMNodeProfile(service, p)
+		default:
 			o = defs.RunAPMProfile(service, p)
 		}
 		a.mu.Lock()
