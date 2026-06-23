@@ -157,6 +157,24 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 		if detectOk && activeN == len(t.masters) {
 			anyActive = true
 			o.Facts[key] = "active"
+			perfMatch := true
+			for _, m := range t.masters {
+				if env, err := os.ReadFile("/proc/" + strconv.Itoa(m.pid) + "/environ"); err == nil {
+					if strings.Contains(string(env), "--perf-basic-prof") != profile {
+						perfMatch = false
+						break
+					}
+				}
+			}
+			if !perfMatch && autostage && !stagingDenied.Load() && t.unit != "" {
+				sha := ""
+				if Provision != nil {
+					sha = Provision.LocalSha(nodeBundle)
+				}
+				stageNodeTarget(o, service, stateDir, t, key, stageID, register, endpoint, sha, "", profile)
+				o.Facts[key] = "active (cpu profiler change staged; restart to apply)"
+				continue
+			}
 			if apm.StagedState(stateDir, stageID) == "pending_activation" {
 				_ = apm.MarkActivated(stateDir, stageID)
 				o.Events = append(o.Events, apmEvent("apm_activated", map[string]string{"service": service, "layer": "node-otel", "unit": t.label}))
