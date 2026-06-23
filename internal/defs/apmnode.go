@@ -53,9 +53,13 @@ func RunAPMNode(service string, p protocol.Probe, stateDir string) (o Outcome) {
 }
 
 func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
+	if runtime.GOOS == "windows" {
+		runAPMNodeWindows(o, service, p, stateDir)
+		return
+	}
 	if runtime.GOOS != "linux" {
 		o.Check.Status = "fail"
-		o.Check.Error = "node apm is linux-only for now"
+		o.Check.Error = "node apm is linux/windows only for now"
 		return
 	}
 	proc := p.Process
