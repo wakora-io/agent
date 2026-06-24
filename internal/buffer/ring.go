@@ -25,6 +25,16 @@ func New(path string, maxSize int64, maxAge time.Duration) *Ring {
 	return &Ring{path: path, maxSize: maxSize, maxAge: maxAge, now: time.Now}
 }
 
+func (r *Ring) Size() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	info, err := os.Stat(r.path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
 func (r *Ring) Append(line []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

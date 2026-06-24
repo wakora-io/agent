@@ -91,6 +91,10 @@ type Agent struct {
 
 	pin         atomic.Value
 	pinFromPush atomic.Bool
+
+	lastAck     atomic.Int64
+	lastConnect atomic.Int64
+	lastRotate  atomic.Int64
 }
 
 var pendingCap = 8192
@@ -302,7 +306,9 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 	defs.OTLPEnsure = func(port int) { a.ensureOTLP(ctx, port) }
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
-		defer a.connected.Store(false)
+		a.lastConnect.Store(time.Now().Unix())
+		a.writeStatus()
+		defer func() { a.connected.Store(false); a.writeStatus() }()
 		conn = &trackedConn{inner: conn, a: a}
 		defer a.spoolPending()
 
@@ -581,6 +587,7 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 		log.Printf("encode heartbeat failed: %v", err)
 		return nil
 	}
+	a.writeStatus()
 	return conn.Send(msg)
 }
 
@@ -1891,6 +1898,7 @@ func tailConfigSig(defsList []protocol.Definition, deny, denySvc, logDeep map[st
 func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {
 	switch m.Type {
 	case protocol.TypeAck:
+		a.lastAck.Store(time.Now().Unix())
 		a.ackPending(m.Seq)
 	case protocol.TypeConfig:
 		var set protocol.DefinitionSet
@@ -1966,6 +1974,8 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 				return
 			}
 			a.key.Store(c.Key)
+			a.lastRotate.Store(time.Now().Unix())
+			a.writeStatus()
 			log.Print("per-server key rotated")
 		case "updateNow":
 			if a.updateKick != nil {

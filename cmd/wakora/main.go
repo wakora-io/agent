@@ -91,6 +91,11 @@ func main() {
 		return
 	}
 
+	if args := flag.Args(); len(args) > 0 && args[0] == "doctor" {
+		runDoctor(*configDir, args[1:])
+		return
+	}
+
 	cfg, err := config.Load(*configDir)
 	if err != nil {
 		if !underServiceManager() {
@@ -252,6 +257,7 @@ func usage() {
 	fmt.Fprintln(out, "\nUsage:")
 	fmt.Fprintln(out, "  wakora [flags]                                 run the agent (service mode)")
 	fmt.Fprintln(out, "  wakora --key <TEAMKEY>                         register this host and exit")
+	fmt.Fprintln(out, "  wakora doctor [--bundle]                       self-diagnostics; --bundle writes a redacted support tar to /tmp")
 	fmt.Fprintln(out, "  wakora uninstall [--force]                     deregister and remove the agent from this host")
 	fmt.Fprintln(out, "  wakora service <install|uninstall|start|stop>  manage the OS service")
 	fmt.Fprintln(out, "  wakora secret <set NAME|list|rm NAME>          manage local service credentials")

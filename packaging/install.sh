@@ -117,3 +117,10 @@ else
 fi
 
 echo "Done! Host will appear in the console within ~1 minute"
+
+# self-diagnostics: a green checklist beats silence as a first impression. this
+# is display-only - a transient "data flow: connecting" right after install must
+# never fail the installer, so the doctor's exit code is ignored
+sleep 2
+echo
+/usr/local/bin/wakora doctor || true
