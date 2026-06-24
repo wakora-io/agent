@@ -26,6 +26,7 @@ import (
 	"wakora.io/agent/internal/protocol"
 	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
+	"wakora.io/agent/internal/update"
 )
 
 type Agent struct {
@@ -267,6 +268,10 @@ func (a *Agent) applyPushedPin(p string) {
 		a.pinFromPush.Store(false)
 		_ = config.WriteOverride(a.cfg.Dir(), "agent", "pin", "")
 		a.kickUpdate()
+		return
+	}
+	if !update.PinSupported(p) {
+		log.Printf("ignoring pushed pin %s: below the pin-aware floor r%d", p, update.PinFloor)
 		return
 	}
 	a.pinFromPush.Store(true)

@@ -57,6 +57,13 @@ func revNum(v string) (int, bool) {
 	return n, true
 }
 
+const PinFloor = 221
+
+func PinSupported(v string) bool {
+	n, ok := revNum(v)
+	return ok && n >= PinFloor
+}
+
 func Newer(latest, current string) bool {
 	ln, lok := revNum(latest)
 	if !lok {
@@ -95,6 +102,9 @@ func (u *Updater) Apply(target string) error {
 }
 
 func (u *Updater) ApplyPinned(target, version string) error {
+	if !PinSupported(version) {
+		return fmt.Errorf("update: pin %s is not a release version at or above r%d (older agents cannot hold a pin)", version, PinFloor)
+	}
 	mf, err := u.PinnedManifest(version)
 	if err != nil {
 		return err

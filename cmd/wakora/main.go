@@ -176,6 +176,11 @@ func main() {
 
 	_ = os.MkdirAll(cfg.StateDir(), 0o755)
 	_ = os.Chmod(cfg.StateDir(), 0o755)
+	if cfg.Pin != "" && !update.PinSupported(cfg.Pin) {
+		log.Printf("clearing pin %s: below the pin-aware floor r%d (agents that old ignore their own pin and loop)", cfg.Pin, update.PinFloor)
+		_ = config.WriteOverride(*configDir, "agent", "pin", "")
+		cfg.Pin = ""
+	}
 	defs.Provision = apm.NewProvisioner(relURL, httpc, pubKey, cfg.StateDir())
 	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20, *spoolAge), pubKey)
 
