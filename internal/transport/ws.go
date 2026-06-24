@@ -61,6 +61,9 @@ func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
 		if resp != nil && resp.StatusCode == http.StatusGone {
 			return nil, ErrDeregistered
 		}
+		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			return nil, ErrUnauthorized
+		}
 		return nil, err
 	}
 	c.SetReadLimit(1 << 20)

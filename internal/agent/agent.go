@@ -95,6 +95,7 @@ type Agent struct {
 	lastAck     atomic.Int64
 	lastConnect atomic.Int64
 	lastRotate  atomic.Int64
+	lastError   atomic.Value
 }
 
 var pendingCap = 8192
@@ -307,6 +308,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
 		a.lastConnect.Store(time.Now().Unix())
+		a.lastError.Store("")
 		a.writeStatus()
 		defer func() { a.connected.Store(false); a.writeStatus() }()
 		conn = &trackedConn{inner: conn, a: a}

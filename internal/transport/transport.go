@@ -24,10 +24,13 @@ var ErrNoDialer = errors.New("transport: dialer not configured")
 
 var ErrDeregistered = errors.New("transport: deregistered")
 
+var ErrUnauthorized = errors.New("transport: unauthorized")
+
 type Client struct {
-	Endpoint string
-	Dialer   Dialer
-	Backoff  time.Duration
+	Endpoint    string
+	Dialer      Dialer
+	Backoff     time.Duration
+	OnDialError func(error)
 }
 
 func (c *Client) Run(ctx context.Context, onConn func(Conn) error) error {
@@ -46,10 +49,16 @@ func (c *Client) Run(ctx context.Context, onConn func(Conn) error) error {
 			_ = onConn(conn)
 			conn.Close()
 		} else if errors.Is(err, ErrDeregistered) {
+			if c.OnDialError != nil {
+				c.OnDialError(err)
+			}
 			log.Print("this host was removed from the console; idling. run 'wakora uninstall' to clean up, or 'wakora --key <TEAMKEY>' to re-enroll")
 			<-ctx.Done()
 			return ctx.Err()
 		} else {
+			if c.OnDialError != nil {
+				c.OnDialError(err)
+			}
 			log.Printf("dial %s: %v", c.Endpoint, err)
 		}
 		select {

@@ -207,7 +207,7 @@ func main() {
 		log.Print("safe baseline (Speed 1): pushed definitions will not execute; enable with wakora --set agent.baseline=false")
 	}
 
-	client := &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(a.Key, pin)}
+	client := &transport.Client{Endpoint: cfg.Endpoint, Dialer: transport.NewWSDialer(a.Key, pin), OnDialError: a.RecordDialError}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

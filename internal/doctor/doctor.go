@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"wakora.io/agent/internal/buildinfo"
 )
 
@@ -66,11 +64,12 @@ type Input struct {
 }
 
 type status struct {
-	ConnectedNow  bool  `json:"connectedNow"`
-	LastConnectAt int64 `json:"lastConnectAt"`
-	LastAckAt     int64 `json:"lastAckAt"`
-	RingPending   int64 `json:"ringPending"`
-	WrittenAt     int64 `json:"writtenAt"`
+	ConnectedNow  bool   `json:"connectedNow"`
+	LastConnectAt int64  `json:"lastConnectAt"`
+	LastAckAt     int64  `json:"lastAckAt"`
+	LastError     string `json:"lastError"`
+	RingPending   int64  `json:"ringPending"`
+	WrittenAt     int64  `json:"writtenAt"`
 }
 
 func Run(in Input) []Check {
@@ -100,10 +99,6 @@ func Run(in Input) []Check {
 	tlsc := checkTLS(host, port, in.Pin)
 	out = append(out, tlsc)
 	out = append(out, checkClock(in))
-	if tlsc.State == Fail {
-		out = append(out, skip("auth", "blocked by tls"), skip("data flow", "blocked by tls"))
-		return out
-	}
 
 	auth, flow := checkAuthFlow(in, id)
 	out = append(out, auth, flow)
@@ -322,52 +317,32 @@ func checkAuthFlow(in Input, id Check) (Check, Check) {
 		return skip("auth", "no identity"), skip("data flow", "no identity")
 	}
 	st, ok := readStatus(in.StateDir)
-	if ok && st.ConnectedNow {
-		auth := Check{Name: "auth", State: Ok, Detail: "the running agent holds an authenticated connection"}
-		return auth, flowFromStatus(st)
+	if !ok {
+		return Check{Name: "auth", State: Info, Detail: "not reported by the running agent",
+				Next: "the agent is not running or predates status reporting - the console shows this host's last-seen; start it: wakora service start"},
+			skip("data flow", "no status from the agent")
 	}
-	auth := probeAuth(in)
-	if auth.State != Ok {
-		return auth, skip("data flow", "not authenticated")
+	if st.ConnectedNow {
+		return Check{Name: "auth", State: Ok, Detail: "the running agent holds an authenticated connection"}, flowFromStatus(st)
 	}
-	if ok {
-		return auth, flowFromStatus(st)
-	}
-	return auth, Check{Name: "data flow", State: Warn, Detail: "no delivery record yet",
-		Next: "the service has not connected on this run - start it: wakora service start"}
-}
-
-func probeAuth(in Input) Check {
-	if in.Key == "" {
-		return Check{Name: "auth", State: Warn, Detail: "no per-server key on disk", Next: "register: wakora --key <TEAMKEY>"}
-	}
-	if in.HTTP == nil || in.Endpoint == "" {
-		return skip("auth", "no endpoint")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	c, resp, err := websocket.Dial(ctx, in.Endpoint, &websocket.DialOptions{
-		HTTPClient: in.HTTP,
-		HTTPHeader: http.Header{"X-Wakora-Key": {in.Key}},
-	})
-	if err == nil {
-		c.Close(websocket.StatusNormalClosure, "")
-		return Check{Name: "auth", State: Ok, Detail: "gateway accepted the per-server key"}
-	}
-	code := 0
-	if resp != nil {
-		code = resp.StatusCode
-	}
-	switch code {
-	case http.StatusGone:
+	switch st.LastError {
+	case "deregistered":
 		return Check{Name: "auth", State: Warn, Detail: "this host was removed from the console (410) - the agent is idle",
-			Next: "re-enroll with wakora --key <TEAMKEY>, or run wakora uninstall to clean up"}
-	case http.StatusUnauthorized:
-		return Check{Name: "auth", State: Fail, Detail: "the gateway rejected the key (401)",
-			Next: "the per-server key was revoked or rotated out - re-register: wakora --key <TEAMKEY>"}
+				Next: "re-enroll with wakora --key <TEAMKEY>, or run wakora uninstall to clean up"},
+			skip("data flow", "host removed from the console")
+	case "unauthorized":
+		return Check{Name: "auth", State: Fail, Detail: "the gateway rejected the per-server key (401)",
+				Next: "the key was revoked or rotated out - re-register: wakora --key <TEAMKEY>"},
+			skip("data flow", "not authenticated")
+	case "":
+		return Check{Name: "auth", State: Warn, Detail: "the agent is not connected right now",
+				Next: "start it: wakora service start (the network checks above show the path is fine)"},
+			flowFromStatus(st)
+	default:
+		return Check{Name: "auth", State: Warn, Detail: "last connection error: " + st.LastError,
+				Next: "see the network checks above; start the service: wakora service start"},
+			skip("data flow", "not connected")
 	}
-	return Check{Name: "auth", State: Fail, Detail: "handshake failed: " + err.Error(),
-		Next: "could not complete the websocket handshake to the gateway"}
 }
 
 func flowFromStatus(st status) Check {
