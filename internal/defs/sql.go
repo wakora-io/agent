@@ -26,6 +26,7 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 	o.Check.Target = p.Driver + ":" + p.Query
 	cred := secret.Cred{}
 	hasSecret := false
+	optionalUnset := false
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {
@@ -35,7 +36,15 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 		}
 		cred = c
 		hasSecret = true
-	} else {
+	} else if p.SecretOpt != "" {
+		if c, ok := resolve(p.SecretOpt); ok {
+			cred = c
+			hasSecret = true
+		} else {
+			optionalUnset = true
+		}
+	}
+	if !hasSecret {
 		cred.User = p.User
 		if cred.User == "" {
 			cred.User = "root"
@@ -62,18 +71,16 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 	if err != nil {
 		o.Check.Status = "fail"
 		o.Check.Error = redact(err.Error(), cred.Pass)
+		if optionalUnset && strings.Contains(o.Check.Error, "Access denied") {
+			o.Check.Error += " - set a read-only monitoring credential: wakora secret set " + p.SecretOpt
+		}
 		return
 	}
 	defer rows.Close()
 	o.Check.Status = "ok"
 
-	if len(p.KVMetrics) > 0 {
-		kv := scanKV(rows)
-		for _, m := range p.KVMetrics {
-			if v, ok := parseNum(kv[m.Key]); ok {
-				o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: m.Name, Value: v})
-			}
-		}
+	if len(p.KVMetrics) > 0 || len(p.KVFacts) > 0 || len(p.KVRatios) > 0 {
+		applyKV(o, p, scanKV(rows))
 		return
 	}
 	byName := scanRow(rows)
@@ -91,6 +98,31 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 				v = ""
 			}
 		}
+		if v == "" {
+			continue
+		}
+		if o.Facts == nil {
+			o.Facts = map[string]string{}
+		}
+		o.Facts[f.Name] = v
+	}
+}
+
+func applyKV(o *Outcome, p protocol.Probe, kv map[string]string) {
+	for _, m := range p.KVMetrics {
+		if v, ok := parseNum(kv[m.Key]); ok {
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: m.Name, Value: v})
+		}
+	}
+	for _, r := range p.KVRatios {
+		num, okN := parseNum(kv[r.Num])
+		den, okD := parseNum(kv[r.Den])
+		if okN && okD && den > 0 {
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: r.Name, Value: num / den})
+		}
+	}
+	for _, f := range p.KVFacts {
+		v := strings.TrimSpace(kv[f.Key])
 		if v == "" {
 			continue
 		}

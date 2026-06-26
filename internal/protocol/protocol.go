@@ -187,6 +187,12 @@ type KVMetric struct {
 	Key  string `json:"key"`
 }
 
+type KVRatio struct {
+	Name string `json:"name"`
+	Num  string `json:"num"`
+	Den  string `json:"den"`
+}
+
 type Counter struct {
 	Name    string `json:"name"`
 	Regex   string `json:"regex,omitempty"`
@@ -213,6 +219,7 @@ type Probe struct {
 	Facts        []ParseRule       `json:"facts,omitempty"`
 	Driver       string            `json:"driver,omitempty"`
 	Secret       string            `json:"secret,omitempty"`
+	SecretOpt    string            `json:"secretOptional,omitempty"`
 	AuthHeader   string            `json:"authHeader,omitempty"`
 	User         string            `json:"user,omitempty"`
 	Socket       bool              `json:"socket,omitempty"`
@@ -220,6 +227,8 @@ type Probe struct {
 	PortFrom     string            `json:"portFrom,omitempty"`
 	Query        string            `json:"query,omitempty"`
 	KVMetrics    []KVMetric        `json:"kvMetrics,omitempty"`
+	KVFacts      []KVMetric        `json:"kvFacts,omitempty"`
+	KVRatios     []KVRatio         `json:"kvRatios,omitempty"`
 	Path         string            `json:"path,omitempty"`
 	PathFrom     string            `json:"pathFrom,omitempty"`
 	Hash         bool              `json:"hash,omitempty"`
