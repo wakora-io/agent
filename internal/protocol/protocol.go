@@ -217,6 +217,7 @@ type Probe struct {
 	User         string            `json:"user,omitempty"`
 	Socket       bool              `json:"socket,omitempty"`
 	PortProcess  string            `json:"portProcess,omitempty"`
+	PortFrom     string            `json:"portFrom,omitempty"`
 	Query        string            `json:"query,omitempty"`
 	KVMetrics    []KVMetric        `json:"kvMetrics,omitempty"`
 	Path         string            `json:"path,omitempty"`

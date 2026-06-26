@@ -923,9 +923,20 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
-			if (p.Type == "sql" || p.Type == "redis" || p.Type == "tcp") && p.Address == "" && !p.Socket && p.PortProcess != "" {
-				if port := a.resolvePort(p.PortProcess); port != "" {
-					p.Address = "127.0.0.1:" + port
+			if (p.Type == "sql" || p.Type == "redis" || p.Type == "tcp") && p.Address == "" && !p.Socket {
+				if p.PortProcess != "" {
+					if port := a.resolvePort(p.PortProcess); port != "" {
+						p.Address = "127.0.0.1:" + port
+					}
+				}
+				if p.Address == "" && p.PortFrom != "" {
+					a.mu.Lock()
+					if sf := a.serviceFacts[d.Service]; sf != nil {
+						if port := strings.TrimSpace(sf[p.PortFrom]); port != "" {
+							p.Address = "127.0.0.1:" + port
+						}
+					}
+					a.mu.Unlock()
 				}
 			}
 			if p.Type == "vhosts" {

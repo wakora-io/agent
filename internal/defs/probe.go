@@ -83,6 +83,15 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runHTTP(&o, p, timeout, resolve)
 	case "tcp":
 		o.Check.Target = p.Address
+		if p.Address == "" {
+			o.Check.Status = "fail"
+			if p.PortProcess != "" {
+				o.Check.Error = "no listening tcp port owned by process " + p.PortProcess + " - the socket may be held by systemd (socket activation); the configured port is used once discovered"
+			} else {
+				o.Check.Error = "no address to dial"
+			}
+			break
+		}
 		conn, err := net.DialTimeout("tcp", p.Address, timeout)
 		if err != nil {
 			o.Check.Status = "fail"
