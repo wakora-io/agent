@@ -84,7 +84,7 @@ fi
 if [ "$OS" = "Darwin" ]; then
   /usr/local/bin/wakora service install
 elif command -v systemctl >/dev/null 2>&1; then
-  mkdir -p /var/log/wakora
+  mkdir -p /var/log/wakora /var/lib/wakora
   cat > /etc/systemd/system/wakora-agent.service <<'UNIT'
 [Unit]
 Description=Wakora Agent
@@ -96,6 +96,7 @@ ExecStart=/usr/local/bin/wakora
 Restart=always
 RestartSec=3
 User=root
+StateDirectory=wakora
 Nice=10
 CPUQuota=30%
 MemoryMax=1G
