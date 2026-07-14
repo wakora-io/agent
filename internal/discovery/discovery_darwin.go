@@ -44,6 +44,14 @@ func osDetails() map[string]string {
 	}
 }
 
+func cpuModel() string {
+	out, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func ChangeSignal() string {
 	h := sha256.New()
 	for _, c := range brewCellars {

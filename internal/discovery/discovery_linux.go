@@ -53,6 +53,24 @@ func osDetails() map[string]string {
 	}
 }
 
+func cpuModel() string {
+	data, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key := strings.TrimSpace(k)
+		if key == "model name" || key == "Model" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 func capFacts() []Fact {
 	return []Fact{capFact("ebpf", apm.Supported), capFact("profile", apm.ProfileSupported)}
 }

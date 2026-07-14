@@ -42,6 +42,16 @@ func osDetails() map[string]string {
 	}
 }
 
+func cpuModel() string {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `HARDWARE\DESCRIPTION\System\CentralProcessor\0`, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+	model, _, _ := k.GetStringValue("ProcessorNameString")
+	return strings.TrimSpace(model)
+}
+
 func ChangeSignal() string {
 	h := sha256.New()
 	for _, f := range services() {

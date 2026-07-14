@@ -5,6 +5,7 @@ import (
 	"net"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -123,6 +124,10 @@ func hostFact() Fact {
 		if v != "" {
 			kv[k] = v
 		}
+	}
+	kv["cores"] = strconv.Itoa(runtime.NumCPU())
+	if model := cpuModel(); model != "" {
+		kv["cpu"] = model
 	}
 	payload, _ := json.Marshal(kv)
 	return Fact{Kind: "host", Key: "os", Payload: string(payload)}
