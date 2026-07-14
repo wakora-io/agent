@@ -1923,7 +1923,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		if err := json.Unmarshal(m.Payload, &set); err != nil {
 			return
 		}
-		verified := defs.Verify(set, a.publisherKey)
+		verified := defs.Verify(set, a.publisherKey, defs.TenantDefsKey(a.cfg.StateDir(), set))
 		deny := map[string]bool{}
 		for _, d := range set.Deny {
 			deny[d] = true

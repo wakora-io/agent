@@ -1,18 +1,22 @@
 package defs
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
+	"wakora.io/agent/internal/atomicfile"
 	"wakora.io/agent/internal/discovery"
 	"wakora.io/agent/internal/protocol"
 )
 
-func Verify(set protocol.DefinitionSet, publisherKey string) []protocol.Definition {
+func Verify(set protocol.DefinitionSet, publisherKey string, tenantKey ed25519.PublicKey) []protocol.Definition {
 	pub, err := base64.StdEncoding.DecodeString(publisherKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		log.Print("defs: no valid publisher key built in, rejecting all definitions")
@@ -21,7 +25,16 @@ func Verify(set protocol.DefinitionSet, publisherKey string) []protocol.Definiti
 	var out []protocol.Definition
 	for _, sd := range set.Definitions {
 		sig, err := base64.StdEncoding.DecodeString(sd.Sig)
-		if err != nil || !ed25519.Verify(ed25519.PublicKey(pub), sd.Def, sig) {
+		if err != nil {
+			log.Print("defs: signature invalid, definition rejected")
+			continue
+		}
+		if sd.Tier == "tenant" {
+			if len(tenantKey) != ed25519.PublicKeySize || !ed25519.Verify(tenantKey, sd.Def, sig) {
+				log.Print("defs: tenant signature invalid, community definition rejected")
+				continue
+			}
+		} else if !ed25519.Verify(ed25519.PublicKey(pub), sd.Def, sig) {
 			log.Print("defs: signature invalid, definition rejected")
 			continue
 		}
@@ -30,9 +43,47 @@ func Verify(set protocol.DefinitionSet, publisherKey string) []protocol.Definiti
 			log.Print("defs: malformed definition rejected")
 			continue
 		}
+		if sd.Tier == "tenant" && !strings.HasPrefix(d.Service, "community_") {
+			log.Printf("defs: community definition %q outside the community_ namespace, rejected", d.Service)
+			continue
+		}
 		out = append(out, d)
 	}
 	return out
+}
+
+func TenantDefsKey(stateDir string, set protocol.DefinitionSet) ed25519.PublicKey {
+	hasTenant := false
+	for _, sd := range set.Definitions {
+		if sd.Tier == "tenant" {
+			hasTenant = true
+			break
+		}
+	}
+	if !hasTenant || set.TenantKey == "" {
+		return nil
+	}
+	cand, err := base64.StdEncoding.DecodeString(set.TenantKey)
+	if err != nil || len(cand) != ed25519.PublicKeySize {
+		return nil
+	}
+	pinPath := filepath.Join(stateDir, "tenant-defs.pub")
+	if raw, err := os.ReadFile(pinPath); err == nil && len(raw) > 0 {
+		pinned, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+		if err == nil && len(pinned) == ed25519.PublicKeySize {
+			if !bytes.Equal(pinned, cand) {
+				log.Printf("defs: community key mismatch - tenant-tier definitions rejected (reset: remove %s)", pinPath)
+				return nil
+			}
+			return ed25519.PublicKey(pinned)
+		}
+	}
+	if err := atomicfile.Write(pinPath, []byte(set.TenantKey+"\n"), 0o600); err != nil {
+		log.Printf("defs: community key pin failed: %v", err)
+		return nil
+	}
+	log.Print("defs: community definitions key pinned on first use")
+	return ed25519.PublicKey(cand)
 }
 
 func VerifyUninstallOrder(envelope, publisherKey, wantUUID string) bool {

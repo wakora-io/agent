@@ -116,8 +116,9 @@ type DiscoverySnapshot struct {
 }
 
 type SignedDefinition struct {
-	Def json.RawMessage `json:"def"`
-	Sig string          `json:"sig"`
+	Def  json.RawMessage `json:"def"`
+	Sig  string          `json:"sig"`
+	Tier string          `json:"tier,omitempty"`
 }
 
 type DefinitionSet struct {
@@ -129,6 +130,7 @@ type DefinitionSet struct {
 	DenyServices []string           `json:"denyServices,omitempty"`
 	LogDeep      []string           `json:"logDeep,omitempty"`
 	Pin          string             `json:"pin,omitempty"`
+	TenantKey    string             `json:"tenantKey,omitempty"`
 }
 
 type RumError struct {
