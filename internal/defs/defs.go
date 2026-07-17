@@ -43,8 +43,8 @@ func Verify(set protocol.DefinitionSet, publisherKey string, tenantKey ed25519.P
 			log.Print("defs: malformed definition rejected")
 			continue
 		}
-		if sd.Tier == "tenant" && !strings.HasPrefix(d.Service, "community_") {
-			log.Printf("defs: community definition %q outside the community_ namespace, rejected", d.Service)
+		if sd.Tier == "tenant" && !strings.HasPrefix(d.Service, "community_") && !strings.HasPrefix(d.Service, "device_") {
+			log.Printf("defs: tenant definition %q outside the community_/device_ namespaces, rejected", d.Service)
 			continue
 		}
 		out = append(out, d)
