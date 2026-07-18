@@ -931,7 +931,11 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				continue
 			}
 			if p.Type == "configfetch" {
-				if err := a.runConfigFetch(conn, d.Service, p); err != nil {
+				ivl := time.Duration(d.IntervalSec) * time.Second
+				if p.IntervalSec > 0 {
+					ivl = time.Duration(p.IntervalSec) * time.Second
+				}
+				if err := a.runConfigFetch(conn, d.Service, p, ivl); err != nil {
 					return err
 				}
 				continue
@@ -1647,7 +1651,7 @@ func (a *Agent) runNetflow(conn transport.Conn, service string, p protocol.Probe
 	return a.sendProbeMetrics(conn, pts)
 }
 
-func (a *Agent) runConfigFetch(conn transport.Conn, service string, p protocol.Probe) error {
+func (a *Agent) runConfigFetch(conn transport.Conn, service string, p protocol.Probe, ivl time.Duration) error {
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
@@ -1659,6 +1663,11 @@ func (a *Agent) runConfigFetch(conn transport.Conn, service string, p protocol.P
 	fail := func(msg string) error {
 		check.Status = "fail"
 		check.Error = msg
+		if retry := 10 * time.Minute; ivl > retry {
+			a.mu.Lock()
+			a.lastRun[service+"/"+p.Name] = time.Now().Add(retry).Add(-ivl)
+			a.mu.Unlock()
+		}
 		return a.sendCheck(conn, check)
 	}
 	if p.Secret == "" {
