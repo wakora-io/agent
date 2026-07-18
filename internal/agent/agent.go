@@ -1586,7 +1586,13 @@ func (a *Agent) runNetflow(conn transport.Conn, service string, p protocol.Probe
 		a.flowL[port] = l
 		log.Printf("netflow listener started on udp/%d", port)
 	}
-	l.Configure(p.AllowFrom)
+	targets := a.snmpTargets()
+	allowed := make([]string, 0, len(targets)+len(p.AllowFrom))
+	for host := range targets {
+		allowed = append(allowed, host)
+	}
+	allowed = append(allowed, p.AllowFrom...)
+	l.Configure(allowed)
 	dropped, lerr := l.Snapshot()
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,
