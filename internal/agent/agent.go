@@ -543,6 +543,17 @@ func (a *Agent) offlineLoop(ctx context.Context, interval time.Duration) {
 		if a.connected.Load() {
 			continue
 		}
+		if msg, err := protocol.Encode(protocol.TypeHeartbeat, 0, protocol.Heartbeat{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Version:   buildinfo.Version,
+			Pin:       a.EffectivePin(),
+			Timestamp: time.Now().Unix(),
+		}); err == nil {
+			if raw, err := json.Marshal(msg); err == nil {
+				_ = a.ring.Append(raw)
+			}
+		}
 		batch := a.collect()
 		if msg, err := protocol.Encode(protocol.TypeMetrics, 0, batch); err == nil {
 			if raw, err := json.Marshal(msg); err == nil {
