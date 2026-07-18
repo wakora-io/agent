@@ -25,6 +25,10 @@ const (
 	oidDot1dTpFdbPort    = ".1.3.6.1.2.1.17.4.3.1.2"
 	oidDot1dBaseIfIndex  = ".1.3.6.1.2.1.17.1.4.1.2"
 	oidIpNetToMediaPhys  = ".1.3.6.1.2.1.4.22.1.2"
+	oidMtxrNbrIP         = ".1.3.6.1.4.1.14988.1.1.11.1.1.2"
+	oidMtxrNbrMac        = ".1.3.6.1.4.1.14988.1.1.11.1.1.3"
+	oidMtxrNbrIdentity   = ".1.3.6.1.4.1.14988.1.1.11.1.1.6"
+	oidMtxrNbrIface      = ".1.3.6.1.4.1.14988.1.1.11.1.1.8"
 
 	maxLinkFacts = 64
 	maxEdgeMacs  = 32
@@ -188,6 +192,48 @@ func walkTopology(g *gosnmp.GoSNMP, host string, labels map[string]string, o *Ou
 		if payload, err := json.Marshal(link); err == nil {
 			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "link", Key: host + "|" + portName(labels, local) + "|" + chassis, Payload: string(payload)})
 			neighbors++
+		}
+	}
+	nbrIPs := walkStrings(g, oidMtxrNbrIP)
+	if len(nbrIPs) > 0 {
+		nbrMacs := walkBytes(g, oidMtxrNbrMac)
+		nbrNames := walkStrings(g, oidMtxrNbrIdentity)
+		nbrIfaces := walkInts(g, oidMtxrNbrIface)
+		nidx := make([]string, 0, len(nbrIPs))
+		for idx := range nbrIPs {
+			nidx = append(nidx, idx)
+		}
+		sort.Strings(nidx)
+		for _, idx := range nidx {
+			if neighbors >= maxLinkFacts {
+				break
+			}
+			mac := ""
+			if b, ok := nbrMacs[idx]; ok && len(b) == 6 {
+				mac = macColons(b)
+			}
+			end := nbrIPs[idx]
+			if end == "" {
+				end = mac
+			}
+			if end == "" {
+				continue
+			}
+			local := portName(labels, fmt.Sprintf("%d", nbrIfaces[idx]))
+			link := map[string]string{"localPort": local, "src": "mndp"}
+			if mac != "" {
+				link["chassis"] = mac
+			}
+			if nbrIPs[idx] != "" {
+				link["toIp"] = nbrIPs[idx]
+			}
+			if n := nbrNames[idx]; n != "" && printableASCII([]byte(n)) {
+				link["remoteName"] = n
+			}
+			if payload, err := json.Marshal(link); err == nil {
+				o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "link", Key: host + "|" + local + "|" + end, Payload: string(payload)})
+				neighbors++
+			}
 		}
 	}
 	if neighbors > 0 {
