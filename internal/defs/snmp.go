@@ -64,6 +64,20 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 	}
 	defer g.Conn.Close()
 
+	preTimeout := 2 * time.Second
+	if timeout < preTimeout {
+		preTimeout = timeout
+	}
+	saveTimeout, saveRetries := g.Timeout, g.Retries
+	g.Timeout, g.Retries = preTimeout, 0
+	_, preErr := g.Get([]string{".1.3.6.1.2.1.1.3.0"})
+	g.Timeout, g.Retries = saveTimeout, saveRetries
+	if preErr != nil && strings.Contains(strings.ToLower(preErr.Error()), "timeout") {
+		o.Check.Status = "fail"
+		o.Check.Error = "target did not answer the liveness get - unreachable, powered off or wrong community"
+		return
+	}
+
 	deviceTag := map[string]string{"device": host}
 	var lastErr string
 
