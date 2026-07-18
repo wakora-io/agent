@@ -61,6 +61,7 @@ type Agent struct {
 	logCapped    bool
 	trapL        map[int]*defs.TrapListener
 	syslogL      map[int]*defs.SyslogListener
+	flowL        map[int]*defs.FlowListener
 	listenerPrev map[string]listenerCounts
 	apmEngine    *apm.Engine
 	apmErr       error
@@ -220,6 +221,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		logTailers:        map[string]*defs.LogTailer{},
 		trapL:             map[int]*defs.TrapListener{},
 		syslogL:           map[int]*defs.SyslogListener{},
+		flowL:             map[int]*defs.FlowListener{},
 		listenerPrev:      map[string]listenerCounts{},
 		warnedUnsupported: map[string]bool{},
 		custom:            make(chan []protocol.MetricPoint, 256),
@@ -917,6 +919,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
+			if p.Type == "netflow" {
+				if err := a.runNetflow(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
 			if p.Type == "apmprofile" || p.Type == "apmdotnetprofile" || p.Type == "apmnodeprofile" {
 				if a.denied("profiler") {
 					continue
@@ -1564,6 +1572,62 @@ func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe)
 		return err
 	}
 	return a.sendSyslogLines(conn, l.DrainLines())
+}
+
+func (a *Agent) runNetflow(conn transport.Conn, service string, p protocol.Probe) error {
+	port := p.Port
+	if port <= 0 {
+		port = 2055
+	}
+	l := a.flowL[port]
+	if l == nil {
+		l = defs.NewFlowListener(port)
+		l.Start()
+		a.flowL[port] = l
+		log.Printf("netflow listener started on udp/%d", port)
+	}
+	l.Configure(p.AllowFrom)
+	dropped, lerr := l.Snapshot()
+	check := protocol.CheckResult{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		CheckID:   service + "/" + p.Name,
+		Kind:      "netflow",
+		Target:    "udp/" + strconv.Itoa(port),
+		Timestamp: time.Now().Unix(),
+	}
+	if lerr != nil {
+		check.Status = "fail"
+		check.Error = lerr.Error()
+		return a.sendCheck(conn, check)
+	}
+	check.Status = "ok"
+	if err := a.sendCheck(conn, check); err != nil {
+		return err
+	}
+
+	batches := l.Drain(time.Now().Unix())
+	pts := []protocol.MetricPoint{{Name: "dev.flow.dropped_total", Value: float64(dropped)}}
+	for _, b := range batches {
+		if b.WindowSec > 0 {
+			tags := map[string]string{"device": b.Exporter}
+			pts = append(pts,
+				protocol.MetricPoint{Name: "dev.flow.bytes_per_sec", Value: float64(b.TotalBytes) / float64(b.WindowSec), Tags: tags},
+				protocol.MetricPoint{Name: "dev.flow.flows_per_sec", Value: float64(b.TotalFlows) / float64(b.WindowSec), Tags: tags},
+			)
+		}
+		b.ServerID = a.cfg.ServerID
+		b.Hostname = a.cfg.Hostname
+		a.seq++
+		msg, err := protocol.Encode(protocol.TypeFlows, a.seq, b)
+		if err != nil {
+			continue
+		}
+		if err := conn.Send(msg); err != nil {
+			return err
+		}
+	}
+	return a.sendProbeMetrics(conn, pts)
 }
 
 var syslogSevLevel = [8]string{"error", "error", "error", "error", "warn", "notice", "info", "debug"}

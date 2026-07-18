@@ -17,6 +17,7 @@ const (
 	TypeProfile   MessageType = "profile"
 	TypeRum       MessageType = "rum"
 	TypeLogs      MessageType = "logs"
+	TypeFlows     MessageType = "flows"
 	TypeAck       MessageType = "ack"
 )
 
@@ -77,6 +78,26 @@ type LogBatch struct {
 	ServerID string    `json:"serverId"`
 	Hostname string    `json:"hostname,omitempty"`
 	Lines    []LogLine `json:"lines"`
+}
+
+type FlowRow struct {
+	Src     string `json:"src,omitempty"`
+	Dst     string `json:"dst,omitempty"`
+	Proto   uint8  `json:"proto,omitempty"`
+	DstPort uint16 `json:"dstPort,omitempty"`
+	Bytes   uint64 `json:"bytes"`
+	Packets uint64 `json:"packets,omitempty"`
+}
+
+type FlowBatch struct {
+	ServerID    string    `json:"serverId"`
+	Hostname    string    `json:"hostname,omitempty"`
+	Exporter    string    `json:"exporter"`
+	WindowStart int64     `json:"windowStart"`
+	WindowSec   int       `json:"windowSec"`
+	TotalBytes  uint64    `json:"totalBytes"`
+	TotalFlows  uint64    `json:"totalFlows"`
+	Rows        []FlowRow `json:"rows"`
 }
 
 type FoldedStack struct {
