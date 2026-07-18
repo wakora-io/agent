@@ -29,10 +29,15 @@ const (
 	oidMtxrNbrMac        = ".1.3.6.1.4.1.14988.1.1.11.1.1.3"
 	oidMtxrNbrIdentity   = ".1.3.6.1.4.1.14988.1.1.11.1.1.6"
 	oidMtxrNbrIface      = ".1.3.6.1.4.1.14988.1.1.11.1.1.8"
+	oidDot1qVlanName     = ".1.3.6.1.2.1.17.7.1.4.3.1.1"
+	oidDot1qPvid         = ".1.3.6.1.2.1.17.7.1.4.5.1.1"
 
 	maxLinkFacts = 64
 	maxEdgeMacs  = 32
 	maxPortSpeed = 64
+	maxFdbTable  = 256
+	maxArpTable  = 256
+	maxVlans     = 128
 )
 
 func macColons(raw []byte) string {
@@ -263,6 +268,7 @@ func walkTopology(g *gosnmp.GoSNMP, host string, labels map[string]string, o *Ou
 		fdb = walkInts(g, oidDot1dTpFdbPort)
 	}
 	portMacs := map[string][]string{}
+	macPort := map[string]string{}
 	for idx, bp := range fdb {
 		mac := fdbMac(idx)
 		if mac == "" || bp <= 0 {
@@ -270,6 +276,13 @@ func walkTopology(g *gosnmp.GoSNMP, host string, labels map[string]string, o *Ou
 		}
 		key := fmt.Sprintf("%d", bp)
 		portMacs[key] = append(portMacs[key], mac)
+		if len(macPort) < maxFdbTable {
+			ifIdx := bridgeIf[key]
+			if ifIdx == "" {
+				ifIdx = key
+			}
+			macPort[mac] = portName(labels, ifIdx)
+		}
 	}
 	if len(portMacs) > 0 {
 		walked = true
@@ -291,19 +304,88 @@ func walkTopology(g *gosnmp.GoSNMP, host string, labels map[string]string, o *Ou
 				extras["edgeMacs"] = string(b)
 			}
 		}
+		fp := map[string]any{"macs": macPort}
+		if total > len(macPort) {
+			fp["truncated"] = 1
+		}
+		if b, err := json.Marshal(fp); err == nil {
+			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "fdb", Key: host, Payload: string(b)})
+		}
 	}
 
+	arpTable := map[string]string{}
 	arp := 0
 	_ = g.Walk(oidIpNetToMediaPhys, func(pdu gosnmp.SnmpPDU) error {
 		arp++
+		if len(arpTable) >= maxArpTable {
+			return nil
+		}
+		ip := arpIP(indexOf(oidIpNetToMediaPhys, pdu.Name))
+		if ip == "" {
+			return nil
+		}
+		if b, ok := pdu.Value.([]byte); ok && len(b) == 6 {
+			arpTable[ip] = macColons(b)
+		}
 		return nil
 	})
 	if arp > 0 {
 		extras["arpEntries"] = fmt.Sprintf("%d", arp)
+	}
+	if len(arpTable) > 0 {
+		ap := map[string]any{"ips": arpTable}
+		if arp > len(arpTable) {
+			ap["truncated"] = 1
+		}
+		if b, err := json.Marshal(ap); err == nil {
+			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "arp", Key: host, Payload: string(b)})
+		}
+	}
+
+	vlanNames := walkStrings(g, oidDot1qVlanName)
+	pvids := walkInts(g, oidDot1qPvid)
+	if len(vlanNames) > 0 || len(pvids) > 0 {
+		walked = true
+		vp := map[string]any{}
+		if len(vlanNames) > 0 {
+			names := map[string]string{}
+			for id, n := range vlanNames {
+				if len(names) >= maxVlans {
+					break
+				}
+				names[id] = n
+			}
+			vp["vlans"] = names
+		}
+		if len(pvids) > 0 {
+			m := map[string]string{}
+			for bp, vid := range pvids {
+				if len(m) >= maxPortSpeed {
+					break
+				}
+				ifIdx := bridgeIf[bp]
+				if ifIdx == "" {
+					ifIdx = bp
+				}
+				m[portName(labels, ifIdx)] = fmt.Sprintf("%d", vid)
+			}
+			vp["pvid"] = m
+		}
+		if b, err := json.Marshal(vp); err == nil {
+			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vlan", Key: host, Payload: string(b)})
+		}
 	}
 
 	if !walked && len(extras) == 0 {
 		return extras, false, "no lldp/fdb tables"
 	}
 	return extras, true, ""
+}
+
+func arpIP(idx string) string {
+	parts := strings.Split(idx, ".")
+	if len(parts) < 4 {
+		return ""
+	}
+	return strings.Join(parts[len(parts)-4:], ".")
 }
