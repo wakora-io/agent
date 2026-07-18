@@ -18,6 +18,7 @@ const (
 	TypeRum       MessageType = "rum"
 	TypeLogs      MessageType = "logs"
 	TypeFlows     MessageType = "flows"
+	TypeDevConfig MessageType = "devconfig"
 	TypeAck       MessageType = "ack"
 )
 
@@ -98,6 +99,16 @@ type FlowBatch struct {
 	TotalBytes  uint64    `json:"totalBytes"`
 	TotalFlows  uint64    `json:"totalFlows"`
 	Rows        []FlowRow `json:"rows"`
+}
+
+type DeviceConfig struct {
+	ServerID  string `json:"serverId"`
+	Hostname  string `json:"hostname,omitempty"`
+	Device    string `json:"device"`
+	Service   string `json:"service"`
+	Sha       string `json:"sha"`
+	Config    string `json:"config"`
+	FetchedAt int64  `json:"fetchedAt"`
 }
 
 type FoldedStack struct {
@@ -292,6 +303,9 @@ type Probe struct {
 	Redact       []string          `json:"redact,omitempty"`
 	Docker       bool              `json:"docker,omitempty"`
 	K8s          bool              `json:"k8s,omitempty"`
+	Normalize    []string          `json:"normalize,omitempty"`
+	Mask         []string          `json:"mask,omitempty"`
+	Nonce        string            `json:"nonce,omitempty"`
 }
 
 type Definition struct {

@@ -12,6 +12,7 @@ require (
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/yusufpapurcu/wmi v1.2.4
 	go.opentelemetry.io/proto/otlp v1.10.0
+	golang.org/x/crypto v0.50.0
 	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
 	google.golang.org/protobuf v1.36.11
@@ -30,7 +31,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.36.0 // indirect

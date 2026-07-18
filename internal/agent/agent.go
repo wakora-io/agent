@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ type Agent struct {
 	logDeep      map[string]bool
 	active       []protocol.Definition
 	lastRun      map[string]time.Time
+	defSig       map[string]uint64
 	serviceFacts map[string]map[string]string
 	probeFacts   map[string][]protocol.Fact
 	tailers      map[string]*defs.Tailer
@@ -62,6 +64,7 @@ type Agent struct {
 	trapL        map[int]*defs.TrapListener
 	syslogL      map[int]*defs.SyslogListener
 	flowL        map[int]*defs.FlowListener
+	cfgSha       map[string]string
 	listenerPrev map[string]listenerCounts
 	apmEngine    *apm.Engine
 	apmErr       error
@@ -214,6 +217,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		metrics:           metrics.NewCollector(),
 		detector:          anomaly.New(),
 		lastRun:           map[string]time.Time{},
+		defSig:            map[string]uint64{},
 		serviceFacts:      map[string]map[string]string{},
 		probeFacts:        map[string][]protocol.Fact{},
 		tailers:           map[string]*defs.Tailer{},
@@ -222,6 +226,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		trapL:             map[int]*defs.TrapListener{},
 		syslogL:           map[int]*defs.SyslogListener{},
 		flowL:             map[int]*defs.FlowListener{},
+		cfgSha:            map[string]string{},
 		listenerPrev:      map[string]listenerCounts{},
 		warnedUnsupported: map[string]bool{},
 		custom:            make(chan []protocol.MetricPoint, 256),
@@ -921,6 +926,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			}
 			if p.Type == "netflow" {
 				if err := a.runNetflow(conn, d.Service, p); err != nil {
+					return err
+				}
+				continue
+			}
+			if p.Type == "configfetch" {
+				if err := a.runConfigFetch(conn, d.Service, p); err != nil {
 					return err
 				}
 				continue
@@ -1636,6 +1647,63 @@ func (a *Agent) runNetflow(conn transport.Conn, service string, p protocol.Probe
 	return a.sendProbeMetrics(conn, pts)
 }
 
+func (a *Agent) runConfigFetch(conn transport.Conn, service string, p protocol.Probe) error {
+	check := protocol.CheckResult{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		CheckID:   service + "/" + p.Name,
+		Kind:      "configfetch",
+		Target:    p.Target,
+		Timestamp: time.Now().Unix(),
+	}
+	fail := func(msg string) error {
+		check.Status = "fail"
+		check.Error = msg
+		return a.sendCheck(conn, check)
+	}
+	if p.Secret == "" {
+		return fail("no ssh secret named in the definition")
+	}
+	cred, ok := a.resolveSecret(p.Secret)
+	if !ok {
+		return fail("ssh secret " + p.Secret + " is not set on this collector - run: wakora secret set " + p.Secret + " --user <user>")
+	}
+	timeout := 20 * time.Second
+	if p.TimeoutSec > 0 {
+		timeout = time.Duration(p.TimeoutSec) * time.Second
+	}
+	knownPath := filepath.Join(a.cfg.StateDir(), "ssh-hostkeys")
+	started := time.Now()
+	raw, err := defs.FetchDeviceConfig(p.Target, p.Port, cred.User, cred.Pass, p.Command, timeout, knownPath)
+	if err != nil {
+		return fail(err.Error())
+	}
+	cfgText := defs.MaskConfig(defs.NormalizeConfig(raw, p.Normalize), p.Mask)
+	sha := defs.ConfigSha(cfgText)
+	check.Status = "ok"
+	check.LatencyMs = float64(time.Since(started).Milliseconds())
+	if err := a.sendCheck(conn, check); err != nil {
+		return err
+	}
+	if a.cfgSha[service] == sha {
+		return nil
+	}
+	a.seq++
+	msg, err := protocol.Encode(protocol.TypeDevConfig, a.seq, protocol.DeviceConfig{
+		ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
+		Device: p.Target, Service: service, Sha: sha, Config: cfgText,
+		FetchedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		return nil
+	}
+	if err := conn.Send(msg); err != nil {
+		return err
+	}
+	a.cfgSha[service] = sha
+	return nil
+}
+
 var syslogSevLevel = [8]string{"error", "error", "error", "error", "warn", "notice", "info", "debug"}
 
 func (a *Agent) sendSyslogLines(conn transport.Conn, raw []defs.SyslogLine) error {
@@ -2030,6 +2098,24 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		tailChanged := !a.haveTailSig || a.lastTailSig != sig
 		a.lastTailSig = sig
 		a.haveTailSig = true
+		newSig := make(map[string]uint64, len(verified))
+		for _, d := range verified {
+			raw, err := json.Marshal(d)
+			if err != nil {
+				continue
+			}
+			h := fnv.New64a()
+			h.Write(raw)
+			newSig[d.Service] = h.Sum64()
+			if old, ok := a.defSig[d.Service]; ok && old != newSig[d.Service] {
+				for key := range a.lastRun {
+					if strings.HasPrefix(key, d.Service+"/") {
+						delete(a.lastRun, key)
+					}
+				}
+			}
+		}
+		a.defSig = newSig
 		a.defs = verified
 		a.roles = set.Roles
 		a.deny = deny
