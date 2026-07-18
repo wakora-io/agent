@@ -105,7 +105,7 @@ IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/etc/wakora /var/lib/wakora /var/log/wakora
+ReadWritePaths=/etc/wakora /var/lib/wakora /var/log/wakora /usr/local/bin
 ProtectControlGroups=yes
 
 [Install]
