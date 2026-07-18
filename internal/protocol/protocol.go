@@ -254,6 +254,7 @@ type Probe struct {
 	Context      string            `json:"context,omitempty"`
 	Sensors      bool              `json:"sensors,omitempty"`
 	PoE          bool              `json:"poe,omitempty"`
+	Topology     bool              `json:"topology,omitempty"`
 	Process      string            `json:"process,omitempty"`
 	Domains      []string          `json:"domains,omitempty"`
 	Channels     []string          `json:"channels,omitempty"`

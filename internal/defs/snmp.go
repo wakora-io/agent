@@ -128,6 +128,16 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 			lastErr = err
 		}
 	}
+	if p.Topology {
+		if extras, ok, err := walkTopology(g, host, labels, o); ok {
+			walked = true
+			for k, v := range extras {
+				facts[k] = v
+			}
+		} else if err != "" {
+			lastErr = err
+		}
+	}
 	for _, w := range p.Walk {
 		base := normOID(w.OID)
 		if err := g.Walk(base, func(pdu gosnmp.SnmpPDU) error {
