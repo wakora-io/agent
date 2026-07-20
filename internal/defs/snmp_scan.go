@@ -61,7 +61,7 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 			if !ok {
 				return
 			}
-			payload, _ := json.Marshal(map[string]string{"sysDescr": descr, "sysObjectID": objid, "via": service})
+			payload, _ := json.Marshal(map[string]string{"sysDescr": descr, "sysObjectID": objid, "via": service, "port": strconv.Itoa(int(port))})
 			mu.Lock()
 			found++
 			o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "candidate", Key: ip, Payload: string(payload)})
