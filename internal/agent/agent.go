@@ -2201,6 +2201,10 @@ func (a *Agent) drainSpool(conn transport.Conn) {
 		if err := json.Unmarshal(line, &m); err != nil {
 			return nil
 		}
+		if m.Seq == 0 {
+			a.seq++
+			m.Seq = a.seq
+		}
 		return conn.Send(m)
 	})
 }
