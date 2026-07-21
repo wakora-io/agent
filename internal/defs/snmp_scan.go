@@ -12,6 +12,7 @@ import (
 	"github.com/gosnmp/gosnmp"
 
 	"wakora.io/agent/internal/protocol"
+	"wakora.io/agent/internal/secret"
 )
 
 const maxScanHosts = 256
@@ -26,6 +27,7 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 	o.Check.Target = strings.Join(p.Targets, ",")
 
 	community := "public"
+	var cred secret.Cred
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {
@@ -33,6 +35,7 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
 			return
 		}
+		cred = c
 		if c.Pass != "" {
 			community = c.Pass
 		}
@@ -47,6 +50,26 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 		port = uint16(p.Port)
 	}
 
+	mk := func(ip string) (*gosnmp.GoSNMP, error) {
+		g := &gosnmp.GoSNMP{Target: ip, Port: port, Timeout: perHost, Retries: 0, MaxOids: 2}
+		if p.V3 {
+			if err := snmpV3(g, p, cred); err != nil {
+				return nil, err
+			}
+		} else {
+			g.Version = gosnmp.Version2c
+			g.Community = community
+		}
+		return g, nil
+	}
+	if p.V3 {
+		if _, err := mk("0.0.0.0"); err != nil {
+			o.Check.Status = "fail"
+			o.Check.Error = err.Error()
+			return
+		}
+	}
+
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 16)
@@ -57,7 +80,11 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 		go func(ip string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			descr, objid, ok := scanOne(ip, port, community, perHost)
+			g, err := mk(ip)
+			if err != nil {
+				return
+			}
+			descr, objid, ok := scanOne(g)
 			if !ok {
 				return
 			}
@@ -80,11 +107,7 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 	o.Check.Status = "ok"
 }
 
-func scanOne(ip string, port uint16, community string, timeout time.Duration) (descr, objid string, ok bool) {
-	g := &gosnmp.GoSNMP{
-		Target: ip, Port: port, Version: gosnmp.Version2c, Community: community,
-		Timeout: timeout, Retries: 0, MaxOids: 2,
-	}
+func scanOne(g *gosnmp.GoSNMP) (descr, objid string, ok bool) {
 	if err := g.Connect(); err != nil {
 		return "", "", false
 	}
