@@ -19,8 +19,28 @@ const (
 	TypeLogs      MessageType = "logs"
 	TypeFlows     MessageType = "flows"
 	TypeDevConfig MessageType = "devconfig"
+	TypeDevTest   MessageType = "devtest"
 	TypeAck       MessageType = "ack"
 )
+
+type DevTest struct {
+	Nonce     string `json:"nonce"`
+	Target    string `json:"target"`
+	Port      int    `json:"port"`
+	Secret    string `json:"secret"`
+	V3        bool   `json:"v3,omitempty"`
+	AuthProto string `json:"authProto,omitempty"`
+	PrivProto string `json:"privProto,omitempty"`
+	Context   string `json:"context,omitempty"`
+}
+
+type DevTestResult struct {
+	Nonce       string `json:"nonce"`
+	OK          bool   `json:"ok"`
+	Error       string `json:"error,omitempty"`
+	SysDescr    string `json:"sysDescr,omitempty"`
+	SysObjectID string `json:"sysObjectId,omitempty"`
+}
 
 type Message struct {
 	Type    MessageType     `json:"type"`

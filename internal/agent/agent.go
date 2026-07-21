@@ -328,6 +328,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 
 		kick := make(chan struct{}, 1)
 		dkick := make(chan struct{}, 1)
+		tkick := make(chan protocol.DevTest, 4)
 		readErr := make(chan error, 1)
 		go func() {
 			for {
@@ -336,7 +337,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					readErr <- err
 					return
 				}
-				a.handleDownstream(m, kick, dkick)
+				a.handleDownstream(m, kick, dkick, tkick)
 			}
 		}()
 
@@ -374,6 +375,14 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			case <-dkick:
 				if err := a.sendDiscovery(conn); err != nil {
 					return err
+				}
+			case t := <-tkick:
+				res := defs.DeviceTest(t, a.resolveSecret)
+				raw, err := json.Marshal(res)
+				if err == nil {
+					if err := conn.Send(protocol.Message{Type: protocol.TypeDevTest, Payload: raw}); err != nil {
+						return err
+					}
 				}
 			case <-hb.C:
 				pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -2071,7 +2080,7 @@ func tailConfigSig(defsList []protocol.Definition, deny, denySvc, logDeep map[st
 	return h.Sum64()
 }
 
-func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) {
+func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, tkick chan protocol.DevTest) {
 	switch m.Type {
 	case protocol.TypeAck:
 		a.lastAck.Store(time.Now().Unix())
@@ -2181,6 +2190,15 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}) 
 		case "publicIP":
 			if c.Key != "" {
 				defs.SetPublicIP(c.Key)
+			}
+		case "deviceTest":
+			var t protocol.DevTest
+			if json.Unmarshal([]byte(c.Key), &t) != nil || t.Nonce == "" || t.Target == "" {
+				return
+			}
+			select {
+			case tkick <- t:
+			default:
 			}
 		case "uninstall":
 			if !defs.VerifyUninstallOrder(c.Key, a.publisherKey, a.cfg.ServerID) {
