@@ -3,6 +3,7 @@ set -eu
 
 BASE="https://get.wakora.io"
 PUBKEY="__WAKORA_PUBKEY__"
+PUBKEY_EC="__WAKORA_PUBKEY_EC__"
 KEY=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -57,19 +58,44 @@ if ! command -v openssl >/dev/null 2>&1; then
   echo "openssl required to verify the signed binary but not found; aborting" >&2
   rm -f "$TMP"; exit 1
 fi
-if ! curl -fsSL "$BASE/bin/$ASSET.sig" -o "$TMP.sig" 2>/dev/null || [ ! -s "$TMP.sig" ]; then
-  echo "binary signature missing from channel; aborting" >&2
-  rm -f "$TMP" "$TMP.sig"; exit 1
-fi
-printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA%s\n-----END PUBLIC KEY-----\n' "$PUBKEY" > "$TMP.pem"
-openssl base64 -d -A -in "$TMP.sig" -out "$TMP.sigbin" 2>/dev/null || true
-if openssl pkeyutl -verify -pubin -inkey "$TMP.pem" -rawin -in "$TMP" -sigfile "$TMP.sigbin" >/dev/null 2>&1; then
-  echo "signature verified"
+# ed25519 needs pkeyutl -rawin (openssl >= 3); older systems (Ubuntu 20.04,
+# Debian 10: openssl 1.1.1) verify the ECDSA co-signature instead - same
+# binary, second key, still fail-closed everywhere
+if openssl pkeyutl -help 2>&1 | grep -q rawin; then
+  if ! curl -fsSL "$BASE/bin/$ASSET.sig" -o "$TMP.sig" 2>/dev/null || [ ! -s "$TMP.sig" ]; then
+    echo "binary signature missing from channel; aborting" >&2
+    rm -f "$TMP" "$TMP.sig"; exit 1
+  fi
+  printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA%s\n-----END PUBLIC KEY-----\n' "$PUBKEY" > "$TMP.pem"
+  openssl base64 -d -A -in "$TMP.sig" -out "$TMP.sigbin" 2>/dev/null || true
+  if openssl pkeyutl -verify -pubin -inkey "$TMP.pem" -rawin -in "$TMP" -sigfile "$TMP.sigbin" >/dev/null 2>&1; then
+    echo "signature verified"
+  else
+    echo "binary signature INVALID; aborting" >&2
+    rm -f "$TMP" "$TMP.sig" "$TMP.pem" "$TMP.sigbin"; exit 1
+  fi
+  rm -f "$TMP.sig" "$TMP.pem" "$TMP.sigbin"
 else
-  echo "binary signature INVALID; aborting" >&2
-  rm -f "$TMP" "$TMP.sig" "$TMP.pem" "$TMP.sigbin"; exit 1
+  if [ -z "$PUBKEY_EC" ] || [ "$PUBKEY_EC" = "__WAKORA_PUBKEY_EC__" ]; then
+    echo "this openssl cannot verify ed25519 and the installer has no EC key baked in; aborting" >&2
+    echo "(the get.wakora.io deploy must replace __WAKORA_PUBKEY_EC__ with the real key)" >&2
+    rm -f "$TMP"; exit 1
+  fi
+  if ! curl -fsSL "$BASE/bin/$ASSET.sig2" -o "$TMP.sig2" 2>/dev/null || [ ! -s "$TMP.sig2" ]; then
+    echo "legacy co-signature missing from channel; aborting" >&2
+    rm -f "$TMP" "$TMP.sig2"; exit 1
+  fi
+  printf -- '-----BEGIN PUBLIC KEY-----\n' > "$TMP.pem"
+  printf '%s\n' "$PUBKEY_EC" | fold -w 64 >> "$TMP.pem"
+  printf -- '-----END PUBLIC KEY-----\n' >> "$TMP.pem"
+  if openssl dgst -sha256 -verify "$TMP.pem" -signature "$TMP.sig2" "$TMP" >/dev/null 2>&1; then
+    echo "signature verified (ecdsa co-signature - this openssl is too old for ed25519)"
+  else
+    echo "binary signature INVALID; aborting" >&2
+    rm -f "$TMP" "$TMP.sig2" "$TMP.pem"; exit 1
+  fi
+  rm -f "$TMP.sig2" "$TMP.pem"
 fi
-rm -f "$TMP.sig" "$TMP.pem" "$TMP.sigbin"
 
 install -m 0755 "$TMP" /usr/local/bin/wakora
 rm -f "$TMP"
