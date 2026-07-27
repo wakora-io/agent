@@ -125,7 +125,6 @@ User=root
 StateDirectory=wakora
 Nice=10
 CPUQuota=30%
-MemoryMax=1G
 OOMScoreAdjust=500
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

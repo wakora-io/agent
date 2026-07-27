@@ -11,8 +11,6 @@ import (
 	"strings"
 )
 
-const cgroupMemoryFloor = 1 << 30
-
 func EnsureCgroupHeadroom() {
 	unit, dir, ok := selfServiceCgroup()
 	if !ok {
@@ -20,26 +18,24 @@ func EnsureCgroupHeadroom() {
 	}
 	high, haveHigh := cgroupLimit(dir, "memory.high")
 	max, haveMax := cgroupLimit(dir, "memory.max")
-	lowHigh := haveHigh && high < cgroupMemoryFloor
-	lowMax := haveMax && max < cgroupMemoryFloor
-	if !lowHigh && !lowMax {
+	if !haveHigh && !haveMax {
 		return
 	}
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return
 	}
 	args := []string{"set-property", unit}
-	if lowHigh {
+	if haveHigh {
 		args = append(args, "MemoryHigh=infinity")
 	}
-	if lowMax {
-		args = append(args, "MemoryMax=1G")
+	if haveMax {
+		args = append(args, "MemoryMax=infinity")
 	}
 	if out, err := exec.Command("systemctl", args...).CombinedOutput(); err != nil {
 		log.Printf("cgroup headroom: %s: %v (%s)", unit, err, strings.TrimSpace(string(out)))
 		return
 	}
-	log.Printf("cgroup headroom raised on %s (memory.high=%s memory.max=%s): a limit near the working set makes the kernel reclaim the page cache the agent just filled, including its own text, so every cycle re-reads from disk",
+	log.Printf("cgroup memory limit lifted on %s (memory.high=%s memory.max=%s): any finite cgroup memory limit charges the page cache of everything the agent and its exec children read, and once the touched set crosses the limit every cycle re-reads from disk (heap stays capped in-process, the oom score keeps the kernel killing the agent first)",
 		unit, limitLabel(high, haveHigh), limitLabel(max, haveMax))
 }
 
