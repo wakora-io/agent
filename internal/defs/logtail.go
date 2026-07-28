@@ -3,6 +3,7 @@ package defs
 import (
 	"bufio"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -11,6 +12,15 @@ import (
 )
 
 const maxTailRead = 8 << 20
+
+func AnyPathExists(paths []string) bool {
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
 
 type Tailer struct {
 	paths   []string

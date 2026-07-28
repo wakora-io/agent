@@ -1206,6 +1206,10 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 		check.Error = "log path unknown (not discovered yet)"
 		return a.sendCheck(conn, check)
 	}
+	if p.Optional && !defs.AnyPathExists(paths) {
+		check.Status = "ok"
+		return a.sendCheck(conn, check)
+	}
 
 	key := service + "/" + p.Name
 	t := a.tailers[key]
