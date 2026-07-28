@@ -164,6 +164,14 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 		return
 	}
 	req.Header.Set("User-Agent", probeUserAgent)
+	optionalUnset := false
+	applyCred := func(c secret.Cred) {
+		if p.AuthHeader != "" {
+			req.Header.Set(p.AuthHeader, c.Pass)
+		} else {
+			req.SetBasicAuth(c.User, c.Pass)
+		}
+	}
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {
@@ -171,10 +179,12 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
 			return
 		}
-		if p.AuthHeader != "" {
-			req.Header.Set(p.AuthHeader, c.Pass)
+		applyCred(c)
+	} else if p.SecretOpt != "" {
+		if c, ok := resolve(p.SecretOpt); ok {
+			applyCred(c)
 		} else {
-			req.SetBasicAuth(c.User, c.Pass)
+			optionalUnset = true
 		}
 	}
 	client := &http.Client{Timeout: timeout}
@@ -193,6 +203,9 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 	if resp.StatusCode != want {
 		o.Check.Status = "fail"
 		o.Check.Error = fmt.Sprintf("status %d, want %d", resp.StatusCode, want)
+		if optionalUnset && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			o.Check.Error += " - set a monitoring credential: wakora secret set " + p.SecretOpt
+		}
 		return
 	}
 	o.Check.Status = "ok"
