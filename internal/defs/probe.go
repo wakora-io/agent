@@ -3,6 +3,7 @@ package defs
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -156,22 +157,14 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 }
 
 func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredResolver) {
-	o.Check.Target = p.URL
-	req, err := http.NewRequest(http.MethodGet, p.URL, nil)
-	if err != nil {
-		o.Check.Status = "fail"
-		o.Check.Error = err.Error()
-		return
+	urls := p.URLs
+	if len(urls) == 0 {
+		urls = []string{p.URL}
 	}
-	req.Header.Set("User-Agent", probeUserAgent)
+	o.Check.Target = urls[0]
 	optionalUnset := false
-	applyCred := func(c secret.Cred) {
-		if p.AuthHeader != "" {
-			req.Header.Set(p.AuthHeader, c.Pass)
-		} else {
-			req.SetBasicAuth(c.User, c.Pass)
-		}
-	}
+	var cred secret.Cred
+	hasCred := false
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {
@@ -179,19 +172,50 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
 			return
 		}
-		applyCred(c)
+		cred = c
+		hasCred = true
 	} else if p.SecretOpt != "" {
 		if c, ok := resolve(p.SecretOpt); ok {
-			applyCred(c)
+			cred = c
+			hasCred = true
 		} else {
 			optionalUnset = true
 		}
 	}
 	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
+	if p.Insecure {
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
+	var resp *http.Response
+	var lastErr error
+	for _, u := range urls {
+		req, err := http.NewRequest(http.MethodGet, u, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", probeUserAgent)
+		if hasCred {
+			if p.Bearer {
+				req.Header.Set("Authorization", "Bearer "+cred.Pass)
+			} else if p.AuthHeader != "" {
+				req.Header.Set(p.AuthHeader, cred.Pass)
+			} else {
+				req.SetBasicAuth(cred.User, cred.Pass)
+			}
+		}
+		r, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp = r
+		o.Check.Target = u
+		break
+	}
+	if resp == nil {
 		o.Check.Status = "fail"
-		o.Check.Error = err.Error()
+		o.Check.Error = lastErr.Error()
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))

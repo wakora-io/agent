@@ -264,6 +264,9 @@ type Probe struct {
 	Name         string            `json:"name"`
 	Type         string            `json:"type"`
 	URL          string            `json:"url,omitempty"`
+	URLs         []string          `json:"urls,omitempty"`
+	Bearer       bool              `json:"bearer,omitempty"`
+	Insecure     bool              `json:"insecure,omitempty"`
 	Address      string            `json:"address,omitempty"`
 	ExpectStatus int               `json:"expectStatus,omitempty"`
 	TimeoutSec   int               `json:"timeoutSec,omitempty"`
