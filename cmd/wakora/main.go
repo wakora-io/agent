@@ -221,7 +221,7 @@ func main() {
 		if relURL != "" {
 			updateKick := make(chan struct{}, 1)
 			a.SetUpdateKick(updateKick)
-			go autoUpdate(ctx, relURL, httpc, pubKey, manifestState, *updateEvery, updateKick, a.AnnounceUpdate, a.EffectivePin)
+			go autoUpdate(ctx, relURL, httpc, pubKey, manifestState, *updateEvery, updateKick, a.EffectivePin)
 			if cfg.Pin != "" && cfg.Pin != buildinfo.Version {
 				select {
 				case updateKick <- struct{}{}:
@@ -468,7 +468,7 @@ func runUpdateOnce(relURL string, httpc *http.Client, pubKey, statePath, pin str
 	restartService()
 }
 
-func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey, statePath string, every time.Duration, kick <-chan struct{}, announce func(from, to string), pinOf func() string) {
+func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey, statePath string, every time.Duration, kick <-chan struct{}, pinOf func() string) {
 	u := update.New(relURL, httpc, pubKey, statePath)
 	exe, err := os.Executable()
 	if err != nil {
@@ -483,9 +483,6 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey, 
 				if err := u.ApplyPinned(exe, pin); err != nil {
 					log.Printf("pinned update to %s failed: %v", pin, err)
 					return
-				}
-				if announce != nil {
-					announce(buildinfo.Version, pin)
 				}
 				log.Printf("converged to pinned %s from %s, restarting", pin, buildinfo.Version)
 				exitForRestart()
@@ -503,9 +500,6 @@ func autoUpdate(ctx context.Context, relURL string, httpc *http.Client, pubKey, 
 		if err := u.Apply(exe); err != nil {
 			log.Printf("auto-update failed: %v", err)
 			return
-		}
-		if announce != nil {
-			announce(buildinfo.Version, latest)
 		}
 		log.Printf("auto-updated %s -> %s, restarting", buildinfo.Version, latest)
 		exitForRestart()
