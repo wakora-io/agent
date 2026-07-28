@@ -96,7 +96,7 @@ func runPVE(o *Outcome, service string, p protocol.Probe, timeout time.Duration)
 
 	var cluster *pveStatusRow
 	var nodeRows []pveStatusRow
-	if statusOut, err := pveGet(path, "/cluster/status", 10*time.Second); err == nil {
+	if statusOut, err := pveGet(path, "/cluster/status", timeout); err == nil {
 		var rows []pveStatusRow
 		if json.Unmarshal(statusOut, &rows) == nil {
 			for i, r := range rows {
