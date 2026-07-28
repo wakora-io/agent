@@ -40,6 +40,7 @@ type pveHARow struct {
 	Type  string `json:"type"`
 	SID   string `json:"sid"`
 	State string `json:"state"`
+	Node  string `json:"node"`
 }
 
 type pveTaskRow struct {
@@ -227,6 +228,12 @@ func pveHAEmit(o *Outcome, service string, rows []pveHARow) {
 	var res, errs float64
 	emitted := 0
 	for _, r := range rows {
+		if r.Type == "master" && r.Node != "" {
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{
+				Name: "svc." + service + ".ha.master", Value: 1, Tags: map[string]string{"node": r.Node},
+			})
+			continue
+		}
 		if r.Type != "service" || r.SID == "" {
 			continue
 		}
