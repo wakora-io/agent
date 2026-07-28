@@ -207,6 +207,7 @@ func main() {
 		runtime.GOMAXPROCS(2)
 	}
 	agent.EnsureCgroupHeadroom()
+	agent.PinOwnMappings()
 
 	if cfg.Baseline {
 		log.Print("safe baseline (Speed 1): pushed definitions will not execute; enable with wakora --set agent.baseline=false")
