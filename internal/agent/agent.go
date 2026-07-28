@@ -37,7 +37,7 @@ type Agent struct {
 	metrics      *metrics.Collector
 	detector     *anomaly.Detector
 	key          atomic.Value
-	seq          uint64
+	seq          atomic.Uint64
 	connected    atomic.Bool
 
 	mu           sync.Mutex
@@ -333,10 +333,41 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			return err
 		}
 
+		hbErr := make(chan error, 1)
+		hbStop := make(chan struct{})
+		defer close(hbStop)
+		go func() {
+			t := time.NewTicker(heartbeatEvery)
+			defer t.Stop()
+			for {
+				select {
+				case <-hbStop:
+					return
+				case <-t.C:
+					pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					err := conn.Ping(pctx)
+					cancel()
+					if err != nil {
+						log.Printf("link dead (ping failed): %v", err)
+						select {
+						case hbErr <- err:
+						default:
+						}
+						return
+					}
+					if err := a.sendHeartbeat(conn); err != nil {
+						select {
+						case hbErr <- err:
+						default:
+						}
+						return
+					}
+				}
+			}
+		}()
+
 		mt := time.NewTicker(interval)
 		defer mt.Stop()
-		hb := time.NewTicker(heartbeatEvery)
-		defer hb.Stop()
 		dt := time.NewTicker(discoveryEvery)
 		defer dt.Stop()
 		dc := time.NewTicker(discoveryCheck)
@@ -365,17 +396,8 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 						return err
 					}
 				}
-			case <-hb.C:
-				pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				err := conn.Ping(pctx)
-				cancel()
-				if err != nil {
-					log.Printf("link dead (ping failed): %v", err)
-					return err
-				}
-				if err := a.sendHeartbeat(conn); err != nil {
-					return err
-				}
+			case err := <-hbErr:
+				return err
 			case <-mt.C:
 				if err := a.sendMetrics(conn); err != nil {
 					return err
@@ -396,8 +418,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					return err
 				}
 			case pts := <-a.custom:
-				a.seq++
-				msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+				msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
 					ServerID:  a.cfg.ServerID,
 					Hostname:  a.cfg.Hostname,
 					Timestamp: time.Now().Unix(),
@@ -412,8 +433,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					}
 				}
 			case sp := <-a.spans:
-				a.seq++
-				msg, err := protocol.Encode(protocol.TypeSpans, a.seq, protocol.SpanBatch{
+				msg, err := protocol.Encode(protocol.TypeSpans, a.seq.Add(1), protocol.SpanBatch{
 					ServerID: a.cfg.ServerID,
 					Hostname: a.cfg.Hostname,
 					Spans:    sp,
@@ -424,8 +444,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					}
 				}
 			case ri := <-a.rum:
-				a.seq++
-				msg, err := protocol.Encode(protocol.TypeRum, a.seq, protocol.RumBatch{
+				msg, err := protocol.Encode(protocol.TypeRum, a.seq.Add(1), protocol.RumBatch{
 					ServerID: a.cfg.ServerID,
 					Hostname: a.cfg.Hostname,
 					Items:    ri,
@@ -456,8 +475,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 
 func (a *Agent) sendMetrics(conn transport.Conn) error {
 	batch := a.collect()
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, batch)
+	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), batch)
 	if err != nil {
 		log.Printf("encode metrics failed: %v", err)
 		return nil
@@ -480,8 +498,7 @@ func (a *Agent) observePoints(conn transport.Conn, points []protocol.MetricPoint
 		if err != nil {
 			continue
 		}
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+		msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), protocol.AgentEvent{
 			ServerID:  a.cfg.ServerID,
 			Hostname:  a.cfg.Hostname,
 			Kind:      "anomaly",
@@ -571,8 +588,7 @@ func round2(v float64) float64 {
 }
 
 func (a *Agent) sendHeartbeat(conn transport.Conn) error {
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeHeartbeat, a.seq, protocol.Heartbeat{
+	msg, err := protocol.Encode(protocol.TypeHeartbeat, a.seq.Add(1), protocol.Heartbeat{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
 		Version:   buildinfo.Version,
@@ -616,8 +632,7 @@ func (a *Agent) sendFacts(conn transport.Conn) error {
 		pf = append(pf, extra...)
 	}
 	a.mu.Unlock()
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeDiscovery, a.seq, protocol.DiscoverySnapshot{
+	msg, err := protocol.Encode(protocol.TypeDiscovery, a.seq.Add(1), protocol.DiscoverySnapshot{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
 		Timestamp: time.Now().Unix(),
@@ -1009,15 +1024,13 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 		checks[i].Hostname = a.cfg.Hostname
 	}
 	if len(checks) == 1 {
-		a.seq++
-		if msg, err := protocol.Encode(protocol.TypeCheck, a.seq, checks[0]); err == nil {
+		if msg, err := protocol.Encode(protocol.TypeCheck, a.seq.Add(1), checks[0]); err == nil {
 			if err := conn.Send(msg); err != nil {
 				return false, err
 			}
 		}
 	} else {
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeChecks, a.seq, protocol.CheckBatch{
+		msg, err := protocol.Encode(protocol.TypeChecks, a.seq.Add(1), protocol.CheckBatch{
 			ServerID: a.cfg.ServerID,
 			Hostname: a.cfg.Hostname,
 			Checks:   checks,
@@ -1029,8 +1042,7 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 		}
 	}
 	if len(o.Metrics) > 0 {
-		a.seq++
-		mmsg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+		mmsg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
 			ServerID:  a.cfg.ServerID,
 			Hostname:  a.cfg.Hostname,
 			Timestamp: o.Check.Timestamp,
@@ -1066,8 +1078,7 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 			ev.Timestamp = time.Now().Unix()
 		}
 		log.Printf("%s: %s", ev.Kind, ev.Detail)
-		a.seq++
-		emsg, err := protocol.Encode(protocol.TypeEvent, a.seq, ev)
+		emsg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), ev)
 		if err != nil {
 			continue
 		}
@@ -1081,8 +1092,7 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 		pb.Hostname = a.cfg.Hostname
 		pb.Timestamp = time.Now().Unix()
 		pb.Stacks = o.ProfileStacks
-		a.seq++
-		pmsg, err := protocol.Encode(protocol.TypeProfile, a.seq, pb)
+		pmsg, err := protocol.Encode(protocol.TypeProfile, a.seq.Add(1), pb)
 		if err == nil {
 			if err := conn.Send(pmsg); err != nil {
 				return false, err
@@ -1227,16 +1237,14 @@ func (a *Agent) sendTailOutput(conn transport.Conn, events []protocol.AgentEvent
 			ev.Timestamp = time.Now().Unix()
 		}
 		log.Printf("%s: %s", ev.Kind, ev.Detail)
-		a.seq++
-		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq, ev); err == nil {
+		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), ev); err == nil {
 			if err := conn.Send(msg); err != nil {
 				return err
 			}
 		}
 	}
 	if len(pts) > 0 {
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+		msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
 			ServerID:  a.cfg.ServerID,
 			Hostname:  a.cfg.Hostname,
 			Timestamp: time.Now().Unix(),
@@ -1319,8 +1327,7 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 			"service": service, "path": fn.Path,
 			"mbPerCycle": float64(int(float64(fn.BytesCycle)/1048576*10+0.5)) / 10,
 		})
-		a.seq++
-		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), protocol.AgentEvent{
 			ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
 			Kind: "log_source_flooding", Detail: string(detail), Timestamp: time.Now().Unix(),
 		}); err == nil {
@@ -1334,8 +1341,7 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 	if len(lines) == 0 {
 		return nil
 	}
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeLogs, a.seq, protocol.LogBatch{
+	msg, err := protocol.Encode(protocol.TypeLogs, a.seq.Add(1), protocol.LogBatch{
 		ServerID: a.cfg.ServerID,
 		Hostname: a.cfg.Hostname,
 		Lines:    lines,
@@ -1369,8 +1375,7 @@ func (a *Agent) capLogs(conn transport.Conn, lines []protocol.LogLine) []protoco
 	if dropped > 0 && !a.logCapped {
 		a.logCapped = true
 		detail, _ := json.Marshal(map[string]any{"dropped": dropped, "windowSec": 60})
-		a.seq++
-		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+		if msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), protocol.AgentEvent{
 			ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
 			Kind: "log_volume_capped", Detail: string(detail), Timestamp: time.Now().Unix(),
 		}); err == nil {
@@ -1465,8 +1470,7 @@ func (a *Agent) runTraps(conn transport.Conn, service string, p protocol.Probe) 
 		if err != nil {
 			continue
 		}
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+		msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), protocol.AgentEvent{
 			ServerID:  a.cfg.ServerID,
 			Hostname:  a.cfg.Hostname,
 			Kind:      "trap",
@@ -1610,8 +1614,7 @@ func (a *Agent) runNetflow(conn transport.Conn, service string, p protocol.Probe
 		}
 		b.ServerID = a.cfg.ServerID
 		b.Hostname = a.cfg.Hostname
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeFlows, a.seq, b)
+		msg, err := protocol.Encode(protocol.TypeFlows, a.seq.Add(1), b)
 		if err != nil {
 			continue
 		}
@@ -1668,8 +1671,7 @@ func (a *Agent) runConfigFetch(conn transport.Conn, service string, p protocol.P
 	if a.cfgSha[service] == sha {
 		return nil
 	}
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeDevConfig, a.seq, protocol.DeviceConfig{
+	msg, err := protocol.Encode(protocol.TypeDevConfig, a.seq.Add(1), protocol.DeviceConfig{
 		ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
 		Device: p.Target, Service: service, Sha: sha, Config: cfgText,
 		FetchedAt: time.Now().Unix(),
@@ -1713,8 +1715,7 @@ func (a *Agent) sendSyslogLines(conn transport.Conn, raw []defs.SyslogLine) erro
 	if len(lines) == 0 {
 		return nil
 	}
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeLogs, a.seq, protocol.LogBatch{
+	msg, err := protocol.Encode(protocol.TypeLogs, a.seq.Add(1), protocol.LogBatch{
 		ServerID: a.cfg.ServerID,
 		Hostname: a.cfg.Hostname,
 		Lines:    lines,
@@ -1773,8 +1774,7 @@ func (a *Agent) emitProfile(conn transport.Conn, o defs.Outcome) error {
 		pb.Hostname = a.cfg.Hostname
 		pb.Timestamp = time.Now().Unix()
 		pb.Stacks = o.ProfileStacks
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeProfile, a.seq, pb)
+		msg, err := protocol.Encode(protocol.TypeProfile, a.seq.Add(1), pb)
 		if err == nil {
 			if err := conn.Send(msg); err != nil {
 				return err
@@ -1942,8 +1942,7 @@ func (a *Agent) sendProbeMetrics(conn transport.Conn, pts []protocol.MetricPoint
 	if len(pts) == 0 {
 		return nil
 	}
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq, protocol.MetricsBatch{
+	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
 		Timestamp: time.Now().Unix(),
@@ -1959,8 +1958,7 @@ func (a *Agent) sendProbeMetrics(conn transport.Conn, pts []protocol.MetricPoint
 }
 
 func (a *Agent) sendCheck(conn transport.Conn, check protocol.CheckResult) error {
-	a.seq++
-	msg, err := protocol.Encode(protocol.TypeCheck, a.seq, check)
+	msg, err := protocol.Encode(protocol.TypeCheck, a.seq.Add(1), check)
 	if err != nil {
 		log.Printf("encode check failed: %v", err)
 		return nil
@@ -1982,8 +1980,7 @@ func (a *Agent) sendIntegrity(conn transport.Conn, service string, changes []fac
 			continue
 		}
 		log.Printf("integrity: %s/%s content changed", service, name)
-		a.seq++
-		msg, err := protocol.Encode(protocol.TypeEvent, a.seq, protocol.AgentEvent{
+		msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), protocol.AgentEvent{
 			ServerID:  a.cfg.ServerID,
 			Hostname:  a.cfg.Hostname,
 			Kind:      "integrity",
@@ -2182,8 +2179,7 @@ func (a *Agent) drainSpool(conn transport.Conn) {
 			return nil
 		}
 		if m.Seq == 0 {
-			a.seq++
-			m.Seq = a.seq
+			m.Seq = a.seq.Add(1)
 		}
 		return conn.Send(m)
 	})
