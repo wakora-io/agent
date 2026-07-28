@@ -26,6 +26,7 @@ func PinOwnMappings() {
 	if len(ranges) == 0 {
 		return
 	}
+	unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{Cur: unix.RLIM_INFINITY, Max: unix.RLIM_INFINITY})
 	var locked uint64
 	var lockErr error
 	for _, r := range ranges {

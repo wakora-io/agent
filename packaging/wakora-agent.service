@@ -14,6 +14,7 @@ Nice=10
 CPUQuota=30%
 CPUWeight=20
 OOMScoreAdjust=500
+LimitMEMLOCK=infinity
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 

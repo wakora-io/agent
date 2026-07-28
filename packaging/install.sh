@@ -126,6 +126,7 @@ StateDirectory=wakora
 Nice=10
 CPUQuota=30%
 OOMScoreAdjust=500
+LimitMEMLOCK=infinity
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 ProtectHome=read-only
