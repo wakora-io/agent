@@ -69,8 +69,8 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 	masters := nodeMasters(proc)
 	o.Check.Target = "node"
 	if len(masters) == 0 {
-		o.Check.Status = "fail"
-		o.Check.Error = "no " + proc + " processes outside containers"
+		o.Check.Status = "ok"
+		o.Check.Target = "no " + proc + " application outside containers"
 		return
 	}
 	o.Check.Status = "ok"

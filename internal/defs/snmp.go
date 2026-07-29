@@ -15,6 +15,13 @@ import (
 	"wakora.io/agent/internal/secret"
 )
 
+func scaleOID(v, scale float64) float64 {
+	if scale == 0 {
+		return v
+	}
+	return v * scale
+}
+
 func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration, resolve CredResolver) {
 	o.Check.Target = p.Target
 	if p.Target == "" {
@@ -110,7 +117,7 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 					break
 				}
 				if v, ok := pduNum(pdu); ok {
-					o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: p.Get[i].Name, Value: v, Tags: copyTags(deviceTag)})
+					o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: p.Get[i].Name, Value: scaleOID(v, p.Get[i].Scale), Tags: copyTags(deviceTag)})
 				}
 			}
 		} else {
@@ -165,7 +172,7 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 			if name := labels[idx]; name != "" {
 				tags["port"] = name
 			}
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: w.Name, Value: v, Tags: tags})
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: w.Name, Value: scaleOID(v, w.Scale), Tags: tags})
 			return nil
 		}); err == nil {
 			walked = true

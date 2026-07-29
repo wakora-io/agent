@@ -138,7 +138,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 
 	var primaries []int
 	for i, h := range hosts {
-		if h.Primary {
+		if h.Primary && !vhostCatchAll(h.Name) {
 			primaries = append(primaries, i)
 		}
 	}
@@ -336,6 +336,14 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			)
 		}
 	}
+}
+
+func vhostCatchAll(raw string) bool {
+	n := strings.ToLower(strings.Trim(raw, "."))
+	if n == "" || n == "_" || n == "localhost" || !strings.Contains(n, ".") {
+		return true
+	}
+	return net.ParseIP(n) != nil
 }
 
 func dnsProbeName(raw string) string {

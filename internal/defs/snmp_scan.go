@@ -70,11 +70,23 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 		}
 	}
 
+	skip := map[string]bool{}
+	for _, ip := range strings.Split(p.Options["exclude"], ",") {
+		if ip = strings.TrimSpace(ip); ip != "" {
+			skip[ip] = true
+		}
+	}
+
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 16)
 	found := 0
+	scanned := 0
 	for _, ip := range ips {
+		if skip[ip] {
+			continue
+		}
+		scanned++
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(ip string) {
@@ -102,7 +114,7 @@ func runSNMPScan(o *Outcome, service string, p protocol.Probe, timeout time.Dura
 		Name: "dev.scan.responders", Value: float64(found), Tags: map[string]string{"range": o.Check.Target},
 	})
 	o.Metrics = append(o.Metrics, protocol.MetricPoint{
-		Name: "dev.scan.scanned", Value: float64(len(ips)), Tags: map[string]string{"range": o.Check.Target},
+		Name: "dev.scan.scanned", Value: float64(scanned), Tags: map[string]string{"range": o.Check.Target},
 	})
 	o.Check.Status = "ok"
 }

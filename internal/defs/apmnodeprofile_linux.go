@@ -54,8 +54,8 @@ func runAPMNodeProfile(o *Outcome, service string, p protocol.Probe) {
 		}
 	}
 	if len(pids) == 0 {
-		o.Check.Status = "fail"
-		o.Check.Error = "no node processes outside containers"
+		o.Check.Status = "ok"
+		o.Check.Target = "no node application outside containers"
 		return
 	}
 	if mapped == 0 {

@@ -327,7 +327,12 @@ var embeddedLevelRes = []struct {
 	{regexp.MustCompile(`\[(?:INFO|DEBUG)\]`), "info"},
 }
 
+var kernelBookkeepingRe = regexp.MustCompile(`(?:kauditd_printk_skb|net_ratelimit|printk): \d+ callbacks suppressed`)
+
 func downgradeTransportError(level, msg string) string {
+	if kernelBookkeepingRe.MatchString(msg) {
+		return "info"
+	}
 	if level != "error" {
 		return level
 	}
