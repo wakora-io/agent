@@ -161,6 +161,19 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 	}
 	for _, w := range p.Walk {
 		base := normOID(w.OID)
+		wLabels, tagKey := labels, "port"
+		if w.LabelOID != "" {
+			wLabels = map[string]string{}
+			lb := normOID(w.LabelOID)
+			_ = g.Walk(lb, func(pdu gosnmp.SnmpPDU) error {
+				wLabels[indexOf(lb, pdu.Name)] = pduString(pdu)
+				return nil
+			})
+			tagKey = "sensor"
+			if w.LabelTag != "" {
+				tagKey = w.LabelTag
+			}
+		}
 		if err := g.Walk(base, func(pdu gosnmp.SnmpPDU) error {
 			v, ok := pduNum(pdu)
 			if !ok {
@@ -168,9 +181,14 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 			}
 			idx := indexOf(base, pdu.Name)
 			tags := copyTags(deviceTag)
-			tags["index"] = idx
-			if name := labels[idx]; name != "" {
-				tags["port"] = name
+			name := wLabels[idx]
+			if name != "" && w.LabelOID != "" {
+				tags[tagKey] = name
+			} else {
+				tags["index"] = idx
+				if name != "" {
+					tags[tagKey] = name
+				}
 			}
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: w.Name, Value: scaleOID(v, w.Scale), Tags: tags})
 			return nil

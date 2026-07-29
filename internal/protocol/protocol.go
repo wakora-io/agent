@@ -256,9 +256,11 @@ type Counter struct {
 }
 
 type OID struct {
-	Name  string  `json:"name"`
-	OID   string  `json:"oid"`
-	Scale float64 `json:"scale,omitempty"`
+	Name     string  `json:"name"`
+	OID      string  `json:"oid"`
+	Scale    float64 `json:"scale,omitempty"`
+	LabelOID string  `json:"labelOid,omitempty"`
+	LabelTag string  `json:"labelTag,omitempty"`
 }
 
 type Probe struct {
