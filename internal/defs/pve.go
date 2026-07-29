@@ -34,6 +34,7 @@ type pveStatusRow struct {
 	Online  int    `json:"online"`
 	Quorate int    `json:"quorate"`
 	Nodes   int    `json:"nodes"`
+	NodeID  int    `json:"nodeid"`
 }
 
 type pveHARow struct {
@@ -200,6 +201,11 @@ func pveEmitCluster(o *Outcome, service string, cluster *pveStatusRow, nodes []p
 		o.Metrics = append(o.Metrics, protocol.MetricPoint{
 			Name: prefix + "node.online", Value: v, Tags: map[string]string{"node": n.Name},
 		})
+		if n.NodeID > 0 {
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{
+				Name: prefix + "node.id", Value: float64(n.NodeID), Tags: map[string]string{"node": n.Name},
+			})
+		}
 	}
 	total := float64(cluster.Nodes)
 	if total == 0 {
