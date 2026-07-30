@@ -255,12 +255,19 @@ type Counter struct {
 	Min     int    `json:"min,omitempty"`
 }
 
+type OIDUnit struct {
+	Tag   string  `json:"tag"`
+	Scale float64 `json:"scale,omitempty"`
+}
+
 type OID struct {
-	Name     string  `json:"name"`
-	OID      string  `json:"oid"`
-	Scale    float64 `json:"scale,omitempty"`
-	LabelOID string  `json:"labelOid,omitempty"`
-	LabelTag string  `json:"labelTag,omitempty"`
+	Name     string             `json:"name"`
+	OID      string             `json:"oid"`
+	Scale    float64            `json:"scale,omitempty"`
+	LabelOID string             `json:"labelOid,omitempty"`
+	LabelTag string             `json:"labelTag,omitempty"`
+	UnitOID  string             `json:"unitOid,omitempty"`
+	Units    map[string]OIDUnit `json:"units,omitempty"`
 }
 
 type Probe struct {

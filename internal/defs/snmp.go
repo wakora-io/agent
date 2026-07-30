@@ -174,6 +174,14 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 				tagKey = w.LabelTag
 			}
 		}
+		unitByIdx := map[string]string{}
+		if w.UnitOID != "" {
+			ub := normOID(w.UnitOID)
+			_ = g.Walk(ub, func(pdu gosnmp.SnmpPDU) error {
+				unitByIdx[indexOf(ub, pdu.Name)] = pduString(pdu)
+				return nil
+			})
+		}
 		if err := g.Walk(base, func(pdu gosnmp.SnmpPDU) error {
 			v, ok := pduNum(pdu)
 			if !ok {
@@ -190,7 +198,12 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 					tags[tagKey] = name
 				}
 			}
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: w.Name, Value: scaleOID(v, w.Scale), Tags: tags})
+			val := scaleOID(v, w.Scale)
+			if u, ok := w.Units[unitByIdx[idx]]; ok {
+				tags["unit"] = u.Tag
+				val = scaleOID(v, u.Scale)
+			}
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: w.Name, Value: val, Tags: tags})
 			return nil
 		}); err == nil {
 			walked = true
