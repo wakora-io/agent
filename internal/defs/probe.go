@@ -142,6 +142,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runCIS(&o, service)
 	case "drbd":
 		runDRBD(&o, service, timeout)
+	case "linstor":
+		runLinstor(&o, service, p, resolve)
 	case "fpmpool":
 		runFPMPool(&o, service, p)
 	default:
