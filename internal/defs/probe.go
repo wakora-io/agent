@@ -140,6 +140,8 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		runHyperV(&o, service, p)
 	case "cis":
 		runCIS(&o, service)
+	case "drbd":
+		runDRBD(&o, service, timeout)
 	case "fpmpool":
 		runFPMPool(&o, service, p)
 	default:

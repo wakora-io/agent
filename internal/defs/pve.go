@@ -301,13 +301,21 @@ func pveTasksEmit(o *Outcome, rows []pveTaskRow) {
 			continue
 		}
 		pveState.seen[r.UPID] = true
-		task, ok := pveTaskKinds[r.Type]
-		if !ok || emitted >= 20 {
+		task, known := pveTaskKinds[r.Type]
+		failed := r.Status != "" && r.Status != "OK"
+		if (!known && !failed) || emitted >= 20 {
 			continue
+		}
+		if !known {
+			task = "task"
+		}
+		status := r.Status
+		if len(status) > 200 {
+			status = status[:200]
 		}
 		detail, err := json.Marshal(map[string]any{
 			"task": task, "type": r.Type, "node": r.Node, "guest": r.ID,
-			"status": r.Status, "durationSec": int(r.EndTime - r.StartTime), "user": r.User,
+			"status": status, "durationSec": int(r.EndTime - r.StartTime), "user": r.User,
 		})
 		if err != nil {
 			continue

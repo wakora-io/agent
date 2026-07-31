@@ -9,7 +9,7 @@ var knownProbeTypes = map[string]bool{
 	"logtail": true, "journal": true, "procfact": true, "traps": true, "syslog": true,
 	"keepalived": true, "virsh": true, "iis": true, "hyperv": true, "ebpfhttp": true, "apmphp": true, "apmprofile": true, "apmdotnet": true,
 	"apmdotnetprofile": true, "k8s": true, "cis": true, "logs": true, "fpmpool": true, "apmnode": true, "apmnodeprofile": true,
-	"netflow": true, "configfetch": true,
+	"netflow": true, "configfetch": true, "drbd": true,
 }
 
 func UnsupportedProbes(d protocol.Definition) []string {
