@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -273,10 +274,36 @@ func pveTasks(o *Outcome, service, path string) {
 	if json.Unmarshal(out, &rows) != nil {
 		return
 	}
-	pveTasksEmit(o, rows)
+	pveTasksEmit(o, rows, func(node, upid string) []byte {
+		raw, lerr := pveGet(path, "/nodes/"+node+"/tasks/"+upid+"/log", 8*time.Second)
+		if lerr != nil {
+			return nil
+		}
+		return raw
+	})
 }
 
-func pveTasksEmit(o *Outcome, rows []pveTaskRow) {
+var pveMigTargetRe = regexp.MustCompile(`to node '([^']+)'`)
+
+func pveTaskTarget(raw []byte) string {
+	var lines []struct {
+		T string `json:"t"`
+	}
+	if raw == nil || json.Unmarshal(raw, &lines) != nil {
+		return ""
+	}
+	for i, l := range lines {
+		if i >= 25 {
+			break
+		}
+		if m := pveMigTargetRe.FindStringSubmatch(l.T); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+func pveTasksEmit(o *Outcome, rows []pveTaskRow, logFn func(node, upid string) []byte) {
 	if !pveState.seeded {
 		for _, r := range rows {
 			if r.UPID != "" {
@@ -296,6 +323,7 @@ func pveTasksEmit(o *Outcome, rows []pveTaskRow) {
 		pveState.seen = fresh
 	}
 	emitted := 0
+	logsRead := 0
 	for _, r := range rows {
 		if r.UPID == "" || r.EndTime <= 0 || pveState.seen[r.UPID] {
 			continue
@@ -313,10 +341,17 @@ func pveTasksEmit(o *Outcome, rows []pveTaskRow) {
 		if len(status) > 200 {
 			status = status[:200]
 		}
-		detail, err := json.Marshal(map[string]any{
+		det := map[string]any{
 			"task": task, "type": r.Type, "node": r.Node, "guest": r.ID,
 			"status": status, "durationSec": int(r.EndTime - r.StartTime), "user": r.User,
-		})
+		}
+		if task == "migration" && logFn != nil && logsRead < 4 {
+			logsRead++
+			if t := pveTaskTarget(logFn(r.Node, r.UPID)); t != "" {
+				det["target"] = t
+			}
+		}
+		detail, err := json.Marshal(det)
 		if err != nil {
 			continue
 		}
