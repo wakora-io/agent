@@ -5,7 +5,9 @@ package defs
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,7 +73,21 @@ var drbdSyncStates = map[string]bool{
 	"WFSyncUUID": true, "SyncSource": true, "SyncTarget": true,
 }
 
+var drbdVerRe = regexp.MustCompile(`version:\s+(\S+)`)
+
+func drbdKernelVersion() string {
+	raw, err := os.ReadFile("/proc/drbd")
+	if err != nil {
+		return ""
+	}
+	if m := drbdVerRe.FindStringSubmatch(string(raw)); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 func runDRBD(o *Outcome, service string, timeout time.Duration) {
+	o.Check.Target = "drbdsetup status --json"
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "drbdsetup", "status", "--json").Output()
@@ -87,6 +103,12 @@ func runDRBD(o *Outcome, service string, timeout time.Duration) {
 		return
 	}
 	drbdEmit(o, service, resources, time.Now())
+	if v := drbdKernelVersion(); v != "" {
+		if o.Facts == nil {
+			o.Facts = map[string]string{}
+		}
+		o.Facts["version"] = v
+	}
 }
 
 func drbdEmit(o *Outcome, service string, resources []drbdRes, now time.Time) {

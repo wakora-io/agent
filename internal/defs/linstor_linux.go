@@ -106,6 +106,7 @@ func runLinstor(o *Outcome, service string, p protocol.Probe, resolve CredResolv
 	var nodes []linstorNode
 	base := ""
 	var lastErr error
+	o.Check.Target = bases[0]
 	for _, b := range bases {
 		err := linstorGet(client, b, "/v1/nodes", token, &nodes)
 		if err == nil {
@@ -123,6 +124,7 @@ func runLinstor(o *Outcome, service string, p protocol.Probe, resolve CredResolv
 		}
 		return
 	}
+	o.Check.Target = base
 	o.Check.Status = "ok"
 	prefix := "svc." + service + "."
 	add := func(name string, v float64, tags map[string]string) {
@@ -221,6 +223,12 @@ func runLinstor(o *Outcome, service string, p protocol.Probe, resolve CredResolv
 
 	if o.Facts == nil {
 		o.Facts = map[string]string{}
+	}
+	var cv struct {
+		Version string `json:"version"`
+	}
+	if err := linstorGet(client, base, "/v1/controller/version", token, &cv); err == nil && cv.Version != "" {
+		o.Facts["version"] = cv.Version
 	}
 	o.Facts["nodes"] = strconv.Itoa(onlineN) + " of " + strconv.Itoa(len(nodes)) + " online"
 	if len(offline) > 0 {
