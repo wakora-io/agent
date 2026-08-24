@@ -65,9 +65,10 @@ type pveMem struct {
 	localNode string
 	seen      map[string]bool
 	seeded    bool
+	failed    map[string]bool
 }
 
-var pveState = &pveMem{seen: map[string]bool{}}
+var pveState = &pveMem{seen: map[string]bool{}, failed: map[string]bool{}}
 
 func pveGet(path, api string, timeout time.Duration) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -331,7 +332,20 @@ func pveTasksEmit(o *Outcome, rows []pveTaskRow, logFn func(node, upid string) [
 		pveState.seen[r.UPID] = true
 		task, known := pveTaskKinds[r.Type]
 		failed := r.Status != "" && r.Status != "OK"
-		if (!known && !failed) || emitted >= 20 {
+		if pveState.failed == nil {
+			pveState.failed = map[string]bool{}
+		}
+		key := r.Type + "/" + r.ID
+		recovered := false
+		if failed {
+			if len(pveState.failed) < 500 {
+				pveState.failed[key] = true
+			}
+		} else if pveState.failed[key] {
+			recovered = true
+			delete(pveState.failed, key)
+		}
+		if (!known && !failed && !recovered) || emitted >= 20 {
 			continue
 		}
 		if !known {
