@@ -111,12 +111,23 @@ func runDRBD(o *Outcome, service string, timeout time.Duration) {
 	}
 }
 
+func drbdTransientRes(name string) bool {
+	return strings.HasPrefix(name, "snap_")
+}
+
 func drbdEmit(o *Outcome, service string, resources []drbdRes, now time.Time) {
 	o.Check.Status = "ok"
 	prefix := "svc." + service + "."
 	add := func(name string, v float64, tags map[string]string) {
 		o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: prefix + name, Value: v, Tags: tags})
 	}
+	kept := make([]drbdRes, 0, len(resources))
+	for _, r := range resources {
+		if !drbdTransientRes(r.Name) {
+			kept = append(kept, r)
+		}
+	}
+	resources = kept
 	add("resources", float64(len(resources)), nil)
 	if len(resources) == 0 {
 		o.Check.Error = "no drbd resources configured"
