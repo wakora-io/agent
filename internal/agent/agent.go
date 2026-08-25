@@ -809,7 +809,7 @@ func selectDueProbes(active []protocol.Definition, lastRun map[string]time.Time,
 			if p.IntervalSec > 0 {
 				interval = time.Duration(p.IntervalSec) * time.Second
 			}
-			key := d.Service + "/" + p.Name
+			key := d.Service + "/" + p.Type + "/" + p.Name
 			if now.Sub(lastRun[key]) >= interval {
 				lastRun[key] = now
 				ready = append(ready, p)
