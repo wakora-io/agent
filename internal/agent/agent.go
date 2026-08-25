@@ -982,6 +982,11 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				factsChanged = true
 			}
 		}
+		if pts := defs.Derived(d.Service, d.Derived, time.Now()); len(pts) > 0 {
+			if err := a.emitMetrics(conn, pts); err != nil {
+				return err
+			}
+		}
 	}
 	if factsChanged {
 		return a.sendFacts(conn)
@@ -1056,6 +1061,7 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 		if err := a.observePoints(conn, o.Metrics); err != nil {
 			return false, err
 		}
+		defs.RememberMetrics(service, o.Metrics, time.Now())
 	}
 	if len(o.Facts) > 0 {
 		ch, integrity := a.mergeServiceFacts(service, o.Facts)
@@ -1100,6 +1106,25 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 		}
 	}
 	return factsChanged, nil
+}
+
+func (a *Agent) emitMetrics(conn transport.Conn, pts []protocol.MetricPoint) error {
+	if len(pts) == 0 {
+		return nil
+	}
+	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		Timestamp: time.Now().Unix(),
+		Points:    pts,
+	})
+	if err != nil {
+		return nil
+	}
+	if err := conn.Send(msg); err != nil {
+		return err
+	}
+	return a.observePoints(conn, pts)
 }
 
 func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {

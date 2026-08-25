@@ -242,9 +242,10 @@ type KVMetric struct {
 }
 
 type KVRatio struct {
-	Name string `json:"name"`
-	Num  string `json:"num"`
-	Den  string `json:"den"`
+	Name  string  `json:"name"`
+	Num   string  `json:"num"`
+	Den   string  `json:"den"`
+	Scale float64 `json:"scale,omitempty"`
 }
 
 type Counter struct {
@@ -253,6 +254,12 @@ type Counter struct {
 	Capture string `json:"capture,omitempty"`
 	Event   string `json:"event,omitempty"`
 	Min     int    `json:"min,omitempty"`
+}
+
+type RateRule struct {
+	Name string `json:"name"`
+	Out  string `json:"out,omitempty"`
+	Per  string `json:"per,omitempty"`
 }
 
 type OIDUnit struct {
@@ -302,6 +309,7 @@ type Probe struct {
 	Hash         bool              `json:"hash,omitempty"`
 	Age          bool              `json:"age,omitempty"`
 	Counters     []Counter         `json:"counters,omitempty"`
+	Rates        []RateRule        `json:"rates,omitempty"`
 	Target       string            `json:"target,omitempty"`
 	Get          []OID             `json:"get,omitempty"`
 	Walk         []OID             `json:"walk,omitempty"`
@@ -342,14 +350,22 @@ type Probe struct {
 	Nonce        string            `json:"nonce,omitempty"`
 }
 
+type DerivedRule struct {
+	Name  string  `json:"name"`
+	Num   string  `json:"num"`
+	Den   string  `json:"den"`
+	Scale float64 `json:"scale,omitempty"`
+}
+
 type Definition struct {
-	Service         string   `json:"service"`
-	Match           Match    `json:"match"`
-	Hosts           []string `json:"hosts,omitempty"`
-	RunOn           []string `json:"runOn,omitempty"`
-	Probes          []Probe  `json:"probes"`
-	IntervalSec     int      `json:"intervalSec,omitempty"`
-	MinAgentVersion string   `json:"minAgentVersion,omitempty"`
+	Service         string        `json:"service"`
+	Match           Match         `json:"match"`
+	Hosts           []string      `json:"hosts,omitempty"`
+	RunOn           []string      `json:"runOn,omitempty"`
+	Probes          []Probe       `json:"probes"`
+	Derived         []DerivedRule `json:"derived,omitempty"`
+	IntervalSec     int           `json:"intervalSec,omitempty"`
+	MinAgentVersion string        `json:"minAgentVersion,omitempty"`
 }
 
 type AgentEvent struct {

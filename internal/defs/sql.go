@@ -118,7 +118,11 @@ func applyKV(o *Outcome, p protocol.Probe, kv map[string]string) {
 		num, okN := parseNum(kv[r.Num])
 		den, okD := parseNum(kv[r.Den])
 		if okN && okD && den > 0 {
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: r.Name, Value: num / den})
+			scale := r.Scale
+			if scale == 0 {
+				scale = 1
+			}
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: r.Name, Value: num / den * scale})
 		}
 	}
 	for _, f := range p.KVFacts {

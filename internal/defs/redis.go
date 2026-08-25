@@ -44,12 +44,7 @@ func runRedis(o *Outcome, service string, p protocol.Probe, timeout time.Duratio
 	}
 	o.Check.Status = "ok"
 
-	info := parseRedisInfo(raw)
-	for _, m := range p.KVMetrics {
-		if v, ok := parseNum(info[m.Key]); ok {
-			o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: m.Name, Value: v})
-		}
-	}
+	applyKV(o, p, parseRedisInfo(raw))
 }
 
 func parseRedisInfo(raw string) map[string]string {

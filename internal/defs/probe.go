@@ -157,6 +157,7 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 			Value: o.Check.LatencyMs,
 		})
 	}
+	applyRates(&o, service, p, time.Now())
 	return o
 }
 
