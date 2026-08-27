@@ -257,9 +257,10 @@ type Counter struct {
 }
 
 type RateRule struct {
-	Name string `json:"name"`
-	Out  string `json:"out,omitempty"`
-	Per  string `json:"per,omitempty"`
+	Name   string `json:"name"`
+	Out    string `json:"out,omitempty"`
+	Per    string `json:"per,omitempty"`
+	Window int    `json:"window,omitempty"`
 }
 
 type OIDUnit struct {

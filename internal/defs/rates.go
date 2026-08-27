@@ -19,10 +19,35 @@ type rateMark struct {
 var (
 	rateMu   sync.Mutex
 	rateSeen = map[string]rateMark{}
+	rateHist = map[string][]rateMark{}
 
 	lastMu   sync.Mutex
 	lastSeen = map[string]rateMark{}
 )
+
+const rateHistCap = 240
+
+func windowDelta(key string, value float64, now time.Time, window time.Duration) (float64, bool) {
+	h := rateHist[key]
+	if n := len(h); n > 0 && value < h[n-1].value {
+		h = nil
+	}
+	h = append(h, rateMark{value: value, at: now})
+	cut := now.Add(-window)
+	drop := 0
+	for drop+1 < len(h) && h[drop+1].at.Before(cut) {
+		drop++
+	}
+	h = h[drop:]
+	if len(h) > rateHistCap {
+		h = h[len(h)-rateHistCap:]
+	}
+	rateHist[key] = h
+	if len(h) < 2 {
+		return 0, false
+	}
+	return value - h[0].value, true
+}
 
 func RememberMetrics(service string, pts []protocol.MetricPoint, now time.Time) {
 	if len(pts) == 0 {
@@ -122,6 +147,11 @@ func applyRates(o *Outcome, service string, p protocol.Probe, now time.Time) {
 			delete(rateSeen, k)
 		}
 	}
+	for k, h := range rateHist {
+		if len(h) == 0 || now.Sub(h[len(h)-1].at) > rateStale {
+			delete(rateHist, k)
+		}
+	}
 	var out []protocol.MetricPoint
 	for _, pt := range o.Metrics {
 		rules := wanted[pt.Name]
@@ -131,21 +161,29 @@ func applyRates(o *Outcome, service string, p protocol.Probe, now time.Time) {
 		key := rateKey(service, pt.Name, pt.Tags)
 		prev, seen := rateSeen[key]
 		rateSeen[key] = rateMark{value: pt.Value, at: now}
-		if !seen {
-			continue
-		}
-		elapsed := now.Sub(prev.at).Seconds()
-		if elapsed <= 0 || pt.Value < prev.value {
-			continue
-		}
-		delta := pt.Value - prev.value
 		for _, r := range rules {
-			mult, suffix := ratePer(r.Per)
 			name := strings.TrimSpace(r.Out)
+			if r.Window > 0 {
+				if name == "" {
+					name = pt.Name + "_window"
+				}
+				if d, ok := windowDelta(key+"|"+name, pt.Value, now, time.Duration(r.Window)*time.Second); ok {
+					out = append(out, protocol.MetricPoint{Name: name, Value: d, Tags: pt.Tags})
+				}
+				continue
+			}
+			if !seen {
+				continue
+			}
+			elapsed := now.Sub(prev.at).Seconds()
+			if elapsed <= 0 || pt.Value < prev.value {
+				continue
+			}
+			mult, suffix := ratePer(r.Per)
 			if name == "" {
 				name = pt.Name + suffix
 			}
-			out = append(out, protocol.MetricPoint{Name: name, Value: delta / elapsed * mult, Tags: pt.Tags})
+			out = append(out, protocol.MetricPoint{Name: name, Value: (pt.Value - prev.value) / elapsed * mult, Tags: pt.Tags})
 		}
 	}
 	o.Metrics = append(o.Metrics, out...)
