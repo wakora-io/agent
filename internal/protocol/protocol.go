@@ -278,6 +278,12 @@ type OID struct {
 	Units    map[string]OIDUnit `json:"units,omitempty"`
 }
 
+type LinkState struct {
+	Oper  string `json:"oper"`
+	Admin string `json:"admin,omitempty"`
+	Out   string `json:"out"`
+}
+
 type Probe struct {
 	Name         string            `json:"name"`
 	Type         string            `json:"type"`
@@ -314,6 +320,7 @@ type Probe struct {
 	Target       string            `json:"target,omitempty"`
 	Get          []OID             `json:"get,omitempty"`
 	Walk         []OID             `json:"walk,omitempty"`
+	LinkState    *LinkState        `json:"linkState,omitempty"`
 	LabelOID     string            `json:"labelOid,omitempty"`
 	DeviceFacts  []OID             `json:"deviceFacts,omitempty"`
 	Port         int               `json:"port,omitempty"`

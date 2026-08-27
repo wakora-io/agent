@@ -212,6 +212,8 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 		}
 	}
 
+	applyLinkState(o, p, host, time.Now())
+
 	if len(o.Metrics) == 0 && len(facts) == 0 && !walked {
 		o.Check.Status = "fail"
 		if lastErr == "" {
