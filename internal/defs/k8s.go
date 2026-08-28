@@ -25,6 +25,7 @@ const (
 
 var k8sKubeconfigCandidates = []string{
 	"/etc/rancher/k3s/k3s.yaml",
+	"/etc/rancher/rke2/rke2.yaml",
 	"/etc/kubernetes/admin.conf",
 	"/var/lib/k0s/pki/admin.conf",
 }

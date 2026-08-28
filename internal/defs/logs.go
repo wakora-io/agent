@@ -218,7 +218,7 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 		}
 	}
 	paths := p.Paths
-	if p.Path != "" {
+	if p.Path != "" && !p.K8s && !p.Docker {
 		paths = append(paths, p.Path)
 	}
 	levelRe := l.compile(p.LevelRegex)
