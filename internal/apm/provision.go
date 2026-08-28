@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -243,10 +244,19 @@ func (p *Provisioner) unpackFile(name, archive string) error {
 		return err
 	}
 	dst := filepath.Join(p.dir, name)
-	if err := os.RemoveAll(dst); err != nil {
+	old := filepath.Join(p.dir, "."+name+".old")
+	_ = os.RemoveAll(old)
+	if err := os.Rename(dst, old); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		os.RemoveAll(tmp)
 		return err
 	}
-	return os.Rename(tmp, dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Rename(old, dst)
+		os.RemoveAll(tmp)
+		return err
+	}
+	os.RemoveAll(old)
+	return nil
 }
 
 func extractTarGz(r io.Reader, dst string) error {

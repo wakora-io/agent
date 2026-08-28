@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const launchdLabel = "io.wakora.agent"
@@ -47,9 +49,37 @@ func runServiceCmd(args []string) {
 	}
 }
 
+func checkServiceExePath(exe string) error {
+	p, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		p = exe
+	}
+	for {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("cannot read ownership of %s", p)
+		}
+		if st.Uid != 0 || fi.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("%s is not root-owned and root-writable-only: registering the service here would let its owner replace what launchd starts as root - copy the binary to /usr/local/bin and install from there", p)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return nil
+		}
+		p = parent
+	}
+}
+
 func installLaunchd() error {
 	exe, err := os.Executable()
 	if err != nil {
+		return err
+	}
+	if err := checkServiceExePath(exe); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(defaultConfigDir, 0o700); err != nil {

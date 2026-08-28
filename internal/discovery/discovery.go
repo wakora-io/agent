@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"wakora.io/agent/internal/redact"
 )
 
 type Fact struct {
@@ -148,6 +150,15 @@ func containerCgroup(s string) bool {
 		}
 	}
 	return false
+}
+
+func procCmd(raw string) string {
+	cmd := strings.TrimSpace(strings.ReplaceAll(raw, "\x00", " "))
+	cmd = redact.Scrub(cmd)
+	if len(cmd) > 300 {
+		cmd = cmd[:300]
+	}
+	return cmd
 }
 
 func sortedFacts[T any](kind string, agg map[string]*T) []Fact {

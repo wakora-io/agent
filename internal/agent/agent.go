@@ -2219,7 +2219,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 			default:
 			}
 		case "uninstall":
-			if !defs.VerifyUninstallOrder(c.Key, a.publisherKey, a.cfg.ServerID) {
+			if !defs.VerifyUninstallOrder(c.Key, a.publisherKey, a.cfg.ServerID, a.cfg.StateDir()) {
 				log.Print("uninstall order rejected: signature or uuid mismatch")
 				return
 			}

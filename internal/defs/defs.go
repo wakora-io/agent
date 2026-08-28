@@ -9,7 +9,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"wakora.io/agent/internal/atomicfile"
 	"wakora.io/agent/internal/discovery"
@@ -86,7 +88,9 @@ func TenantDefsKey(stateDir string, set protocol.DefinitionSet) ed25519.PublicKe
 	return ed25519.PublicKey(cand)
 }
 
-func VerifyUninstallOrder(envelope, publisherKey, wantUUID string) bool {
+const uninstallOrderTTL = 24 * time.Hour
+
+func VerifyUninstallOrder(envelope, publisherKey, wantUUID, stateDir string) bool {
 	pub, err := base64.StdEncoding.DecodeString(publisherKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return false
@@ -110,7 +114,25 @@ func VerifyUninstallOrder(envelope, publisherKey, wantUUID string) bool {
 	if json.Unmarshal(payload, &o) != nil {
 		return false
 	}
-	return o.UUID != "" && o.UUID == wantUUID
+	if o.UUID == "" || o.UUID != wantUUID || o.IssuedAt <= 0 {
+		return false
+	}
+	if age := time.Since(time.Unix(o.IssuedAt, 0)); age > uninstallOrderTTL {
+		log.Printf("uninstall order refused: issued %s ago", age.Round(time.Hour))
+		return false
+	}
+	if stateDir == "" {
+		return true
+	}
+	marker := filepath.Join(stateDir, "uninstall-order")
+	if raw, err := os.ReadFile(marker); err == nil {
+		if prev, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64); err == nil && o.IssuedAt <= prev {
+			log.Print("uninstall order refused: replay of an order already seen")
+			return false
+		}
+	}
+	_ = atomicfile.Write(marker, []byte(strconv.FormatInt(o.IssuedAt, 10)), 0o600)
+	return true
 }
 
 func Matches(d protocol.Definition, facts []discovery.Fact) bool {

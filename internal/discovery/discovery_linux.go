@@ -190,10 +190,7 @@ func processes() []Fact {
 			continue
 		}
 		cmdRaw, _ := os.ReadFile(filepath.Join("/proc", dir, "cmdline"))
-		cmd := strings.TrimSpace(strings.ReplaceAll(string(cmdRaw), "\x00", " "))
-		if len(cmd) > 300 {
-			cmd = cmd[:300]
-		}
+		cmd := procCmd(string(cmdRaw))
 		exe, _ := os.Readlink(filepath.Join("/proc", dir, "exe"))
 		if cmd == "" && exe == "" {
 			continue

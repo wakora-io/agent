@@ -2,6 +2,8 @@ package defs
 
 import (
 	"context"
+	"crypto/tls"
+	"net"
 	"strings"
 	"time"
 
@@ -18,6 +20,13 @@ func runRedis(o *Outcome, service string, p protocol.Probe, timeout time.Duratio
 	o.Check.Target = "redis:" + addr
 
 	opts := &redis.Options{Addr: addr, DialTimeout: timeout, ReadTimeout: timeout, MaxRetries: -1}
+	if !localTarget(addr) && !p.Insecure {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			host = addr
+		}
+		opts.TLSConfig = &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	}
 	if p.Secret != "" {
 		c, ok := resolve(p.Secret)
 		if !ok {

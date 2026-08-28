@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -139,9 +141,27 @@ func awaitRestart() error {
 	return fmt.Errorf("service did not reach stopped state in time")
 }
 
+func checkServiceExePath(exe string) error {
+	roots := []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramData"), os.Getenv("SystemRoot")}
+	full := strings.ToLower(filepath.Clean(exe))
+	for _, r := range roots {
+		if r == "" {
+			continue
+		}
+		root := strings.ToLower(filepath.Clean(r)) + string(filepath.Separator)
+		if strings.HasPrefix(full, root) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is outside the directories only administrators can write: registering the service here would let whoever can write that folder replace what SCM starts as SYSTEM - copy the binary to %s\\Wakora and install from there", exe, os.Getenv("ProgramFiles"))
+}
+
 func installService() error {
 	exe, err := os.Executable()
 	if err != nil {
+		return err
+	}
+	if err := checkServiceExePath(exe); err != nil {
 		return err
 	}
 	m, err := mgr.Connect()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -70,7 +71,7 @@ func runSQL(o *Outcome, service string, p protocol.Probe, timeout time.Duration,
 	rows, err := db.QueryContext(ctx, p.Query)
 	if err != nil {
 		o.Check.Status = "fail"
-		o.Check.Error = redact(err.Error(), cred.Pass)
+		o.Check.Error = redactSecret(err.Error(), cred.Pass)
 		if optionalUnset && strings.Contains(o.Check.Error, "Access denied") {
 			o.Check.Error += " - set a read-only monitoring credential: wakora secret set " + p.SecretOpt
 		}
@@ -137,6 +138,24 @@ func applyKV(o *Outcome, p protocol.Probe, kv map[string]string) {
 	}
 }
 
+func localTarget(addr string) bool {
+	if addr == "" || strings.HasPrefix(addr, "/") {
+		return true
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	host, _, _ = strings.Cut(host, "/")
+	if strings.EqualFold(host, "localhost") || host == "" || strings.EqualFold(host, ".") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 var mysqlSockets = []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"}
 var pgSocketDirs = []string{"/var/run/postgresql", "/run/postgresql", "/tmp"}
 
@@ -154,7 +173,11 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 		if addr == "" {
 			addr = "127.0.0.1:3306"
 		}
-		return fmt.Sprintf("%s:%s@tcp(%s)/?timeout=5s&readTimeout=5s", cred.User, cred.Pass, addr), "mysql", nil
+		tlsParam := ""
+		if !localTarget(addr) && !p.Insecure {
+			tlsParam = "&tls=true"
+		}
+		return fmt.Sprintf("%s:%s@tcp(%s)/?timeout=5s&readTimeout=5s%s", cred.User, cred.Pass, addr, tlsParam), "mysql", nil
 	case "postgres":
 		if p.Socket {
 			dir := findSocketDir(pgSocketDirs, ".s.PGSQL.5432")
@@ -171,7 +194,11 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 		if port == "" {
 			port = "5432"
 		}
-		return fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable&connect_timeout=5", cred.User, cred.Pass, host, port), "pgx", nil
+		sslMode := "disable"
+		if !localTarget(addr) && !p.Insecure {
+			sslMode = "verify-full"
+		}
+		return fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=%s&connect_timeout=5", cred.User, cred.Pass, host, port, sslMode), "pgx", nil
 	case "sqlserver", "mssql":
 		addr := p.Address
 		if addr == "" {
@@ -182,7 +209,11 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 		q.Set("database", "master")
 		q.Set("connection timeout", "5")
 		q.Set("dial timeout", "5")
-		q.Set("encrypt", "disable")
+		if localTarget(hostport) || p.Insecure || p.Socket {
+			q.Set("encrypt", "disable")
+		} else {
+			q.Set("encrypt", "true")
+		}
 		if p.Socket {
 			q.Set("protocol", "lpc")
 		}
@@ -279,7 +310,7 @@ func parseNum(s string) (float64, bool) {
 	return f, err == nil
 }
 
-func redact(msg, secret string) string {
+func redactSecret(msg, secret string) string {
 	if secret == "" {
 		return msg
 	}

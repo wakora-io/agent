@@ -84,15 +84,12 @@ func processes() []Fact {
 		if err != nil {
 			continue
 		}
-		cmd = strings.TrimSpace(cmd)
-		exe, _, _ := strings.Cut(cmd, " ")
+		exe, _, _ := strings.Cut(strings.TrimSpace(cmd), " ")
 		name := filepath.Base(exe)
 		if name == "" || name == "." {
 			continue
 		}
-		if len(cmd) > 300 {
-			cmd = cmd[:300]
-		}
+		cmd = procCmd(cmd)
 		if p := agg[name]; p != nil {
 			p.Count++
 			continue

@@ -15,6 +15,7 @@ import (
 	"unicode/utf16"
 
 	"wakora.io/agent/internal/protocol"
+	"wakora.io/agent/internal/redact"
 )
 
 var logLevelRank = map[string]int{"error": 0, "warn": 1, "notice": 2, "info": 3, "debug": 4}
@@ -24,14 +25,6 @@ func LogRank(level string) int {
 		return r
 	}
 	return logLevelRank["info"]
-}
-
-var defaultRedact = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(authorization:?\s*bearer\s+)\S+`),
-	regexp.MustCompile(`(?i)((?:api[_-]?key|apikey|token|secret|password|passwd|pwd)["'\s:=]{1,3})\S+`),
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-	regexp.MustCompile(`://[^:/@\s]+:[^@/\s]+@`),
-	regexp.MustCompile(`\b(?:\d[ -]?){13,16}\b`),
 }
 
 const (
@@ -121,7 +114,7 @@ func (l *LogTailer) setRedact(extra []string) {
 		return
 	}
 	l.pattern = key
-	l.redact = append([]*regexp.Regexp{}, defaultRedact...)
+	l.redact = nil
 	for _, p := range extra {
 		if re, err := regexp.Compile(p); err == nil {
 			l.redact = append(l.redact, re)
@@ -130,17 +123,19 @@ func (l *LogTailer) setRedact(extra []string) {
 }
 
 func (l *LogTailer) scrub(msg string) string {
+	msg = redact.Scrub(msg)
 	for _, re := range l.redact {
+		if re.NumSubexp() > 0 {
+			msg = re.ReplaceAllString(msg, "${1}***")
+			continue
+		}
 		msg = re.ReplaceAllString(msg, "***")
 	}
 	return msg
 }
 
 func ScrubDefault(msg string) string {
-	for _, re := range defaultRedact {
-		msg = re.ReplaceAllString(msg, "***")
-	}
-	return msg
+	return redact.Scrub(msg)
 }
 
 func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]protocol.LogLine, error) {
