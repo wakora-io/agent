@@ -9,10 +9,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/protocol"
 )
 
@@ -25,28 +29,44 @@ func NewWSDialer(keyFn func() string, certPin string) Dialer {
 	return &wsDialer{keyFn: keyFn, client: PinnedClient(certPin)}
 }
 
-func PinnedClient(pin string) *http.Client {
-	if pin == "" {
-		return http.DefaultClient
+func decodePin(pin string) ([]byte, error) {
+	p := strings.TrimSpace(pin)
+	if p == "" {
+		return nil, errors.New("transport: certificate pin is empty")
 	}
-	want, err := base64.StdEncoding.DecodeString(pin)
+	want, err := base64.StdEncoding.DecodeString(p)
 	if err != nil {
-		want = nil
+		return nil, errors.New("transport: certificate pin is not valid base64")
+	}
+	if len(want) != sha256.Size {
+		return nil, fmt.Errorf("transport: certificate pin is %d bytes, want %d", len(want), sha256.Size)
+	}
+	return want, nil
+}
+
+func PinnedClient(pin string) *http.Client {
+	want, err := decodePin(pin)
+	if err != nil {
+		if buildinfo.Version != "dev" {
+			log.Fatalf("%v - refusing to run a release build without certificate pinning", err)
+		}
+		return http.DefaultClient
 	}
 	cfg := &tls.Config{
 		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			for _, raw := range rawCerts {
-				cert, err := x509.ParseCertificate(raw)
-				if err != nil {
-					continue
-				}
-				sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
-				if want != nil && subtle.ConstantTimeCompare(sum[:], want) == 1 {
-					return nil
-				}
+			if len(rawCerts) == 0 {
+				return errors.New("transport: server presented no certificate")
 			}
-			return errors.New("transport: certificate pin mismatch")
+			cert, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return errors.New("transport: server leaf certificate is unparsable")
+			}
+			sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+			if subtle.ConstantTimeCompare(sum[:], want) != 1 {
+				return errors.New("transport: certificate pin mismatch")
+			}
+			return nil
 		},
 	}
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}
