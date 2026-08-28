@@ -824,7 +824,7 @@ func probeVhost(service string, h vhost, timeout time.Duration) vhostResult {
 		if time.Now().After(cert.NotAfter) {
 			r.trusted = false
 			notes = append(notes, "certificate expired")
-		} else if note := verifyCert(resp.TLS.PeerCertificates); note != "" {
+		} else if note := verifyCert(resp.TLS.PeerCertificates, hostHeader); note != "" {
 			r.trusted = false
 			notes = append(notes, note)
 		}
@@ -855,17 +855,25 @@ func sniffTLS(port int, serverName string, timeout time.Duration) bool {
 	return true
 }
 
-func verifyCert(chain []*x509.Certificate) string {
+var certRoots *x509.CertPool
+
+func verifyCert(chain []*x509.Certificate, host string) string {
 	leaf := chain[0]
 	if len(chain) == 1 && leaf.Issuer.String() == leaf.Subject.String() {
 		return "self-signed certificate"
 	}
-	opts := x509.VerifyOptions{Intermediates: x509.NewCertPool()}
+	opts := x509.VerifyOptions{Intermediates: x509.NewCertPool(), Roots: certRoots}
 	for _, c := range chain[1:] {
 		opts.Intermediates.AddCert(c)
 	}
 	if _, err := leaf.Verify(opts); err != nil {
 		return "untrusted certificate"
+	}
+	if host == "" {
+		return ""
+	}
+	if err := leaf.VerifyHostname(host); err != nil {
+		return "certificate is for another host"
 	}
 	return ""
 }

@@ -159,7 +159,7 @@ func probeExternal(url string, expectStatus int, bodyRe *regexp.Regexp, timeout 
 		if time.Now().After(cert.NotAfter) {
 			r.trusted = false
 			notes = append(notes, "certificate expired")
-		} else if note := verifyCert(resp.TLS.PeerCertificates); note != "" {
+		} else if note := verifyCert(resp.TLS.PeerCertificates, req.URL.Hostname()); note != "" {
 			r.trusted = false
 			notes = append(notes, note)
 		}

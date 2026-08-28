@@ -3,6 +3,7 @@
 package defs
 
 import (
+	"context"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -170,7 +171,9 @@ func topOwners(owners map[string]uint32, max int) []string {
 }
 
 func detectPHPMinorPid(pid int) string {
-	out, err := exec.Command("/proc/"+strconv.Itoa(pid)+"/exe", "-n", "-v").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	out, err := trustedOutput(ctx, "/proc/"+strconv.Itoa(pid)+"/exe", "-n", "-v")
 	if err != nil {
 		return ""
 	}

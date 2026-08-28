@@ -1,6 +1,7 @@
 package defs
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -569,7 +570,10 @@ func nodeVersionOf(exe string) string {
 		return v
 	}
 	v := ""
-	if out, err := exec.Command(exe, "--version").Output(); err == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	out, err := trustedOutput(ctx, exe, "--version")
+	cancel()
+	if err == nil {
 		v = strings.TrimPrefix(strings.TrimSpace(string(out)), "v")
 	}
 	if len(nodeVerCache) > 64 {

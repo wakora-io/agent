@@ -327,7 +327,7 @@ func fpmBinaryProbe(bin, module, apmDir string) (*fpmBinaryState, string) {
 	st := fpmStates[bin]
 	if st == nil || st.binSig != binSig {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		info, err := exec.CommandContext(ctx, bin, "-i").Output()
+		info, err := trustedOutput(ctx, bin, "-i")
 		cancel()
 		if err != nil {
 			return nil, "php-fpm -i: " + err.Error()
@@ -341,7 +341,7 @@ func fpmBinaryProbe(bin, module, apmDir string) (*fpmBinaryState, string) {
 	scanSig := dirSig(st.rt.ScanDir, ".ini")
 	if st.rt.ScanDir == "" || st.module != module || st.scanSig != scanSig {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		modules, merr := exec.CommandContext(ctx, bin, "-m").Output()
+		modules, merr := trustedOutput(ctx, bin, "-m")
 		cancel()
 		st.modOk = merr == nil
 		st.loaded = merr == nil && apm.ModuleLoaded(string(modules), module)
@@ -453,7 +453,7 @@ func resolveApacheSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
-	info, err := exec.CommandContext(ctx, bin, "-i").Output()
+	info, err := trustedOutput(ctx, bin, "-i")
 	if err != nil {
 		return nil, "php -i: " + err.Error()
 	}
@@ -471,7 +471,10 @@ func resolveApacheSAPI(p protocol.Probe, module string) (*sapiTarget, string) {
 
 	loaded := false
 	modOk := false
-	scan := exec.CommandContext(ctx, bin, "-m")
+	scan, serr := trustedCmd(ctx, bin, "-m")
+	if serr != nil {
+		return nil, "php -m: " + serr.Error()
+	}
 	scan.Env = append(os.Environ(), "PHP_INI_SCAN_DIR="+iniDir)
 	if out, err := scan.Output(); err == nil {
 		modOk = true
@@ -854,7 +857,11 @@ func preflightExtension(bin, soPath string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, bin, "-d", "extension="+soPath, "-v").Run()
+	cmd, err := trustedCmd(ctx, bin, "-d", "extension="+soPath, "-v")
+	if err != nil {
+		return err
+	}
+	return cmd.Run()
 }
 
 func preflightPrepend(soPath, prependPath string) error {
@@ -867,10 +874,14 @@ func preflightPrepend(soPath, prependPath string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, cli,
+	cmd, err := trustedCmd(ctx, cli,
 		"-d", "extension="+soPath,
 		"-d", "auto_prepend_file="+prependPath,
-		"-r", ";").Run()
+		"-r", ";")
+	if err != nil {
+		return err
+	}
+	return cmd.Run()
 }
 
 func basedirCovers(list, dir string) bool {
