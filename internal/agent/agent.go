@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -898,6 +899,11 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					continue
 				}
 			}
+			if p.Type == "haproxy" && p.Path == "" {
+				if ps := pickTailPaths(a.factPaths(d.Service, p.PathFrom), p.Paths, ""); len(ps) > 0 {
+					p.Path = ps[0]
+				}
+			}
 			if p.Type == "traps" {
 				if err := a.runTraps(conn, d.Service, p); err != nil {
 					return err
@@ -1203,21 +1209,45 @@ func (a *Agent) resolvePort(process string) string {
 	return ""
 }
 
-func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe) error {
-	var paths []string
-	if p.Path != "" {
-		paths = []string{p.Path}
-	} else if p.PathFrom != "" {
-		if ov, ok := a.locationOverride(service, p.PathFrom); ok {
-			paths = splitPaths(ov)
-		} else {
-			a.mu.Lock()
-			if facts := a.serviceFacts[service]; facts != nil {
-				paths = splitPaths(facts[p.PathFrom])
-			}
-			a.mu.Unlock()
-		}
+func (a *Agent) factPaths(service, key string) []string {
+	if key == "" {
+		return nil
 	}
+	if ov, ok := a.locationOverride(service, key); ok {
+		return splitPaths(ov)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if facts := a.serviceFacts[service]; facts != nil {
+		return splitPaths(facts[key])
+	}
+	return nil
+}
+
+func pickTailPaths(fromFact, candidates []string, legacy string) []string {
+	if len(fromFact) > 0 {
+		return fromFact
+	}
+	if len(candidates) > 0 {
+		var have []string
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				have = append(have, c)
+			}
+		}
+		if len(have) > 0 {
+			return have
+		}
+		return candidates
+	}
+	if legacy != "" {
+		return []string{legacy}
+	}
+	return nil
+}
+
+func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe) error {
+	paths := pickTailPaths(a.factPaths(service, p.PathFrom), p.Paths, p.Path)
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,
