@@ -704,9 +704,16 @@ func (a *Agent) supported(d protocol.Definition) bool {
 }
 
 func versionAtLeast(have, min string) bool {
-	h, okH := versionNum(have)
+	if min == "" {
+		return true
+	}
 	m, okM := versionNum(min)
-	if !okH || !okM {
+	if !okM {
+		log.Printf("definition asks for agent >= %q which is not a version - treating the gate as closed", min)
+		return false
+	}
+	h, okH := versionNum(have)
+	if !okH {
 		return true
 	}
 	return h >= m

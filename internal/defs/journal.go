@@ -2,6 +2,7 @@ package defs
 
 import (
 	"encoding/json"
+	"log"
 	"regexp"
 	"sort"
 	"time"
@@ -25,18 +26,24 @@ func NewJournalTailer(key string) *JournalTailer {
 }
 
 func (j *JournalTailer) compile(pattern string) *regexp.Regexp {
+	re, _ := j.compileOK(pattern)
+	return re
+}
+
+func (j *JournalTailer) compileOK(pattern string) (*regexp.Regexp, bool) {
 	if pattern == "" {
-		return nil
+		return nil, true
 	}
 	if re, ok := j.res[pattern]; ok {
-		return re
+		return re, re != nil
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
+		log.Printf("journal: counter pattern %q does not compile (%v) - the counter is withheld, not defaulted to every line", pattern, err)
 		re = nil
 	}
 	j.res[pattern] = re
-	return re
+	return re, err == nil
 }
 
 func (j *JournalTailer) Sample(idents []string, counters []protocol.Counter, now time.Time) ([]protocol.MetricPoint, []protocol.AgentEvent, error) {
@@ -62,6 +69,9 @@ func (j *JournalTailer) Sample(idents []string, counters []protocol.Counter, now
 	pts := make([]protocol.MetricPoint, 0, len(counters))
 	var events []protocol.AgentEvent
 	for i, c := range counters {
+		if _, ok := j.compileOK(c.Regex); !ok {
+			continue
+		}
 		pts = append(pts, protocol.MetricPoint{Name: c.Name, Value: float64(counts[i]) / elapsed})
 		if c.Event != "" {
 			if ev, ok := foldSourceEvent(c, sources[i], now, j.srcLast); ok {
@@ -111,7 +121,10 @@ func foldSourceEvent(c protocol.Counter, src map[string]int, now time.Time, srcL
 
 func (j *JournalTailer) count(line []byte, counters []protocol.Counter, counts []int, sources []map[string]int) {
 	for i, c := range counters {
-		re := j.compile(c.Regex)
+		re, ok := j.compileOK(c.Regex)
+		if !ok {
+			continue
+		}
 		if re != nil && !re.Match(line) {
 			continue
 		}

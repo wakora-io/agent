@@ -53,10 +53,17 @@ func runCIS(o *Outcome, service string) {
 	}
 
 	if sshd, ok := cisSshdEffective(); ok {
-		record(sshd["permitrootlogin"] != "yes", "sshd-root-login", "sshd permits root login", "high", "PermitRootLogin should be no or prohibit-password")
-		record(sshd["passwordauthentication"] != "yes", "sshd-password-auth", "sshd accepts password auth", "medium", "prefer key-based auth")
-		record(sshd["permitemptypasswords"] != "yes", "sshd-empty-pass", "sshd permits empty passwords", "critical", "PermitEmptyPasswords should be no")
-		record(sshd["x11forwarding"] != "yes", "sshd-x11", "sshd X11 forwarding enabled", "low", "disable unless needed")
+		door := func(key, id, title, sev, detail string) {
+			v, has := sshd[key]
+			if !has {
+				return
+			}
+			record(v != "yes", id, title, sev, detail)
+		}
+		door("permitrootlogin", "sshd-root-login", "sshd permits root login", "high", "PermitRootLogin should be no or prohibit-password")
+		door("passwordauthentication", "sshd-password-auth", "sshd accepts password auth", "medium", "prefer key-based auth")
+		door("permitemptypasswords", "sshd-empty-pass", "sshd permits empty passwords", "critical", "PermitEmptyPasswords should be no")
+		door("x11forwarding", "sshd-x11", "sshd X11 forwarding enabled", "low", "disable unless needed")
 	}
 
 	record(cisSysctl("net/ipv4/tcp_syncookies") == "1", "tcp-syncookies", "TCP SYN cookies disabled", "medium", "net.ipv4.tcp_syncookies should be 1")
@@ -68,8 +75,12 @@ func runCIS(o *Outcome, service string) {
 	record(cisFirewall(), "firewall", "no host firewall detected", "medium", "ufw, firewalld or nftables should be active")
 
 	if defs, ok := cisReadFile("/etc/login.defs"); ok {
-		record(cisLoginDefsMax(defs, "PASS_MAX_DAYS", 365), "pass-max-days", "password max-age too long", "low", "PASS_MAX_DAYS should be <= 365")
-		record(cisLoginDefsUmask(defs), "umask", "default umask weaker than 027", "low", "UMASK should be 027 or stricter")
+		if ok, has := cisLoginDefsMax(defs, "PASS_MAX_DAYS", 365); has {
+			record(ok, "pass-max-days", "password max-age too long", "low", "PASS_MAX_DAYS should be <= 365")
+		}
+		if ok, has := cisLoginDefsUmask(defs); has {
+			record(ok, "umask", "default umask weaker than 027", "low", "UMASK should be 027 or stricter")
+		}
 	}
 
 	total := pass + fail
@@ -178,7 +189,7 @@ func cisFirewall() bool {
 	return false
 }
 
-func cisLoginDefsMax(defs, key string, max int) bool {
+func cisLoginDefsMax(defs, key string, max int) (bool, bool) {
 	for _, line := range strings.Split(defs, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -189,13 +200,13 @@ func cisLoginDefsMax(defs, key string, max int) bool {
 			continue
 		}
 		if n, err := strconv.Atoi(strings.TrimSpace(fields[1])); err == nil {
-			return n <= max
+			return n <= max, true
 		}
 	}
-	return true
+	return false, false
 }
 
-func cisLoginDefsUmask(defs string) bool {
+func cisLoginDefsUmask(defs string) (bool, bool) {
 	for _, line := range strings.Split(defs, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -207,8 +218,8 @@ func cisLoginDefsUmask(defs string) bool {
 		}
 		v := strings.TrimSpace(fields[1])
 		if n, err := strconv.ParseInt(v, 8, 32); err == nil {
-			return n&0o027 == 0o027
+			return n&0o027 == 0o027, true
 		}
 	}
-	return true
+	return false, false
 }

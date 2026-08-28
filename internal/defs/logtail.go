@@ -3,6 +3,7 @@ package defs
 import (
 	"bufio"
 	"io"
+	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -44,18 +45,24 @@ func (t *Tailer) CloseFDs() {
 }
 
 func (t *Tailer) compile(pattern string) *regexp.Regexp {
+	re, _ := t.compileOK(pattern)
+	return re
+}
+
+func (t *Tailer) compileOK(pattern string) (*regexp.Regexp, bool) {
 	if pattern == "" {
-		return nil
+		return nil, true
 	}
 	if re, ok := t.res[pattern]; ok {
-		return re
+		return re, re != nil
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
+		log.Printf("logtail: counter pattern %q does not compile (%v) - the counter is withheld, not defaulted to every line", pattern, err)
 		re = nil
 	}
 	t.res[pattern] = re
-	return re
+	return re, err == nil
 }
 
 func (t *Tailer) Sample(counters []protocol.Counter, now time.Time) ([]protocol.MetricPoint, []protocol.AgentEvent, error) {
@@ -80,6 +87,9 @@ func (t *Tailer) Sample(counters []protocol.Counter, now time.Time) ([]protocol.
 	var pts []protocol.MetricPoint
 	var events []protocol.AgentEvent
 	for i, c := range counters {
+		if _, ok := t.compileOK(c.Regex); !ok {
+			continue
+		}
 		pts = append(pts, protocol.MetricPoint{Name: c.Name, Value: float64(counts[i]) / elapsed})
 		if c.Event != "" {
 			if ev, ok := foldSourceEvent(c, sources[i], now, t.srcLast); ok {
@@ -119,7 +129,10 @@ func (t *Tailer) sampleFile(path string, counters []protocol.Counter, counts []i
 	for sc.Scan() {
 		line := sc.Bytes()
 		for i, c := range counters {
-			re := t.compile(c.Regex)
+			re, ok := t.compileOK(c.Regex)
+			if !ok {
+				continue
+			}
 			if re == nil || re.Match(line) {
 				counts[i]++
 				if c.Capture != "" {
