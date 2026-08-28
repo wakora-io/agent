@@ -74,9 +74,12 @@ func main() {
 		return
 	}
 
-	secret.InitSeed(*configDir)
+	seedErr := secret.InitSeed(*configDir)
 
 	if args := flag.Args(); len(args) > 0 && args[0] == "secret" {
+		if seedErr != nil {
+			log.Fatal(seedErr)
+		}
 		runSecret(*configDir, args[1:])
 		return
 	}
@@ -96,6 +99,12 @@ func main() {
 		return
 	}
 
+	if seedErr != nil {
+		if !underServiceManager() {
+			log.Fatal(seedErr)
+		}
+		log.Printf("%v", seedErr)
+	}
 	cfg, err := config.Load(*configDir)
 	if err != nil {
 		if !underServiceManager() {

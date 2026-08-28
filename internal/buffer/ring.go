@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"wakora.io/agent/internal/atomicfile"
 )
 
 var maxDrainRecord = 16 << 20
@@ -86,7 +88,7 @@ func (r *Ring) trim() error {
 		}
 		data = keep.Bytes()
 	}
-	return os.WriteFile(r.path, data, 0o600)
+	return atomicfile.Write(r.path, data, 0o600)
 }
 
 func (r *Ring) oldestStale() bool {
@@ -198,5 +200,5 @@ func (r *Ring) dropPrefix(offset int64) {
 		}
 		return
 	}
-	_ = os.WriteFile(r.path, data[offset:], 0o600)
+	_ = atomicfile.Write(r.path, data[offset:], 0o600)
 }

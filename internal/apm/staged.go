@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type StagedChange struct {
@@ -23,7 +25,17 @@ type StagedChange struct {
 
 func stagedDir(base string) string { return filepath.Join(base, "staged") }
 
+func checkStagedID(id string) error {
+	if id == "" || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") || strings.ContainsRune(id, 0) {
+		return fmt.Errorf("apm: unsafe staged id %q", id)
+	}
+	return nil
+}
+
 func Stage(base string, c StagedChange, content []byte) (StagedChange, bool, error) {
+	if err := checkStagedID(c.ID); err != nil {
+		return c, false, err
+	}
 	dir := stagedDir(base)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return c, false, err
@@ -72,6 +84,9 @@ func loadStaged(base, id string) (StagedChange, error) {
 }
 
 func MarkActivated(base, id string) error {
+	if err := checkStagedID(id); err != nil {
+		return err
+	}
 	c, err := loadStaged(base, id)
 	if err != nil {
 		return err
@@ -85,6 +100,9 @@ func MarkActivated(base, id string) error {
 }
 
 func StagedState(base, id string) string {
+	if checkStagedID(id) != nil {
+		return ""
+	}
 	c, err := loadStaged(base, id)
 	if err != nil {
 		return ""
@@ -93,6 +111,9 @@ func StagedState(base, id string) string {
 }
 
 func ResetStaged(base, id string) error {
+	if err := checkStagedID(id); err != nil {
+		return err
+	}
 	dir := stagedDir(base)
 	for _, name := range []string{id + ".json", id + ".staged"} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {

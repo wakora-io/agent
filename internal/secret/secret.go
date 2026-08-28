@@ -8,7 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,27 +22,34 @@ import (
 
 var localSeed string
 
-func InitSeed(dir string) {
+func InitSeed(dir string) error {
 	path := filepath.Join(dir, ".seed")
-	if b, err := os.ReadFile(path); err == nil {
+	b, err := os.ReadFile(path)
+	switch {
+	case err == nil:
 		if s := strings.TrimSpace(string(b)); s != "" {
 			localSeed = s
-			return
+			return nil
 		}
+		return fmt.Errorf("secret: %s is empty - refusing to mint a seed over one that existed, restore the file or re-register the host", path)
+	case errors.Is(err, fs.ErrNotExist):
+	default:
+		return fmt.Errorf("secret: cannot read %s: %w - refusing to mint a seed while the old one may still be there", path, err)
 	}
 	raw := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		return
+		return fmt.Errorf("secret: no randomness for a new seed: %w", err)
 	}
-	s := hex.EncodeToString(raw)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return
+		return fmt.Errorf("secret: cannot create %s: %w", dir, err)
 	}
 	_ = winsec.ProtectDir(dir)
+	s := hex.EncodeToString(raw)
 	if err := atomicfile.Write(path, []byte(s), 0o600); err != nil {
-		return
+		return fmt.Errorf("secret: cannot write %s: %w", path, err)
 	}
 	localSeed = s
+	return nil
 }
 
 func machineKey(withSeed bool) []byte {
