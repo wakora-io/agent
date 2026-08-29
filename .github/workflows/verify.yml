@@ -1,0 +1,82 @@
+name: verify
+
+on:
+  push:
+    tags: ["r*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.7"
+      - run: go vet ./...
+      - run: go test ./...
+
+  reproduce:
+    name: the published binary rebuilds from this source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.7"
+
+      - name: fetch the release manifest and verify it against the published publisher key
+        run: |
+          set -eu
+          curl -fsSL https://get.wakora.io/bin/manifest.json     -o manifest.json
+          curl -fsSL https://get.wakora.io/bin/manifest.json.sig -o manifest.json.sig
+          curl -fsSL https://www.wakora.io/trust/files/wakora-publisher.pem -o publisher.pem
+          openssl base64 -d -A -in manifest.json.sig -out manifest.sig.bin
+          openssl pkeyutl -verify -pubin -inkey publisher.pem -rawin -in manifest.json -sigfile manifest.sig.bin
+          echo "the manifest is signed by the key published in the trust pack"
+
+      - name: rebuild this source with the inputs the manifest names
+        run: |
+          set -eu
+          ver=$(jq -r '.version' manifest.json)
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "$ver" != "$GITHUB_REF_NAME" ]; then
+            echo "the channel publishes $ver but this tag is $GITHUB_REF_NAME" >&2
+            echo "push the tag after the release is live, otherwise there is nothing to compare against" >&2
+            exit 1
+          fi
+          if [ "$(jq -r '.build.endpoint // empty' manifest.json)" = "" ]; then
+            echo "release $ver carries no build inputs in its manifest" >&2
+            echo "this check reads them from the signed manifest, which releases from r300 onward carry" >&2
+            exit 1
+          fi
+          want_go=$(jq -r '.build.go' manifest.json)
+          have_go=$(go env GOVERSION)
+          if [ "$want_go" != "$have_go" ]; then
+            echo "the release was built with $want_go, this job runs $have_go" >&2
+            echo "pin the same toolchain in setup-go before trusting a comparison" >&2
+            exit 1
+          fi
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -buildid= \
+            -X wakora.io/agent/internal/buildinfo.Endpoint=$(jq -r '.build.endpoint' manifest.json) \
+            -X wakora.io/agent/internal/buildinfo.Version=$ver \
+            -X wakora.io/agent/internal/buildinfo.CertPin=$(jq -r '.build.certPin' manifest.json) \
+            -X wakora.io/agent/internal/buildinfo.PublisherKey=$(jq -r '.build.publisherKey' manifest.json)" \
+            -o rebuilt ./cmd/wakora
+          got=$(sha256sum rebuilt | cut -d' ' -f1)
+          want=$(jq -r '.assets.wakora' manifest.json)
+          echo "rebuilt   $got"
+          echo "published $want"
+          if [ "$got" != "$want" ]; then
+            echo "the published binary does not rebuild from this source" >&2
+            exit 1
+          fi
+          echo "release $ver rebuilds from this source byte for byte"

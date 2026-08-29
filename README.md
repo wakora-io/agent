@@ -88,7 +88,7 @@ testing. Release builds get their endpoint, certificate pin and publisher key at
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
-  -ldflags "-s -w \
+  -ldflags "-s -w -buildid= \
   -X wakora.io/agent/internal/buildinfo.Endpoint=wss://<host>/ws \
   -X wakora.io/agent/internal/buildinfo.Version=<release tag> \
   -X wakora.io/agent/internal/buildinfo.CertPin=<base64 sha256 of the server SPKI> \
@@ -97,11 +97,27 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
 ```
 
 That is the exact command our release pipeline runs, and the build is deterministic: with the
-same toolchain and the same four values you get the published binary byte for byte. Keep the
-flags in this order. The linker records its own inputs in the binary, so reordering them
-produces a different hash from identical code, which looks like a failed verification and is
-not one. The real values and the expected hash for a given release are published in the trust
-pack, so you can check ours rather than take our word for it.
+same Go version and the same four values you get the published binary byte for byte. You do not
+have to copy the values out of this file. Every release publishes a signed manifest that names
+them next to the expected hash:
+
+```bash
+curl -s https://get.wakora.io/bin/manifest.json | jq .
+```
+
+Two details are part of the contract rather than decoration. Keep the flags in this order,
+because the linker records its own inputs, so reordering them changes the hash without changing
+a line of code. And keep `-buildid=`, because without it the binary carries an identifier
+derived from the compiler binaries themselves, which differ between a Go tarball and a distro
+package of the very same version.
+
+Releases from r300 onward reproduce with this command. r298 and r299 reproduce with the same
+command minus `-buildid=`, but only if your Go 1.25.7 came from the official tarball. Anything
+before r298 embedded our internal commit id and cannot be reproduced from here at all; we say
+so rather than let you find out.
+
+The `verify` workflow in this repository runs the comparison on every release tag, so the claim
+above is checked in public rather than asserted.
 
 Go 1.25 or newer. No cgo, no external build tools. The macOS build gains a few extra
 metrics when built with cgo on a Mac.
