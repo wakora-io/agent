@@ -116,8 +116,15 @@ service in the catalog, the security model, and the operational side.
 
 ## Security
 
-Found something? security@wakora.io. Please do not open a public issue for a
-vulnerability. Details and our PGP key are at <https://www.wakora.io/security>.
+Found something? security@wakora.io, and please not a public issue. Response targets, scope
+and safe harbour are in [SECURITY.md](SECURITY.md); our PGP key is at
+<https://www.wakora.io/security>.
+
+## Contributing
+
+Bug reports and security reports are welcome. Pull requests are not accepted, for licensing
+reasons rather than pride, and [CONTRIBUTING.md](CONTRIBUTING.md) explains why so nobody
+wastes an afternoon.
 
 ## License
 
