@@ -7,6 +7,33 @@ import (
 	"testing"
 )
 
+func TestVhostBackendGone(t *testing.T) {
+	dir := t.TempDir()
+	live := dir + "/live.sock"
+	if err := os.WriteFile(live, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := "vhostbackendtest"
+	vhostPoolsCache.Store(svc, map[string]vhostScanInfo{
+		"alive.example.com":  {pass: "unix:" + live},
+		"broken.example.com": {pass: "unix:" + dir + "/gone.sock"},
+		"remote.example.com": {pass: "127.0.0.1:9000"},
+		"static.example.com": {root: dir},
+	})
+	got := vhostBackendGone(svc)
+	if v, ok := got["broken.example.com"]; !ok || !v {
+		t.Fatalf("a vhost pointing at a socket that does not exist must read missing, got %v", got)
+	}
+	if v, ok := got["alive.example.com"]; !ok || v {
+		t.Fatalf("a vhost whose socket exists must read present, got %v", got)
+	}
+	for _, name := range []string{"remote.example.com", "static.example.com"} {
+		if _, ok := got[name]; ok {
+			t.Fatalf("%s carries no unix backend, so it gets no verdict, got %v", name, got)
+		}
+	}
+}
+
 func TestApacheVhostRoots(t *testing.T) {
 	dir := t.TempDir()
 	conf := dir + "/wp01.conf"
