@@ -169,17 +169,17 @@ func versionedServer(priv ed25519.PrivateKey, version string, issuedAt int64, bi
 
 func TestApplyPinnedVersion(t *testing.T) {
 	priv, pub := testKey(t)
-	bin := []byte("wakora r227 pinned build")
-	srv := versionedServer(priv, "r227", 500, bin)
+	bin := []byte("wakora r299 pinned build")
+	srv := versionedServer(priv, "r299", 500, bin)
 	defer srv.Close()
 
 	u := New(srv.URL, nil, pub, filepath.Join(t.TempDir(), "s"))
-	mf, err := u.PinnedManifest("r227")
-	if err != nil || mf.Version != "r227" {
+	mf, err := u.PinnedManifest("r299")
+	if err != nil || mf.Version != "r299" {
 		t.Fatalf("PinnedManifest err=%v mf=%+v", err, mf)
 	}
 	target := filepath.Join(t.TempDir(), "wakora")
-	if err := u.ApplyPinned(target, "r227"); err != nil {
+	if err := u.ApplyPinned(target, "r299"); err != nil {
 		t.Fatalf("ApplyPinned: %v", err)
 	}
 	got, _ := os.ReadFile(target)
@@ -191,8 +191,8 @@ func TestApplyPinnedVersion(t *testing.T) {
 func TestApplyPinnedBelowFloorRefused(t *testing.T) {
 	_, pub := testKey(t)
 	u := New("http://127.0.0.1:1", nil, pub, filepath.Join(t.TempDir(), "s"))
-	if err := u.ApplyPinned(filepath.Join(t.TempDir(), "wakora"), "r220"); err == nil {
-		t.Fatal("a pin below the pin-aware floor must be refused before any fetch")
+	if err := u.ApplyPinned(filepath.Join(t.TempDir(), "wakora"), "r292"); err == nil {
+		t.Fatal("r292 is the last release before certificate pinning was fixed: a pin to it must be refused before any fetch, or a compromised platform can downgrade into that flaw")
 	}
 }
 
@@ -202,8 +202,11 @@ func TestPinSupported(t *testing.T) {
 		want bool
 	}{
 		{"r220", false},
-		{"r221", true},
-		{"r245", true},
+		{"r221", false},
+		{"r245", false},
+		{"r296", false},
+		{"r297", true},
+		{"r298", true},
 		{"dev", false},
 		{"", false},
 		{"garbage", false},
@@ -212,6 +215,12 @@ func TestPinSupported(t *testing.T) {
 		if got := PinSupported(c.v); got != c.want {
 			t.Errorf("PinSupported(%q)=%v want %v", c.v, got, c.want)
 		}
+	}
+}
+
+func TestPinFloorStaysAboveTheReleaseThatFixedCertificatePinning(t *testing.T) {
+	if PinFloor < 293 {
+		t.Fatalf("PinFloor is r%d: a pin below r293 can move this agent to a release that accepts a forged leaf when our certificate appears anywhere in the chain, which is the downgrade the floor exists to refuse", PinFloor)
 	}
 }
 

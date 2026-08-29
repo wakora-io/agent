@@ -260,7 +260,7 @@ func (a *Agent) applyPushedPin(p string) {
 		return
 	}
 	if !update.PinSupported(p) {
-		log.Printf("ignoring pushed pin %s: below the pin-aware floor r%d", p, update.PinFloor)
+		log.Printf("ignoring pushed pin %s: below the security floor r%d, the platform may not downgrade this agent to a release whose defects are already fixed", p, update.PinFloor)
 		return
 	}
 	a.pinFromPush.Store(true)
