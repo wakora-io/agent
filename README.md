@@ -1,6 +1,6 @@
 # Wakora Agent
 
-The monitoring agent behind [Wakora](https://wakora.io). One static Go binary, no
+The monitoring agent behind [Wakora](https://www.wakora.io). One static Go binary, no
 configuration file to write, one outbound connection. This repository is public so that
 the people whose servers it runs on can read exactly what it does.
 
@@ -117,4 +117,13 @@ service in the catalog, the security model, and the operational side.
 ## Security
 
 Found something? security@wakora.io. Please do not open a public issue for a
-vulnerability. Details and our PGP key are at <https://wakora.io/security>.
+vulnerability. Details and our PGP key are at <https://www.wakora.io/security>.
+
+## License
+
+[Elastic License 2.0](LICENSE). Read it, run it, modify it, deploy it on machines you
+control. The one thing it does not allow is offering it to third parties as a hosted or
+managed service.
+
+That applies to anyone who takes the source from here. Commercial arrangements, including
+partner and reseller terms, are separate agreements and are not affected by it.
