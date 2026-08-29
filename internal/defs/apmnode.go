@@ -131,7 +131,7 @@ func runAPMNode(o *Outcome, service string, p protocol.Probe, stateDir string) {
 			}
 		}
 		if u, ok := strings.CutPrefix(t.launch, "systemd:"); ok {
-			if up, crashes, stateOk := nodeUnitState(u); stateOk {
+			if up, crashes, stateOk := unitState(u); stateOk {
 				o.Metrics = append(o.Metrics,
 					protocol.MetricPoint{Name: "svc." + service + ".up", Value: up, Tags: map[string]string{"unit": t.label}},
 					protocol.MetricPoint{Name: "svc." + service + ".crash_restarts", Value: crashes, Tags: map[string]string{"unit": t.label}})
@@ -321,10 +321,10 @@ func pm2LogFiles(masters []nodeMaster) (string, string) {
 	return strings.Join(errL, ","), strings.Join(outL, ",")
 }
 
-func nodeUnitState(unit string) (up, crashes float64, ok bool) {
+func unitState(unit string) (up, crashes float64, ok bool) {
 	out, err := exec.Command("systemctl", "show", "-p", "ActiveState,NRestarts", unit).Output()
 	if err != nil {
-		log.Printf("apmnode: systemctl show %s: %v", unit, err)
+		log.Printf("systemctl show %s: %v", unit, err)
 		return 0, 0, false
 	}
 	seen := false
@@ -342,7 +342,7 @@ func nodeUnitState(unit string) (up, crashes float64, ok bool) {
 		}
 	}
 	if !seen {
-		log.Printf("apmnode: systemctl show %s returned no ActiveState", unit)
+		log.Printf("systemctl show %s returned no ActiveState", unit)
 	}
 	return up, crashes, seen
 }

@@ -3,6 +3,7 @@ package defs
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -66,6 +67,7 @@ type pveMem struct {
 	seen      map[string]bool
 	seeded    bool
 	failed    map[string]bool
+	clustered bool
 }
 
 var pveState = &pveMem{seen: map[string]bool{}, failed: map[string]bool{}}
@@ -119,10 +121,30 @@ func runPVE(o *Outcome, service string, p protocol.Probe, timeout time.Duration)
 
 	pveEmit(o, service, resources, pveState.localNode)
 	if cluster != nil {
+		pveState.clustered = true
 		pveEmitCluster(o, service, cluster, nodeRows)
 		pveHA(o, service, path)
 	}
+	if pveState.clustered || pveClusterConf() {
+		pveState.clustered = true
+		pveEmitCorosync(o, service)
+	}
 	pveTasks(o, service, path)
+}
+
+func pveClusterConf() bool {
+	_, err := os.Stat("/etc/pve/corosync.conf")
+	return err == nil
+}
+
+func pveEmitCorosync(o *Outcome, service string) {
+	up, _, ok := unitState("corosync.service")
+	if !ok {
+		return
+	}
+	o.Metrics = append(o.Metrics, protocol.MetricPoint{
+		Name: "svc." + service + ".cluster.corosync_active", Value: up,
+	})
 }
 
 func pveEmit(o *Outcome, service string, resources []pveResource, localNode string) {

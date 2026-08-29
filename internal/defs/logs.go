@@ -316,6 +316,7 @@ var embeddedLevelRes = []struct {
 	{regexp.MustCompile(`PHP (?:Notice|Deprecated):`), "notice"},
 	{regexp.MustCompile(`Primary script unknown`), "notice"},
 	{regexp.MustCompile(`access forbidden by rule`), "notice"},
+	{regexp.MustCompile(`kex_exchange_identification: `), "notice"},
 	{regexp.MustCompile(`directory index of .* is forbidden`), "notice"},
 	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?notice\b`), "notice"},
 	{regexp.MustCompile(`\[NOTICE\]`), "notice"},

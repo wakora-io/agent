@@ -54,6 +54,8 @@ func TestDowngradeTransportError(t *testing.T) {
 		{"FastCGI sent in stderr: \"Primary script unknown\" while reading response header from upstream, client: 203.0.113.30, server: example.com, request: \"GET /byug.php HTTP/1.1\"", "notice"},
 		{"access forbidden by rule, client: 203.0.113.30, server: example.com, request: \"GET /www/.git/config HTTP/1.1\"", "notice"},
 		{"directory index of \"/www/example.com/www/\" is forbidden, client: 203.0.113.30, server: example.com", "notice"},
+		{"kex_exchange_identification: Connection closed by remote host", "notice"},
+		{"kex_exchange_identification: read: Connection reset by peer", "notice"},
 		{"plain broken pipe", "error"},
 	}
 	for _, c := range cases {

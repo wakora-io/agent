@@ -214,9 +214,12 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		deadConfirmed[name] = dnsConfirmedDead(name, res.alive)
 	}
 	poolMinor := map[string]fpmPoolInfo{}
+	backendGone := map[string]bool{}
 	if p.Command == "nginx" {
 		poolMinor = vhostPoolMinorMap(service)
+		backendGone = vhostBackendGone(service)
 	}
+	beEmitted := map[string]bool{}
 	apacheRoots := map[string]string{}
 	if p.Command != "nginx" {
 		if v, ok := apacheRootsCache.Load(service); ok {
@@ -254,6 +257,17 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
+		if gone, known := backendGone[h.Name]; known && !beEmitted[h.Name] && !vhostCatchAll(h.Name) {
+			beEmitted[h.Name] = true
+			v := 0.0
+			if gone {
+				v = 1
+			}
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{
+				Name: "svc." + service + ".vhost.backend_missing", Value: v,
+				Tags: map[string]string{"vhost": h.Name},
+			})
+		}
 		if !probed[i] {
 			continue
 		}
@@ -1121,6 +1135,36 @@ func scanFPMListenPools(globs []string) map[string]fpmPoolInfo {
 				out[strings.TrimSpace(string(lm[1]))] = info
 			}
 		}
+	}
+	return out
+}
+
+func vhostUnixBackend(pass string) (string, bool) {
+	p := strings.TrimSuffix(strings.TrimSpace(pass), ";")
+	p = strings.TrimPrefix(p, "unix:")
+	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "$ \t") {
+		return "", false
+	}
+	return p, true
+}
+
+func vhostBackendGone(service string) map[string]bool {
+	v, ok := vhostPoolsCache.Load(service)
+	if !ok {
+		return nil
+	}
+	scanByName, _ := v.(map[string]vhostScanInfo)
+	if len(scanByName) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for name, scan := range scanByName {
+		target, isUnix := vhostUnixBackend(scan.pass)
+		if !isUnix {
+			continue
+		}
+		_, err := os.Stat(target)
+		out[name] = os.IsNotExist(err)
 	}
 	return out
 }
