@@ -18,11 +18,17 @@ func assetNames() (bin, sum string) {
 func replaceBinary(tmp, target string) error {
 	old := target + ".old"
 	_ = os.Remove(old)
+	moved := true
 	if err := os.Rename(target, old); err != nil {
-		return err
+		if !os.IsNotExist(err) {
+			return err
+		}
+		moved = false
 	}
 	if err := os.Rename(tmp, target); err != nil {
-		_ = os.Rename(old, target)
+		if moved {
+			_ = os.Rename(old, target)
+		}
 		return err
 	}
 	return nil

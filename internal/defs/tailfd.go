@@ -61,7 +61,7 @@ func (c *fdCache) get(path string) (*tailHandle, error) {
 }
 
 func (c *fdCache) open(path string, rotated bool) (*tailHandle, error) {
-	f, err := os.Open(path)
+	f, err := openTail(path)
 	if err != nil {
 		return nil, err
 	}

@@ -26,6 +26,7 @@ func TestTailFdCacheHoldsAcrossCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	collectLines(t, l, path, now)
 	if !l.fds.has(path) {
@@ -53,6 +54,7 @@ func TestTailFdRotationRenameCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	collectLines(t, l, path, now)
 	collectLines(t, l, path, now)
@@ -78,6 +80,7 @@ func TestTailFdGoneClosesEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	collectLines(t, l, path, now)
 	if err := os.Remove(path); err != nil {
@@ -102,6 +105,7 @@ func TestTailFdSweepDropsStalePaths(t *testing.T) {
 		}
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	p := protocol.Probe{Type: "logs", Paths: []string{a, b}, ForceLevel: "error"}
 	if _, err := l.Collect("nginx", p, now); err != nil {
@@ -132,6 +136,7 @@ func TestTailFdCapFallsBack(t *testing.T) {
 		}
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	p := protocol.Probe{Type: "logs", Paths: []string{a, b}, ForceLevel: "error"}
 	if _, err := l.Collect("nginx", p, now); err != nil {
@@ -164,6 +169,7 @@ func TestTailFdCopytruncateReadsFromZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	collectLines(t, l, path, now)
 	if err := os.Truncate(path, 0); err != nil {
@@ -191,6 +197,7 @@ func TestTailerFdRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	tl := NewTailer([]string{path})
+	defer tl.CloseFDs()
 	counters := []protocol.Counter{{Name: "svc.nginx.req_rate", Regex: ""}}
 	now := time.Now()
 	if _, _, err := tl.Sample(counters, now); err != nil {

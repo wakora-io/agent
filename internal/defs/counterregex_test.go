@@ -16,6 +16,7 @@ func TestBrokenCounterPatternIsWithheldNotCountedAsEveryLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	tl := NewTailer([]string{path})
+	defer tl.CloseFDs()
 	counters := []protocol.Counter{
 		{Name: "svc.broken", Regex: "Invalid user ("},
 		{Name: "svc.everything", Regex: ""},

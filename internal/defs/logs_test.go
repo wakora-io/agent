@@ -79,6 +79,7 @@ func TestCollectSkipsForcedBelowMin(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	lean := protocol.Probe{Type: "logs", Paths: []string{path}, ForceLevel: "info", MinLevel: "notice"}
 	if lines, _ := l.Collect("nginx", lean, now); len(lines) != 0 {
@@ -110,6 +111,7 @@ func TestCollectKeepsKubeconfigPathOutOfFileTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("k8s/pods")
+	defer l.CloseFDs()
 	now := time.Now()
 	p := protocol.Probe{Type: "logs", K8s: true, Path: path, MinLevel: "debug"}
 	l.Collect("k8s", p, now)
@@ -135,6 +137,7 @@ func TestTailCatchupCapsFloodReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	p := protocol.Probe{Type: "logs", Paths: []string{path}, ForceLevel: "error"}
 	if _, err := l.Collect("nginx", p, now); err != nil {
@@ -174,6 +177,7 @@ func TestFloodBackoffStopsReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("nginx/error")
+	defer l.CloseFDs()
 	now := time.Now()
 	p := protocol.Probe{Type: "logs", Paths: []string{path}, ForceLevel: "error"}
 	l.Collect("nginx", p, now)
@@ -227,6 +231,7 @@ func TestDirTargetResolvedOncePerTTL(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLogTailer("iis/access")
+	defer l.CloseFDs()
 	now := time.Now()
 	p := protocol.Probe{Type: "logs", Paths: []string{dir}, ForceLevel: "error"}
 	if _, err := l.Collect("iis", p, now); err != nil {

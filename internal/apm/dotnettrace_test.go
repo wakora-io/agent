@@ -94,4 +94,7 @@ func TestDotnetTraceName(t *testing.T) {
 	if n := DotnetTraceName("", "amd64"); n != "" {
 		t.Fatalf("empty osTag should give empty name, got %s", n)
 	}
+	if n := DotnetTraceName("windows", "amd64"); n != "dotnet-trace-windows-amd64.exe" {
+		t.Fatalf("the extension belongs to the target named by osTag, not to the host we run on: %s", n)
+	}
 }

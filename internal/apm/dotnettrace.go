@@ -2,7 +2,6 @@ package apm
 
 import (
 	"encoding/json"
-	"runtime"
 	"sort"
 	"strings"
 )
@@ -12,7 +11,7 @@ func DotnetTraceName(osTag, arch string) string {
 		return ""
 	}
 	name := "dotnet-trace-" + osTag + "-" + arch
-	if runtime.GOOS == "windows" {
+	if strings.HasPrefix(osTag, "windows") {
 		name += ".exe"
 	}
 	return name

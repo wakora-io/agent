@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -152,8 +153,12 @@ func TestAgentCycleE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	def := fmt.Sprintf(`{"service":"itest","match":{"init":"*"},"intervalSec":1,"probes":[{"name":"artifact","type":"file","path":%q,"age":true}]}`, artifact)
-	badDef := `{"service":"evil","match":{"init":"*"},"intervalSec":1,"probes":[{"name":"x","type":"exec","command":"id"}]}`
+	match, matchKind := `{"init":"*"}`, "init"
+	if runtime.GOOS == "windows" {
+		match, matchKind = `{"unit":"Dhcp"}`, "unit"
+	}
+	def := fmt.Sprintf(`{"service":"itest","match":%s,"intervalSec":1,"probes":[{"name":"artifact","type":"file","path":%q,"age":true}]}`, match, artifact)
+	badDef := fmt.Sprintf(`{"service":"evil","match":%s,"intervalSec":1,"probes":[{"name":"x","type":"exec","command":"id"}]}`, match)
 	gw := &fakeGateway{
 		points:    map[string]float64{},
 		checks:    map[string]string{},
@@ -196,7 +201,7 @@ func TestAgentCycleE2E(t *testing.T) {
 		_, hasExists := points["svc.itest.artifact.exists"]
 		age, hasAge := points["svc.itest.artifact.age_sec"]
 		if hb >= 2 && conns >= 2 && hasExists && hasAge && age >= 0 &&
-			kinds["init"] > 0 && checks["itest/artifact"] == "ok" {
+			kinds[matchKind] > 0 && checks["itest/artifact"] == "ok" {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -220,7 +225,7 @@ func TestAgentCycleE2E(t *testing.T) {
 	if checks["itest/artifact"] != "ok" {
 		t.Fatalf("check result not ok: %v", checks)
 	}
-	if kinds["init"] == 0 || kinds["process"] == 0 {
+	if kinds[matchKind] == 0 || kinds["process"] == 0 {
 		t.Fatalf("discovery facts missing: %v", kinds)
 	}
 	for name := range points {
