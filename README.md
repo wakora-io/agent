@@ -89,17 +89,19 @@ testing. Release builds get their endpoint, certificate pin and publisher key at
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
   -ldflags "-s -w \
-  -X wakora.io/agent/internal/buildinfo.Version=<release tag> \
   -X wakora.io/agent/internal/buildinfo.Endpoint=wss://<host>/ws \
+  -X wakora.io/agent/internal/buildinfo.Version=<release tag> \
   -X wakora.io/agent/internal/buildinfo.CertPin=<base64 sha256 of the server SPKI> \
   -X wakora.io/agent/internal/buildinfo.PublisherKey=<base64 ed25519 public key>" \
   ./cmd/wakora
 ```
 
 That is the exact command our release pipeline runs, and the build is deterministic: with the
-same toolchain and the same four values you get the published binary byte for byte. The real
-values and the expected hash for a given release are published in the trust pack, so you can
-check ours rather than take our word for it.
+same toolchain and the same four values you get the published binary byte for byte. Keep the
+flags in this order. The linker records its own inputs in the binary, so reordering them
+produces a different hash from identical code, which looks like a failed verification and is
+not one. The real values and the expected hash for a given release are published in the trust
+pack, so you can check ours rather than take our word for it.
 
 Go 1.25 or newer. No cgo, no external build tools. The macOS build gains a few extra
 metrics when built with cgo on a Mac.
