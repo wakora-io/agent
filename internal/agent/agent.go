@@ -850,6 +850,9 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 	for _, run := range due {
 		d := run.def
 		if a.serviceDenied(d.Service) {
+			if a.dropServiceFacts(d.Service) {
+				factsChanged = true
+			}
 			continue
 		}
 		for _, p := range run.probes {
@@ -1145,6 +1148,24 @@ func (a *Agent) emitMetrics(conn transport.Conn, pts []protocol.MetricPoint) err
 		return err
 	}
 	return a.observePoints(conn, pts)
+}
+
+func (a *Agent) dropServiceFacts(service string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	changed := false
+	if _, had := a.serviceFacts[service]; had {
+		delete(a.serviceFacts, service)
+		changed = true
+	}
+	prefix := service + "/"
+	for key := range a.probeFacts {
+		if strings.HasPrefix(key, prefix) {
+			delete(a.probeFacts, key)
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
