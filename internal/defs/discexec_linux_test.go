@@ -69,6 +69,29 @@ func TestTrustedCmdDropsToTheOwnerOfAUserBinary(t *testing.T) {
 	}
 }
 
+func TestTrustedCmdJudgesThePathItIsHandedNotTheTarget(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to own the fixture")
+	}
+	if _, err := os.Stat("/bin/true"); err != nil {
+		t.Skip("no /bin/true here")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "exe")
+	if err := os.Symlink("/bin/true", link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trustedCmd(context.Background(), link); err == nil {
+		t.Fatal("a link in a world-writable directory was accepted - callers must hand over the resolved path")
+	}
+	if _, err := trustedCmd(context.Background(), "/bin/true"); err != nil {
+		t.Fatalf("the resolved binary must be accepted: %v", err)
+	}
+}
+
 func TestTrustedCmdRefusesARootBinaryInAWritableDirectory(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root to own the fixture")

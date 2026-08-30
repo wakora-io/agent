@@ -55,7 +55,7 @@ func runAPMProfile(o *Outcome, service string, p protocol.Probe) {
 			}
 			v, ok := verByExe[exe]
 			if !ok {
-				v = detectPHPMinorPid(pid)
+				v = detectPHPMinorExe(exe)
 				verByExe[exe] = v
 			}
 			version = v
@@ -170,10 +170,14 @@ func topOwners(owners map[string]uint32, max int) []string {
 	return keys
 }
 
-func detectPHPMinorPid(pid int) string {
+func detectPHPMinorExe(exe string) string {
+	exe = strings.TrimSuffix(strings.TrimSpace(exe), " (deleted)")
+	if exe == "" || !strings.HasPrefix(exe, "/") {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	out, err := trustedOutput(ctx, "/proc/"+strconv.Itoa(pid)+"/exe", "-n", "-v")
+	out, err := trustedOutput(ctx, exe, "-n", "-v")
 	if err != nil {
 		return ""
 	}
