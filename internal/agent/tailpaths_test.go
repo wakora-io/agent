@@ -7,7 +7,7 @@ import (
 )
 
 func TestPickTailPathsFactWins(t *testing.T) {
-	got := pickTailPaths([]string{"/from/fact"}, []string{"/cand/a"}, "/legacy")
+	got := pickTailPaths([]string{"/from/fact"}, []string{"/cand/a"}, "/legacy", "")
 	if len(got) != 1 || got[0] != "/from/fact" {
 		t.Fatalf("got %v", got)
 	}
@@ -20,7 +20,7 @@ func TestPickTailPathsExistingCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := filepath.Join(dir, "maillog")
-	got := pickTailPaths(nil, []string{missing, have}, "")
+	got := pickTailPaths(nil, []string{missing, have}, "", "")
 	if len(got) != 1 || got[0] != have {
 		t.Fatalf("got %v", got)
 	}
@@ -30,21 +30,55 @@ func TestPickTailPathsNoCandidateExists(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a")
 	b := filepath.Join(dir, "b")
-	got := pickTailPaths(nil, []string{a, b}, "")
+	got := pickTailPaths(nil, []string{a, b}, "", "")
 	if len(got) != 2 || got[0] != a || got[1] != b {
 		t.Fatalf("got %v", got)
 	}
 }
 
 func TestPickTailPathsLegacyPath(t *testing.T) {
-	got := pickTailPaths(nil, nil, "/var/log/mail.log")
+	got := pickTailPaths(nil, nil, "/var/log/mail.log", "")
 	if len(got) != 1 || got[0] != "/var/log/mail.log" {
 		t.Fatalf("got %v", got)
 	}
 }
 
 func TestPickTailPathsEmpty(t *testing.T) {
-	if got := pickTailPaths(nil, nil, ""); got != nil {
+	if got := pickTailPaths(nil, nil, "", ""); got != nil {
 		t.Fatalf("got %v", got)
+	}
+}
+
+func TestPickTailPathsRootsARelativeFactPath(t *testing.T) {
+	got := pickTailPaths([]string{"box-slow.log"}, nil, "", "/var/lib/mysql")
+	want := filepath.Join("/var/lib/mysql", "box-slow.log")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestPickTailPathsLeavesAbsoluteFactPathAlone(t *testing.T) {
+	got := pickTailPaths([]string{"/var/log/mysql/slow.log"}, nil, "", "/var/lib/mysql")
+	if len(got) != 1 || got[0] != "/var/log/mysql/slow.log" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestPickTailPathsWithoutABaseKeepsTheRelativePath(t *testing.T) {
+	got := pickTailPaths([]string{"box-slow.log"}, nil, "", "")
+	if len(got) != 1 || got[0] != "box-slow.log" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestPickTailPathsRootsRelativeCandidates(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "slow.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := pickTailPaths(nil, []string{"slow.log"}, "", dir)
+	want := filepath.Join(dir, "slow.log")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

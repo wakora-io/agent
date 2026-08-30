@@ -907,7 +907,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 			}
 			if p.Type == "haproxy" && p.Path == "" {
-				if ps := pickTailPaths(a.factPaths(d.Service, p.PathFrom), p.Paths, ""); len(ps) > 0 {
+				if ps := pickTailPaths(a.factPaths(d.Service, p.PathFrom), p.Paths, "", a.factBase(d.Service, p.PathBase)); len(ps) > 0 {
 					p.Path = ps[0]
 				}
 			}
@@ -1231,11 +1231,34 @@ func (a *Agent) factPaths(service, key string) []string {
 	return nil
 }
 
-func pickTailPaths(fromFact, candidates []string, legacy string) []string {
+func (a *Agent) factBase(service, key string) string {
+	ps := a.factPaths(service, key)
+	if len(ps) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(ps[0])
+}
+
+func rootTailPaths(paths []string, base string) []string {
+	if base == "" || len(paths) == 0 {
+		return paths
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p != "" && !filepath.IsAbs(p) {
+			p = filepath.Join(base, p)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func pickTailPaths(fromFact, candidates []string, legacy, base string) []string {
 	if len(fromFact) > 0 {
-		return fromFact
+		return rootTailPaths(fromFact, base)
 	}
 	if len(candidates) > 0 {
+		candidates = rootTailPaths(candidates, base)
 		var have []string
 		for _, c := range candidates {
 			if _, err := os.Stat(c); err == nil {
@@ -1254,7 +1277,7 @@ func pickTailPaths(fromFact, candidates []string, legacy string) []string {
 }
 
 func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe) error {
-	paths := pickTailPaths(a.factPaths(service, p.PathFrom), p.Paths, p.Path)
+	paths := pickTailPaths(a.factPaths(service, p.PathFrom), p.Paths, p.Path, a.factBase(service, p.PathBase))
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,
 		Hostname:  a.cfg.Hostname,

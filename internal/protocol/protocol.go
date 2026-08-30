@@ -313,6 +313,7 @@ type Probe struct {
 	KVRatios     []KVRatio         `json:"kvRatios,omitempty"`
 	Path         string            `json:"path,omitempty"`
 	PathFrom     string            `json:"pathFrom,omitempty"`
+	PathBase     string            `json:"pathBase,omitempty"`
 	Hash         bool              `json:"hash,omitempty"`
 	Age          bool              `json:"age,omitempty"`
 	Counters     []Counter         `json:"counters,omitempty"`
