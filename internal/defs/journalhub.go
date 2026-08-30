@@ -117,7 +117,7 @@ func (h *journalHub) fetch() {
 	if len(ids) == 0 {
 		return
 	}
-	args := []string{"-q", "--no-pager", "-o", "json", "--show-cursor"}
+	args := []string{"--no-pager", "-o", "json", "--show-cursor"}
 	for _, id := range ids {
 		args = append(args, "SYSLOG_IDENTIFIER="+id)
 	}
