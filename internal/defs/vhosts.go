@@ -47,7 +47,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	var parse func([]byte) []vhost
 	switch p.Command {
 	case "nginx":
-		args = []string{"-T", "-e", os.DevNull}
+		args = []string{"-T"}
 		parse = parseNginxVhosts
 	case "apache2ctl", "httpd":
 		args = []string{"-S"}
@@ -63,7 +63,6 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		o.Check.Error = err.Error()
 		return
 	}
-
 	sig := ""
 	if p.Command == "nginx" {
 		sig = configTreeSig("/etc/nginx")
@@ -73,6 +72,12 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
+		if err != nil && p.Command == "nginx" && logOpenRefused(out) {
+			retry, rerr := exec.CommandContext(ctx, path, "-T", "-e", os.DevNull).CombinedOutput()
+			if rerr == nil {
+				out, err = retry, nil
+			}
+		}
 		if len(out) > 2<<20 {
 			out = out[:2<<20]
 		}
@@ -1286,6 +1291,10 @@ func scanStickyPools(out []byte) string {
 		s = s[:300]
 	}
 	return s
+}
+
+func logOpenRefused(out []byte) bool {
+	return strings.Contains(string(out), "could not open error log file")
 }
 
 func parseNginxVhosts(out []byte) []vhost {
