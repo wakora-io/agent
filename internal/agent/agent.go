@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -956,20 +957,26 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				}
 				continue
 			}
-			if (p.Type == "sql" || p.Type == "redis" || p.Type == "tcp") && p.Address == "" && !p.Socket {
-				if p.PortProcess != "" {
+			if (p.Type == "sql" || p.Type == "redis" || p.Type == "tcp") && !p.Socket {
+				if p.Address == "" && p.PortProcess != "" {
 					if port := a.resolvePort(p.PortProcess); port != "" {
-						p.Address = "127.0.0.1:" + port
+						p.Address = a.dialTarget(port)
 					}
 				}
 				if p.Address == "" && p.PortFrom != "" {
 					a.mu.Lock()
-					if sf := a.serviceFacts[d.Service]; sf != nil {
-						if port := strings.TrimSpace(sf[p.PortFrom]); port != "" {
-							p.Address = "127.0.0.1:" + port
-						}
+					sf := a.serviceFacts[d.Service]
+					port := ""
+					if sf != nil {
+						port = strings.TrimSpace(sf[p.PortFrom])
 					}
 					a.mu.Unlock()
+					if port != "" {
+						p.Address = a.dialTarget(port)
+					}
+				}
+				if p.Address != "" {
+					p.Address = a.retargetLoopback(p.Address)
 				}
 			}
 			if p.Type == "vhosts" {
@@ -1214,6 +1221,82 @@ func (a *Agent) resolvePort(process string) string {
 		}
 	}
 	return ""
+}
+
+func wildcardListen(addr string) bool {
+	if addr == "" || addr == "*" {
+		return true
+	}
+	ip := net.ParseIP(addr)
+	return ip != nil && ip.IsUnspecified()
+}
+
+func loopbackListen(addr string) bool {
+	if addr == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(addr)
+	return ip != nil && ip.IsLoopback()
+}
+
+func chooseListenAddr(listeners []string, port string) string {
+	pick := ""
+	for _, addr := range listeners {
+		addr = strings.TrimSpace(addr)
+		if wildcardListen(addr) || loopbackListen(addr) {
+			return net.JoinHostPort("127.0.0.1", port)
+		}
+		if pick == "" {
+			pick = addr
+		} else if strings.Contains(pick, ":") && !strings.Contains(addr, ":") {
+			pick = addr
+		}
+	}
+	if pick == "" {
+		return ""
+	}
+	return net.JoinHostPort(pick, port)
+}
+
+func (a *Agent) portListeners(port string) []string {
+	a.mu.Lock()
+	facts := a.facts
+	a.mu.Unlock()
+	var out []string
+	for _, f := range facts {
+		if f.Kind != "port" || !strings.HasPrefix(f.Key, port+"/") {
+			continue
+		}
+		var info struct {
+			Addr string `json:"addr"`
+		}
+		if json.Unmarshal([]byte(f.Payload), &info) != nil {
+			continue
+		}
+		out = append(out, info.Addr)
+	}
+	return out
+}
+
+func (a *Agent) dialTarget(port string) string {
+	if port == "" {
+		return ""
+	}
+	if addr := chooseListenAddr(a.portListeners(port), port); addr != "" {
+		return addr
+	}
+	return net.JoinHostPort("127.0.0.1", port)
+}
+
+func (a *Agent) retargetLoopback(address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || port == "" || !loopbackListen(host) {
+		return address
+	}
+	if addr := chooseListenAddr(a.portListeners(port), port); addr != "" {
+		return addr
+	}
+	return address
 }
 
 func (a *Agent) factPaths(service, key string) []string {
