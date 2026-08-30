@@ -75,7 +75,10 @@ var pveState = &pveMem{seen: map[string]bool{}, failed: map[string]bool{}}
 func pveGet(path, api string, timeout time.Duration) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return exec.CommandContext(ctx, path, "get", api, "--output-format", "json").Output()
+	cmd := exec.CommandContext(ctx, path, "get", api, "--output-format", "json")
+	cmd.Env = execEnv()
+	out, err := cmd.Output()
+	return out, execErrText(err)
 }
 
 func runPVE(o *Outcome, service string, p protocol.Probe, timeout time.Duration) {

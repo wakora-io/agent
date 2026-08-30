@@ -300,6 +300,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		go a.serveOTLP(ctx, a.cfg.OTLPPort, a.cfg.OTLPBind)
 	}
 	defs.OTLPEnsure = func(port int) { a.ensureOTLP(ctx, port) }
+	defs.SetExecTmpDir(filepath.Join(a.cfg.StateDir(), "tmp"))
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
 		a.lastConnect.Store(time.Now().Unix())

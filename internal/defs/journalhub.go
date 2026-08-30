@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -131,11 +132,40 @@ func (h *journalHub) fetch() {
 	out, err := exec.CommandContext(ctx, "journalctl", args...).Output()
 	if err != nil {
 		h.cursor = ""
-		h.lastErr = execErrText(err)
+		h.lastErr = journalErr(err, out, len(ids), !first)
 		return
 	}
 	h.lastErr = nil
 	h.consume(out, first, time.Now().Unix())
+}
+
+func journalErr(err error, out []byte, idents int, cursor bool) error {
+	msg := execErrText(err).Error()
+	if msg == err.Error() {
+		tail := firstOutputLine(out)
+		if tail == "" {
+			tail = "no output"
+		}
+		msg += ": " + tail
+	}
+	if cursor {
+		msg += " (idents " + strconv.Itoa(idents) + ", resuming from a cursor)"
+	} else {
+		msg += " (idents " + strconv.Itoa(idents) + ", first read)"
+	}
+	return errors.New(msg)
+}
+
+func firstOutputLine(out []byte) string {
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			if len(line) > 120 {
+				line = line[:120]
+			}
+			return line
+		}
+	}
+	return ""
 }
 
 func (h *journalHub) consume(out []byte, first bool, now int64) {

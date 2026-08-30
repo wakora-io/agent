@@ -379,7 +379,9 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, p.Args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, path, p.Args...)
+	cmd.Env = execEnv()
+	out, err := cmd.CombinedOutput()
 	if len(out) > 2<<20 {
 		out = out[:2<<20]
 	}
