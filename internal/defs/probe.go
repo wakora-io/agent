@@ -405,6 +405,27 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 	applyFactRules(o, p.Facts, out)
 }
 
+func execErrText(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || len(ee.Stderr) == 0 {
+		return err
+	}
+	for _, line := range strings.Split(string(ee.Stderr), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) > 180 {
+			line = line[:180]
+		}
+		return fmt.Errorf("%s: %s", err.Error(), line)
+	}
+	return err
+}
+
 func exitCodeAllowed(p protocol.Probe, err error) bool {
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) {

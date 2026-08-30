@@ -131,7 +131,7 @@ func (h *journalHub) fetch() {
 	out, err := exec.CommandContext(ctx, "journalctl", args...).Output()
 	if err != nil {
 		h.cursor = ""
-		h.lastErr = err
+		h.lastErr = execErrText(err)
 		return
 	}
 	h.lastErr = nil

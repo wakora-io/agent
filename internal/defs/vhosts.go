@@ -47,7 +47,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	var parse func([]byte) []vhost
 	switch p.Command {
 	case "nginx":
-		args = []string{"-T"}
+		args = []string{"-T", "-e", os.DevNull}
 		parse = parseNginxVhosts
 	case "apache2ctl", "httpd":
 		args = []string{"-S"}
