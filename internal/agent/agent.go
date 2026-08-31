@@ -1344,13 +1344,17 @@ func (a *Agent) factBase(service, key string) string {
 	return strings.TrimSpace(ps[0])
 }
 
+func absTailPath(p string) bool {
+	return strings.HasPrefix(p, "/") || filepath.IsAbs(p)
+}
+
 func rootTailPaths(paths []string, base string) []string {
 	if base == "" || len(paths) == 0 {
 		return paths
 	}
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		if p != "" && !filepath.IsAbs(p) {
+		if p != "" && !absTailPath(p) {
 			p = filepath.Join(base, p)
 		}
 		out = append(out, p)

@@ -1,3 +1,5 @@
+//go:build !windows
+
 package defs
 
 import (
@@ -14,7 +16,6 @@ func SetExecTmpDir(dir string) { execTmpDir.Store(dir) }
 var (
 	tmpMu      sync.Mutex
 	tmpChecked time.Time
-	tmpUsable  bool
 	tmpFall    string
 )
 
@@ -35,10 +36,8 @@ func tmpFallbackDir() string {
 	tmpChecked = time.Now()
 	tmpFall = ""
 	if tmpWritable() {
-		tmpUsable = true
 		return ""
 	}
-	tmpUsable = false
 	base, _ := execTmpDir.Load().(string)
 	if base == "" {
 		return ""
@@ -66,10 +65,4 @@ func tmpWritable() bool {
 	f.Close()
 	os.Remove(name)
 	return true
-}
-
-func execTmpState() (usable bool, fallback string) {
-	tmpMu.Lock()
-	defer tmpMu.Unlock()
-	return tmpUsable, tmpFall
 }

@@ -1,3 +1,5 @@
+//go:build !windows
+
 package defs
 
 import (
@@ -11,7 +13,6 @@ func resetTmpState() {
 	tmpMu.Lock()
 	tmpChecked = time.Time{}
 	tmpFall = ""
-	tmpUsable = false
 	tmpMu.Unlock()
 }
 
