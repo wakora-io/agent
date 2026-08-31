@@ -1519,7 +1519,7 @@ func (a *Agent) runJournal(conn transport.Conn, service string, p protocol.Probe
 	return a.sendTailOutput(conn, events, pts)
 }
 
-const logMaxLinesPerWindow = 2000
+const logMaxLinesPerWindow = 4000
 
 func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) error {
 	key := service + "/" + p.Name
