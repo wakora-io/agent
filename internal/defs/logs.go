@@ -27,6 +27,61 @@ func LogRank(level string) int {
 	return logLevelRank["info"]
 }
 
+var foldIPv4Re = regexp.MustCompile(`[0-9]{1,3}(?:\.[0-9]{1,3}){3}`)
+var foldNumRe = regexp.MustCompile(`[0-9]{3,}`)
+
+const foldKeyMax = 1024
+
+func foldKey(msg string) string {
+	if len(msg) > foldKeyMax {
+		msg = msg[:foldKeyMax]
+	}
+	ips := foldIPv4Re.FindAllString(msg, -1)
+	if len(ips) == 0 {
+		return foldNumRe.ReplaceAllString(msg, "N")
+	}
+	parts := foldIPv4Re.Split(msg, -1)
+	var b strings.Builder
+	b.Grow(len(msg))
+	for i, p := range parts {
+		b.WriteString(foldNumRe.ReplaceAllString(p, "N"))
+		if i < len(ips) {
+			b.WriteString(ips[i])
+		}
+	}
+	return b.String()
+}
+
+func FoldRepeats(lines []protocol.LogLine) []protocol.LogLine {
+	if len(lines) < 2 {
+		return lines
+	}
+	out := make([]protocol.LogLine, 0, len(lines))
+	key := ""
+	run := 0
+	for _, l := range lines {
+		k := l.Service + "\x1f" + l.Level + "\x1f" + foldKey(l.Message)
+		if run > 0 && k == key {
+			run++
+			continue
+		}
+		if run > 1 {
+			markFolded(&out[len(out)-1], run)
+		}
+		out = append(out, l)
+		key = k
+		run = 1
+	}
+	if run > 1 {
+		markFolded(&out[len(out)-1], run)
+	}
+	return out
+}
+
+func markFolded(l *protocol.LogLine, n int) {
+	l.Message += " (repeated " + strconv.Itoa(n) + " times)"
+}
+
 const (
 	tailCatchup     = 1 << 20
 	floodCycleBytes = 4 << 20

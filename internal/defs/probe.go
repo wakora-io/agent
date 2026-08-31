@@ -23,6 +23,18 @@ import (
 	"wakora.io/agent/internal/secret"
 )
 
+func tcpDialError(err error, p protocol.Probe) string {
+	msg := err.Error()
+	var ne net.Error
+	if p.PortBound && errors.As(err, &ne) && ne.Timeout() {
+		return msg + " - the port is bound but the service is not accepting connections"
+	}
+	if p.PortStale != "" {
+		return msg + " - the service config announces port " + p.PortStale + " and nothing listens there"
+	}
+	return msg
+}
+
 func recoverProbe(o *Outcome, r any) {
 	o.Check.Status = "fail"
 	o.Check.Error = fmt.Sprintf("probe panicked: %v", r)
@@ -94,10 +106,13 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 			}
 			break
 		}
+		if p.PortStale != "" {
+			o.Check.Error = "the service config announces port " + p.PortStale + " but nothing listens there, so the active listener is used instead"
+		}
 		conn, err := net.DialTimeout("tcp", p.Address, timeout)
 		if err != nil {
 			o.Check.Status = "fail"
-			o.Check.Error = err.Error()
+			o.Check.Error = tcpDialError(err, p)
 		} else {
 			conn.Close()
 			o.Check.Status = "ok"

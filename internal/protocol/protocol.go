@@ -315,6 +315,9 @@ type Probe struct {
 	Socket       bool              `json:"socket,omitempty"`
 	PortProcess  string            `json:"portProcess,omitempty"`
 	PortFrom     string            `json:"portFrom,omitempty"`
+	PortFallback int               `json:"portFallback,omitempty"`
+	PortStale    string            `json:"-"`
+	PortBound    bool              `json:"-"`
 	Query        string            `json:"query,omitempty"`
 	KVMetrics    []KVMetric        `json:"kvMetrics,omitempty"`
 	KVFacts      []KVMetric        `json:"kvFacts,omitempty"`

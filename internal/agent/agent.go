@@ -976,11 +976,27 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 					}
 					a.mu.Unlock()
 					if port != "" {
-						p.Address = a.dialTarget(port)
+						if a.portHeard(port) {
+							p.Address = a.dialTarget(port)
+						} else {
+							p.PortStale = port
+						}
 					}
+				}
+				if p.Address == "" && p.PortFallback > 0 {
+					fb := strconv.Itoa(p.PortFallback)
+					if a.portHeard(fb) {
+						p.Address = a.dialTarget(fb)
+					}
+				}
+				if p.Address == "" && p.PortStale != "" {
+					p.Address = a.dialTarget(p.PortStale)
 				}
 				if p.Address != "" {
 					p.Address = a.retargetLoopback(p.Address)
+					if _, port, err := net.SplitHostPort(p.Address); err == nil {
+						p.PortBound = len(a.portListeners(port)) > 0
+					}
 				}
 			}
 			if p.Type == "vhosts" {
@@ -1300,6 +1316,23 @@ func (a *Agent) portListeners(port string) []string {
 	return out
 }
 
+func (a *Agent) portHeard(port string) bool {
+	a.mu.Lock()
+	facts := a.facts
+	a.mu.Unlock()
+	known := false
+	for _, f := range facts {
+		if f.Kind != "port" {
+			continue
+		}
+		known = true
+		if strings.HasPrefix(f.Key, port+"/") {
+			return true
+		}
+	}
+	return !known
+}
+
 func (a *Agent) dialTarget(port string) string {
 	if port == "" {
 		return ""
@@ -1551,6 +1584,7 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 }
 
 func (a *Agent) capLogs(conn transport.Conn, lines []protocol.LogLine) []protocol.LogLine {
+	lines = defs.FoldRepeats(lines)
 	now := time.Now()
 	if now.After(a.logBudgetAt) {
 		a.logBudget = logMaxLinesPerWindow
