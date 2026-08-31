@@ -18,6 +18,49 @@ import (
 
 var rumTraceRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var rumSiteRe = regexp.MustCompile(`^[a-z0-9.-]+$`)
+var rumFrustNames = map[string]bool{"rage": true, "error_click": true}
+
+func sanitizeFrust(in []protocol.RumFrust) []protocol.RumFrust {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]protocol.RumFrust, 0, len(in))
+	for _, f := range in {
+		if !rumFrustNames[f.Name] {
+			continue
+		}
+		if len(f.Sel) > 120 {
+			f.Sel = f.Sel[:120]
+		}
+		if f.Count < 1 {
+			f.Count = 1
+		}
+		if f.Count > 1000 {
+			f.Count = 1000
+		}
+		out = append(out, f)
+		if len(out) >= 5 {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sanitizeCrumbs(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) > 2048 {
+		return ""
+	}
+	if !json.Valid([]byte(s)) {
+		return ""
+	}
+	return s
+}
 
 func (a *Agent) setRumSites(sites []string) {
 	norm := make([]string, 0, len(sites))
@@ -137,6 +180,8 @@ func (a *Agent) handleRumBeacon(w http.ResponseWriter, r *http.Request) {
 	if len(it.Errors) > 10 {
 		it.Errors = it.Errors[:10]
 	}
+	it.Frust = sanitizeFrust(it.Frust)
+	it.Crumbs = sanitizeCrumbs(it.Crumbs)
 	select {
 	case a.rum <- []protocol.RumItem{it}:
 	default:

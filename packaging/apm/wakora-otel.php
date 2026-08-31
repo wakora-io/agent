@@ -356,17 +356,28 @@ try {
                 }
                 if (isset($wakoraRumSites[$wakoraRumSite])) {
                     $wakoraRumSnippet = <<<'WAKORARUMJS'
-<script data-wakora-rum>(function(){try{var v={},e=[],sent=0;var nav=performance.getEntriesByType("navigation")[0];if(nav){v.ttfb=Math.round(nav.responseStart)}
+<script data-wakora-rum>(function(){try{var v={},e=[],sent=0,clks=[],fr=[],cr=[],t0=Date.now(),lc=null;var nav=performance.getEntriesByType("navigation")[0];if(nav){v.ttfb=Math.round(nav.responseStart)}
 try{new PerformanceObserver(function(l){var s=l.getEntries();if(s.length)v.lcp=Math.round(s[s.length-1].startTime)}).observe({type:"largest-contentful-paint",buffered:true})}catch(_){}
 try{var c=0;new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(!x.hadRecentInput)c+=x.value});v.cls=Math.round(c*1000)/1000}).observe({type:"layout-shift",buffered:true})}catch(_){}
 try{var i=0;new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(x.duration>i){i=x.duration;v.inp=Math.round(i)}})}).observe({type:"event",buffered:true,durationThreshold:40})}catch(_){}
 try{new PerformanceObserver(function(l){l.getEntries().forEach(function(x){if(x.name==="first-contentful-paint")v.fcp=Math.round(x.startTime)})}).observe({type:"paint",buffered:true})}catch(_){}
-addEventListener("error",function(ev){if(e.length<10)e.push({msg:String(ev.message||"error").slice(0,200),src:(ev.filename?ev.filename+":"+(ev.lineno||0):"").slice(0,120),n:1})});
-addEventListener("unhandledrejection",function(ev){if(e.length<10){var st="";try{st=ev.reason&&ev.reason.stack?String(ev.reason.stack).split("\n").slice(1,3).join(" ").replace(/\s+/g," ").trim():""}catch(_){}e.push({msg:("promise: "+String(ev.reason)).slice(0,200),src:st.slice(0,120),n:1})}});
+function tok(t){t=String(t||"");if(!t||t.length>32)return "";if(/[^A-Za-z0-9_-]/.test(t))return "";var d=t.replace(/[^0-9]/g,"").length;if(d&&d/t.length>0.4)return "";if(/^[0-9a-f]{8,}$/i.test(t))return "";return t}
+function sel(el){var p=[],n=0;while(el&&el.nodeType===1&&n<3){var t=String(el.tagName||"").toLowerCase();if(!t)break;var s=t,id=tok(el.id),stop=0;if(id){s+="#"+id;stop=1}else{var cn=(typeof el.className==="string")?tok(el.className.split(/\s+/)[0]):"";if(cn)s+="."+cn;else{var q=el.parentNode,ix=1,j;if(q&&q.children)for(j=0;j<q.children.length;j++)if(q.children[j]===el){ix=j+1;break}s+=":nth-child("+ix+")"}}p.unshift(s);if(stop)break;el=el.parentNode;n++}return p.join(">").slice(0,120)}
+function npath(u){var p=String(u||"");try{if(p.indexOf("://")>0){var a=document.createElement("a");a.href=p;p=(a.hostname===location.hostname?"":a.hostname)+a.pathname}}catch(_){}return p.split("?")[0].replace(/\/\d+/g,"/:n").replace(/\/[0-9a-f]{8,}/gi,"/:x").slice(0,120)}
+function crumb(k,s,st,d){if(cr.length>=30)cr.shift();var o={t:Date.now()-t0,k:k,s:String(s||"").slice(0,120)};if(st)o.st=st;if(d)o.d=d;cr.push(o)}
+function frust(n,s,c){var i;for(i=0;i<fr.length;i++){if(fr[i].name===n&&fr[i].sel===s){if(c>fr[i].count)fr[i].count=c;return}}if(fr.length<5)fr.push({name:n,sel:s,count:c})}
+function errClick(){if(lc&&Date.now()-lc.t<=1000)frust("error_click",lc.s,1)}
+function crj(){var a=cr.slice(0),s="";try{s=JSON.stringify(a);while(s.length>2000&&a.length>1){a.shift();s=JSON.stringify(a)}}catch(_){s=""}return s}
+addEventListener("click",function(ev){try{var t=Date.now(),x=ev.clientX,y=ev.clientY,s=sel(ev.target),n=0,i;crumb("c",s);clks.push({t:t,x:x,y:y});if(clks.length>8)clks.shift();for(i=0;i<clks.length;i++){var k=clks[i];if(t-k.t<=1000&&Math.abs(k.x-x)<=30&&Math.abs(k.y-y)<=30)n++}if(n>=3)frust("rage",s,n);lc={t:t,s:s}}catch(_){}},true);
+addEventListener("popstate",function(){try{crumb("n",npath(location.pathname))}catch(_){}});
+try{new PerformanceObserver(function(l){l.getEntries().forEach(function(x){var it=x.initiatorType;if(it!=="fetch"&&it!=="xmlhttprequest")return;crumb("f",npath(x.name),x.responseStatus||0,Math.round(x.duration||0))})}).observe({type:"resource",buffered:true})}catch(_){}
+addEventListener("error",function(ev){errClick();if(e.length<10)e.push({msg:String(ev.message||"error").slice(0,200),src:(ev.filename?ev.filename+":"+(ev.lineno||0):"").slice(0,120),n:1})});
+addEventListener("unhandledrejection",function(ev){errClick();if(e.length<10){var st="";try{st=ev.reason&&ev.reason.stack?String(ev.reason.stack).split("\n").slice(1,3).join(" ").replace(/\s+/g," ").trim():""}catch(_){}e.push({msg:("promise: "+String(ev.reason)).slice(0,200),src:st.slice(0,120),n:1})}});
 function send(){if(sent)return;sent=1;var ua=navigator.userAgent,dev=/Mobi|Android/i.test(ua)?"mobile":(/Tablet|iPad/i.test(ua)?"tablet":"desktop");
 var bw=/Edg\//.test(ua)?"edge":(/OPR\//.test(ua)?"opera":(/Chrome\//.test(ua)?"chrome":(/Firefox\//.test(ua)?"firefox":(/Safari\//.test(ua)?"safari":"other"))));
 var tr="";try{var st=(nav&&nav.serverTiming)||[];for(var q=0;q<st.length;q++){if(st[q].name==="traceparent"){var pd=String(st[q].description||"").split("-");if(pd.length>1)tr=pd[1];break}}}catch(_){}
-try{navigator.sendBeacon("/?wkr-rum=1",JSON.stringify({site:location.hostname,path:location.pathname,dev:dev,browser:bw,trace:tr,vitals:v,errors:e}))}catch(_){}}
+var cj=(e.length&&cr.length)?crj():"";
+try{navigator.sendBeacon("/?wkr-rum=1",JSON.stringify({site:location.hostname,path:location.pathname,dev:dev,browser:bw,trace:tr,vitals:v,errors:e,frust:fr,crumbs:cj}))}catch(_){}}
 addEventListener("pagehide",send);document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")send()});
 }catch(_){}})();</script>
 WAKORARUMJS;

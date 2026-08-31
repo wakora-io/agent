@@ -191,6 +191,12 @@ type RumError struct {
 	N   uint32 `json:"n,omitempty"`
 }
 
+type RumFrust struct {
+	Name  string `json:"name"`
+	Sel   string `json:"sel,omitempty"`
+	Count uint32 `json:"count,omitempty"`
+}
+
 type RumItem struct {
 	Site    string             `json:"site"`
 	Path    string             `json:"path"`
@@ -200,6 +206,8 @@ type RumItem struct {
 	Trace   string             `json:"trace,omitempty"`
 	Vitals  map[string]float64 `json:"vitals,omitempty"`
 	Errors  []RumError         `json:"errors,omitempty"`
+	Frust   []RumFrust         `json:"frust,omitempty"`
+	Crumbs  string             `json:"crumbs,omitempty"`
 }
 
 type RumBatch struct {
