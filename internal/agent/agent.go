@@ -1395,6 +1395,13 @@ func rootTailPaths(paths []string, base string) []string {
 	return out
 }
 
+func tailPathUnknownError(pathFrom string) string {
+	if pathFrom == "" {
+		return "log path unknown (not discovered yet)"
+	}
+	return "log path unknown - it is read from the service configuration, and that read is not succeeding; the other failing checks of this service name the reason"
+}
+
 func pickTailPaths(fromFact, candidates []string, legacy, base string) []string {
 	if len(fromFact) > 0 {
 		return rootTailPaths(fromFact, base)
@@ -1430,7 +1437,7 @@ func (a *Agent) runLogtail(conn transport.Conn, service string, p protocol.Probe
 	}
 	if len(paths) == 0 {
 		check.Status = "fail"
-		check.Error = "log path unknown (not discovered yet)"
+		check.Error = tailPathUnknownError(p.PathFrom)
 		return a.sendCheck(conn, check)
 	}
 	if p.Optional && !defs.AnyPathExists(paths) {
