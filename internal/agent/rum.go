@@ -64,21 +64,27 @@ func sanitizeCrumbs(s string) string {
 
 func (a *Agent) setRumSites(sites []string) {
 	norm := make([]string, 0, len(sites))
-	seen := map[string]bool{}
+	dedup := map[string]bool{}
 	for _, s := range sites {
 		s = strings.ToLower(strings.TrimSpace(s))
 		s = strings.TrimPrefix(s, "www.")
-		if s == "" || seen[s] {
+		if s == "" || dedup[s] {
 			continue
 		}
 		if !rumSiteRe.MatchString(s) {
 			log.Printf("rum sites: invalid site name dropped: %q", s)
 			continue
 		}
-		seen[s] = true
+		dedup[s] = true
 		norm = append(norm, s)
 	}
 	sort.Strings(norm)
+	sent := len(norm)
+	norm = filterSitesByVhosts(norm, a.vhostKeys())
+	seen := make(map[string]bool, len(norm))
+	for _, s := range norm {
+		seen[s] = true
+	}
 	prev, _ := a.rumAllowed.Load().(map[string]bool)
 	same := len(prev) == len(seen)
 	if same {
@@ -96,8 +102,8 @@ func (a *Agent) setRumSites(sites []string) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	if len(norm) > 0 {
-		log.Printf("rum sites: %v", norm)
+	if sent > 0 {
+		log.Printf("rum sites: %d of %d serve from this host", len(norm), sent)
 	}
 	a.writeRumSitesFile(norm)
 }
