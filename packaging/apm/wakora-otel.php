@@ -40,6 +40,25 @@ if (PHP_SAPI !== 'cli'
                             }
                         }
                     }
+                    $wakoraRumFrust = [];
+                    if (isset($wakoraRumB['frust']) && is_array($wakoraRumB['frust'])) {
+                        foreach (array_slice($wakoraRumB['frust'], 0, 5) as $wakoraRumF) {
+                            if (is_array($wakoraRumF) && isset($wakoraRumF['name']) && is_string($wakoraRumF['name'])
+                                && ($wakoraRumF['name'] === 'rage' || $wakoraRumF['name'] === 'error_click')) {
+                                $wakoraRumFrust[] = [
+                                    'name' => $wakoraRumF['name'],
+                                    'sel' => isset($wakoraRumF['sel']) && is_string($wakoraRumF['sel']) ? substr($wakoraRumF['sel'], 0, 120) : '',
+                                    'count' => isset($wakoraRumF['count']) && is_numeric($wakoraRumF['count']) ? max(1, min(1000, (int) $wakoraRumF['count'])) : 1,
+                                ];
+                            }
+                        }
+                    }
+                    $wakoraRumCrumbs = '';
+                    if (isset($wakoraRumB['crumbs']) && is_string($wakoraRumB['crumbs'])
+                        && $wakoraRumB['crumbs'] !== '' && strlen($wakoraRumB['crumbs']) <= 2048
+                        && is_array(json_decode($wakoraRumB['crumbs'], true, 4))) {
+                        $wakoraRumCrumbs = $wakoraRumB['crumbs'];
+                    }
                     $wakoraRumIp = '';
                     foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_REAL_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'] as $wakoraRumIpK) {
                         if (isset($_SERVER[$wakoraRumIpK]) && is_string($_SERVER[$wakoraRumIpK]) && $_SERVER[$wakoraRumIpK] !== '') {
@@ -59,6 +78,8 @@ if (PHP_SAPI !== 'cli'
                         'trace' => isset($wakoraRumB['trace']) && is_string($wakoraRumB['trace']) && preg_match('/^[0-9a-f]{32}$/', $wakoraRumB['trace']) ? $wakoraRumB['trace'] : '',
                         'vitals' => $wakoraRumVitals,
                         'errors' => $wakoraRumErrs,
+                        'frust' => $wakoraRumFrust,
+                        'crumbs' => $wakoraRumCrumbs,
                     ]);
                     $wakoraRumCfg = get_cfg_var('wakora.otel_endpoint');
                     $wakoraRumEp = (is_string($wakoraRumCfg) && $wakoraRumCfg !== '' ? $wakoraRumCfg : 'http://127.0.0.1:4318') . '/v1/rum';
