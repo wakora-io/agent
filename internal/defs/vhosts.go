@@ -1,6 +1,7 @@
 package defs
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -71,11 +72,14 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	if !cached {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
-		if err != nil && p.Command == "nginx" && logOpenRefused(out) {
-			retry, rerr := exec.CommandContext(ctx, path, "-T", "-e", os.DevNull).CombinedOutput()
-			if rerr == nil {
-				out, err = retry, nil
+		out, diag, err := runConfigDump(ctx, path, args)
+		if err != nil && configDumped(p.Command, out) {
+			err = nil
+		}
+		if err != nil && p.Command == "nginx" && logOpenRefused(diag) {
+			retry, rdiag, rerr := runConfigDump(ctx, path, []string{"-T", "-e", os.DevNull})
+			if rerr == nil || configDumped(p.Command, retry) {
+				out, diag, err = retry, rdiag, nil
 			}
 		}
 		if len(out) > 2<<20 {
@@ -88,7 +92,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 		if err != nil {
 			o.Check.Status = "fail"
-			msg := strings.TrimSpace(string(out))
+			msg := strings.TrimSpace(string(diag))
 			if msg == "" {
 				msg = err.Error()
 			}
@@ -1295,6 +1299,25 @@ func scanStickyPools(out []byte) string {
 
 func logOpenRefused(out []byte) bool {
 	return strings.Contains(string(out), "could not open error log file")
+}
+
+func runConfigDump(ctx context.Context, path string, args []string) ([]byte, []byte, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+func configDumped(command string, out []byte) bool {
+	switch command {
+	case "nginx":
+		return bytes.Contains(out, []byte("# configuration file "))
+	case "apache2ctl", "httpd":
+		return bytes.Contains(out, []byte("VirtualHost configuration:")) || bytes.Contains(out, []byte("port "))
+	}
+	return false
 }
 
 func parseNginxVhosts(out []byte) []vhost {

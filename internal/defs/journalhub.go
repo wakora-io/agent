@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -39,6 +40,7 @@ type journalHub struct {
 	gen     uint64
 	done    uint64
 	lastErr error
+	empty   bool
 }
 
 var journals = &journalHub{subs: map[string]*journalSub{}}
@@ -131,12 +133,29 @@ func (h *journalHub) fetch() {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "journalctl", args...).Output()
 	if err != nil {
+		if journalNoEntries(err, out) {
+			h.lastErr = nil
+			if !h.empty {
+				h.empty = true
+				log.Printf("journal: nothing matches the %d watched identifiers - the journal is readable, it simply holds no entry for any of them", len(ids))
+			}
+			return
+		}
 		h.cursor = ""
 		h.lastErr = journalErr(err, out, len(ids), !first)
 		return
 	}
 	h.lastErr = nil
+	h.empty = false
 	h.consume(out, first, time.Now().Unix())
+}
+
+func journalNoEntries(err error, out []byte) bool {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return false
+	}
+	return len(bytes.TrimSpace(out)) == 0 && len(bytes.TrimSpace(ee.Stderr)) == 0
 }
 
 func journalErr(err error, out []byte, idents int, cursor bool) error {
