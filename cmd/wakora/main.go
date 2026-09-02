@@ -216,6 +216,9 @@ func main() {
 		runtime.GOMAXPROCS(2)
 	}
 	agent.EnsureCgroupHeadroom()
+	if agent.EnsureSandboxHeadroom(cfg.StateDir()) {
+		exitForRestart()
+	}
 	agent.PinOwnMappings()
 
 	if cfg.Baseline {

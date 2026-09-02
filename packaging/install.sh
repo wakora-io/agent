@@ -130,7 +130,7 @@ LimitMEMLOCK=infinity
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 ProtectHome=read-only
-ProtectSystem=strict
+ProtectSystem=full
 ReadWritePaths=/etc/wakora /var/lib/wakora /var/log/wakora /usr/local/bin
 ProtectControlGroups=yes
 

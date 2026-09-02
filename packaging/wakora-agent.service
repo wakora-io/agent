@@ -20,7 +20,7 @@ IOSchedulingPriority=7
 
 NoNewPrivileges=no
 ProtectHome=read-only
-ProtectSystem=strict
+ProtectSystem=full
 ReadWritePaths=/etc/wakora /var/lib/wakora /var/log/wakora /usr/local/bin
 ProtectControlGroups=yes
 
