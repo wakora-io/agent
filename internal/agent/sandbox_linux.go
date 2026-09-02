@@ -18,9 +18,13 @@ import (
 
 var sandboxExecPaths = []string{"/var/log", "/tmp", "/var/tmp", "/var/lib"}
 
-const sandboxRelaxWindow = 6 * time.Hour
+const (
+	sandboxRelaxWindow = 6 * time.Hour
+	sandboxDropIn      = "50-wakora-sandbox.conf"
+	sandboxMarker      = "/run/wakora-sandbox-relax"
+)
 
-func EnsureSandboxHeadroom(stateDir string) bool {
+func EnsureSandboxHeadroom() bool {
 	blocked := sandboxRestricted(sandboxExecPaths, pathReadOnly)
 	if len(blocked) == 0 {
 		return false
@@ -32,18 +36,27 @@ func EnsureSandboxHeadroom(stateDir string) bool {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return false
 	}
-	marker := filepath.Join(stateDir, "sandbox-relax")
-	if relaxRecent(marker, time.Now(), sandboxRelaxWindow) {
-		log.Printf("sandbox: %s still mounts %s read-only for exec children after a relax attempt; not retrying for now (probes that need a writable path, such as a web server config dump, will keep failing)",
+	if relaxRecent(sandboxMarker, time.Now(), sandboxRelaxWindow) {
+		log.Printf("sandbox: %s still mounts %s read-only for exec children after a relax attempt; not retrying (probes that need a writable path, such as a web server config dump, will keep failing until the unit file is updated)",
 			unit, strings.Join(blocked, " "))
 		return false
 	}
-	if out, err := exec.Command("systemctl", "set-property", unit, "ProtectSystem=full").CombinedOutput(); err != nil {
-		log.Printf("sandbox: could not relax %s: %v (%s)", unit, err, strings.TrimSpace(string(out)))
+	dir := filepath.Join("/run/systemd/system", unit+".d")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("sandbox: cannot stage a runtime drop-in for %s: %v", unit, err)
 		return false
 	}
-	_ = atomicfile.Write(marker, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600)
-	log.Printf("sandbox: %s mounted %s read-only for our exec children, so a config dump or a temp file of the monitored service failed with a read-only filesystem even though the host itself is writable; relaxed to ProtectSystem=full (system binaries and /etc stay read-only) and restarting to rebuild the mount namespace",
+	body := "[Service]\nProtectSystem=full\n"
+	if err := atomicfile.Write(filepath.Join(dir, sandboxDropIn), []byte(body), 0o644); err != nil {
+		log.Printf("sandbox: cannot write the runtime drop-in for %s: %v", unit, err)
+		return false
+	}
+	_ = atomicfile.Write(sandboxMarker, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600)
+	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		log.Printf("sandbox: daemon-reload failed after staging the drop-in for %s: %v (%s)", unit, err, strings.TrimSpace(string(out)))
+		return false
+	}
+	log.Printf("sandbox: %s mounted %s read-only for our exec children, so a config dump or a temp file of the monitored service failed with a read-only filesystem even though the host itself is writable; staged a runtime drop-in with ProtectSystem=full (system binaries and /etc stay read-only) and restarting to rebuild the mount namespace",
 		unit, strings.Join(blocked, " "))
 	return true
 }

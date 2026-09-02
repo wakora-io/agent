@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,5 +66,11 @@ func TestRelaxRecentIgnoresGarbageMarker(t *testing.T) {
 	}
 	if relaxRecent(marker, time.Now(), 6*time.Hour) {
 		t.Fatal("an unreadable marker must not block the fix forever")
+	}
+}
+
+func TestSandboxMarkerLivesOnTmpfsSoARebootRearmsTheFix(t *testing.T) {
+	if !strings.HasPrefix(sandboxMarker, "/run/") {
+		t.Fatalf("the marker must sit on tmpfs next to the runtime drop-in, got %q: a reboot drops the drop-in, so a marker that survives would leave the namespace restricted for the whole window", sandboxMarker)
 	}
 }
