@@ -2,4 +2,4 @@
 
 package agent
 
-func EnsureSandboxHeadroom(stateDir string) bool { return false }
+func EnsureSandboxHeadroom() bool { return false }
