@@ -2,20 +2,22 @@
 
 package metrics
 
-import "testing"
+import (
+	"syscall"
+	"testing"
+)
 
-func TestMountReadOnly(t *testing.T) {
-	cases := map[string]bool{
-		"rw,relatime,errors=remount-ro":            false,
-		"ro,relatime,errors=remount-ro":            true,
-		"rw,nosuid,nodev,noexec,relatime,ro":       true,
-		"rw,relatime,data=ordered":                 false,
-		"rw,relatime,discard,errors=remount-ro,ro": true,
-		"": false,
+func TestFsReadOnlyReadsTheMountFlag(t *testing.T) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(t.TempDir(), &st); err != nil {
+		t.Skip("statfs unavailable")
 	}
-	for opts, want := range cases {
-		if got := mountReadOnly(opts); got != want {
-			t.Fatalf("%q: want %v got %v", opts, want, got)
-		}
+	if fsReadOnly(&st) {
+		t.Fatal("a writable temp dir must not read as read-only")
+	}
+	ro := st
+	ro.Flags |= syscall.MS_RDONLY
+	if !fsReadOnly(&ro) {
+		t.Fatal("ST_RDONLY set must read as read-only")
 	}
 }

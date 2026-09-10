@@ -104,7 +104,7 @@ func diskPoints() []Point {
 		avail := float64(st.Bavail * bsize)
 		tags := map[string]string{"mount": mount}
 		readonly := 0.0
-		if len(f) > 3 && mountReadOnly(f[3]) {
+		if fsReadOnly(&st) {
 			readonly = 1
 		}
 		pts = append(pts,
@@ -117,13 +117,8 @@ func diskPoints() []Point {
 	return pts
 }
 
-func mountReadOnly(opts string) bool {
-	for _, o := range strings.Split(opts, ",") {
-		if o == "ro" {
-			return true
-		}
-	}
-	return false
+func fsReadOnly(st *syscall.Statfs_t) bool {
+	return st.Flags&syscall.MS_RDONLY != 0
 }
 
 func (c *Collector) cpuPoints() []Point {
