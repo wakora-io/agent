@@ -103,13 +103,27 @@ func diskPoints() []Point {
 		used := float64((st.Blocks - st.Bfree) * bsize)
 		avail := float64(st.Bavail * bsize)
 		tags := map[string]string{"mount": mount}
+		readonly := 0.0
+		if len(f) > 3 && mountReadOnly(f[3]) {
+			readonly = 1
+		}
 		pts = append(pts,
 			Point{Name: "host.disk.total_bytes", Value: total, Tags: tags},
 			Point{Name: "host.disk.used_bytes", Value: used, Tags: tags},
 			Point{Name: "host.disk.used_pct", Value: (total - avail) / total * 100, Tags: tags},
+			Point{Name: "host.disk.readonly", Value: readonly, Tags: tags},
 		)
 	}
 	return pts
+}
+
+func mountReadOnly(opts string) bool {
+	for _, o := range strings.Split(opts, ",") {
+		if o == "ro" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Collector) cpuPoints() []Point {
