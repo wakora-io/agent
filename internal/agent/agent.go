@@ -54,6 +54,7 @@ type Agent struct {
 	defSig       map[string]uint64
 	serviceFacts map[string]map[string]string
 	probeFacts   map[string][]protocol.Fact
+	probeFailAt  map[string]time.Time
 	tailers      map[string]*defs.Tailer
 	journals     map[string]*defs.JournalTailer
 	logTailers   map[string]*defs.LogTailer
@@ -205,6 +206,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		defSig:            map[string]uint64{},
 		serviceFacts:      map[string]map[string]string{},
 		probeFacts:        map[string][]protocol.Fact{},
+		probeFailAt:       map[string]time.Time{},
 		tailers:           map[string]*defs.Tailer{},
 		journals:          map[string]*defs.JournalTailer{},
 		logTailers:        map[string]*defs.LogTailer{},
@@ -796,6 +798,7 @@ func (a *Agent) refreshActive() {
 		svc, _, _ := strings.Cut(key, "/")
 		if !activeSet[svc] {
 			delete(a.probeFacts, key)
+			delete(a.probeFailAt, key)
 		}
 	}
 	a.active = active
@@ -1113,7 +1116,13 @@ func (a *Agent) emitOutcome(conn transport.Conn, service, probeKey string, o def
 		}
 	}
 	if o.Check.Status == "ok" || len(o.InvFacts) > 0 {
+		a.probeRecovered(probeKey)
 		if a.setProbeFacts(probeKey, o.InvFacts) {
+			factsChanged = true
+		}
+	} else if !a.probeFactsHeld(probeKey, time.Now()) {
+		if a.setProbeFacts(probeKey, nil) {
+			log.Printf("%s: failing for over %s, its inventory is retracted", probeKey, probeFactsHold)
 			factsChanged = true
 		}
 	}
@@ -1182,7 +1191,36 @@ func (a *Agent) dropServiceFacts(service string) bool {
 			changed = true
 		}
 	}
+	for key := range a.probeFailAt {
+		if strings.HasPrefix(key, prefix) {
+			delete(a.probeFailAt, key)
+		}
+	}
 	return changed
+}
+
+const probeFactsHold = 24 * time.Hour
+
+func (a *Agent) probeRecovered(key string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.probeFailAt != nil {
+		delete(a.probeFailAt, key)
+	}
+}
+
+func (a *Agent) probeFactsHeld(key string, now time.Time) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.probeFailAt == nil {
+		a.probeFailAt = map[string]time.Time{}
+	}
+	since, ok := a.probeFailAt[key]
+	if !ok {
+		a.probeFailAt[key] = now
+		return true
+	}
+	return now.Sub(since) < probeFactsHold
 }
 
 func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {

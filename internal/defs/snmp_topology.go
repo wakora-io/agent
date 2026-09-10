@@ -21,6 +21,7 @@ const (
 	oidLldpRemPortId     = ".1.0.8802.1.1.2.1.4.1.1.7"
 	oidLldpRemSysName    = ".1.0.8802.1.1.2.1.4.1.1.9"
 	oidIfHighSpeed       = ".1.3.6.1.2.1.31.1.1.1.15"
+	oidIfType            = ".1.3.6.1.2.1.2.2.1.3"
 	oidDot1qTpFdbPort    = ".1.3.6.1.2.1.17.7.1.2.2.1.2"
 	oidDot1dTpFdbPort    = ".1.3.6.1.2.1.17.4.3.1.2"
 	oidDot1dBaseIfIndex  = ".1.3.6.1.2.1.17.1.4.1.2"
@@ -256,6 +257,18 @@ func walkTopology(g *gosnmp.GoSNMP, host string, labels map[string]string, o *Ou
 	if len(speeds) > 0 {
 		if b, err := json.Marshal(speeds); err == nil {
 			extras["portSpeeds"] = string(b)
+		}
+	}
+	types := map[string]string{}
+	for idx, t := range walkInts(g, oidIfType) {
+		if t <= 0 || len(types) >= maxPortSpeed {
+			continue
+		}
+		types[portName(labels, idx)] = fmt.Sprintf("%d", t)
+	}
+	if len(types) > 0 {
+		if b, err := json.Marshal(types); err == nil {
+			extras["portTypes"] = string(b)
 		}
 	}
 
