@@ -21,3 +21,14 @@ func TestFsReadOnlyReadsTheMountFlag(t *testing.T) {
 		t.Fatal("ST_RDONLY set must read as read-only")
 	}
 }
+
+func TestReadOnlyWatchedSkipsOnlyTheEfiClass(t *testing.T) {
+	for _, fs := range []string{"ext4", "xfs", "btrfs", "zfs", "ntfs", "ntfs3", "fuseblk", "exfat"} {
+		if !readOnlyWatched(fs) {
+			t.Fatalf("%s holds data and must be judged", fs)
+		}
+	}
+	if readOnlyWatched("vfat") {
+		t.Fatal("vfat is the efi system partition, a read-only one is not an incident")
+	}
+}

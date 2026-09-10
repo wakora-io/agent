@@ -77,7 +77,7 @@ func uptimePoints() []Point {
 
 var realFilesystems = map[string]bool{
 	"ext2": true, "ext3": true, "ext4": true, "xfs": true, "btrfs": true,
-	"f2fs": true, "zfs": true, "vfat": true, "exfat": true, "ntfs": true, "fuseblk": true,
+	"f2fs": true, "zfs": true, "vfat": true, "exfat": true, "ntfs": true, "ntfs3": true, "fuseblk": true,
 }
 
 func diskPoints() []Point {
@@ -103,18 +103,24 @@ func diskPoints() []Point {
 		used := float64((st.Blocks - st.Bfree) * bsize)
 		avail := float64(st.Bavail * bsize)
 		tags := map[string]string{"mount": mount}
-		readonly := 0.0
-		if fsReadOnly(&st) {
-			readonly = 1
-		}
 		pts = append(pts,
 			Point{Name: "host.disk.total_bytes", Value: total, Tags: tags},
 			Point{Name: "host.disk.used_bytes", Value: used, Tags: tags},
 			Point{Name: "host.disk.used_pct", Value: (total - avail) / total * 100, Tags: tags},
-			Point{Name: "host.disk.readonly", Value: readonly, Tags: tags},
 		)
+		if readOnlyWatched(f[2]) {
+			readonly := 0.0
+			if fsReadOnly(&st) {
+				readonly = 1
+			}
+			pts = append(pts, Point{Name: "host.disk.readonly", Value: readonly, Tags: tags})
+		}
 	}
 	return pts
+}
+
+func readOnlyWatched(fstype string) bool {
+	return fstype != "vfat"
 }
 
 func fsReadOnly(st *syscall.Statfs_t) bool {
