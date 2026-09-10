@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/net/publicsuffix"
 	"wakora.io/agent/internal/protocol"
 )
 
@@ -336,6 +337,13 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 						Name: "svc." + service + ".vhost.domain_days_left", Value: float64(int(left*10)) / 10,
 						Tags: map[string]string{"vhost": reg},
 					})
+					if left > 0 && left <= domainInsightDays && domainInsightDue(reg, time.Now().UTC().Format("2006-01-02")) {
+						detail, _ := json.Marshal(map[string]any{
+							"type": "domain_expiring_soon", "domain": reg, "daysLeft": int(left),
+							"expiresAt": info.expiry.UTC().Format("2006-01-02"), "source": info.source,
+						})
+						o.Events = append(o.Events, protocol.AgentEvent{Kind: "insight", Detail: string(detail)})
+					}
 				}
 			}
 		}
@@ -359,6 +367,11 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			)
 		}
 	}
+	if o.Facts == nil {
+		o.Facts = map[string]string{}
+	}
+	o.Facts["domainRelay"], o.Facts["domainUnparsed"] = domainScanNotes(domInfo)
+	domainStoreSave()
 }
 
 func vhostCatchAll(raw string) bool {
@@ -598,29 +611,24 @@ func vhostOffloaded(res dnsSweepResult, local map[string]bool, cdn []*net.IPNet)
 	return true, true
 }
 
-var ccSLD = map[string]bool{
-	"co.uk": true, "org.uk": true, "me.uk": true, "ac.uk": true, "gov.uk": true,
-	"com.au": true, "net.au": true, "org.au": true, "co.nz": true, "net.nz": true,
-	"com.br": true, "net.br": true, "co.jp": true, "or.jp": true, "ne.jp": true,
-	"com.tr": true, "com.pl": true, "net.pl": true, "org.pl": true, "com.ua": true,
-	"co.za": true, "com.mx": true, "com.ar": true, "com.cn": true, "com.hk": true,
-	"co.in": true, "co.kr": true, "com.sg": true, "com.my": true, "co.id": true,
-}
-
 func vhostRegistrable(name string) string {
 	n := dnsProbeName(strings.TrimPrefix(name, "*."))
 	if n == "" {
 		return ""
 	}
-	parts := strings.Split(n, ".")
-	if len(parts) < 2 {
+	suffix, icann := publicsuffix.PublicSuffix(n)
+	if !icann || suffix == n {
 		return ""
 	}
-	last2 := strings.Join(parts[len(parts)-2:], ".")
-	if len(parts) >= 3 && ccSLD[last2] {
-		return strings.Join(parts[len(parts)-3:], ".")
+	reg, err := publicsuffix.EffectiveTLDPlusOne(n)
+	if err != nil || wildcardDNSDomains[reg] {
+		return ""
 	}
-	return last2
+	return reg
+}
+
+var wildcardDNSDomains = map[string]bool{
+	"nip.io": true, "xip.io": true, "traefik.me": true, "localtest.me": true, "lvh.me": true, "vcap.me": true,
 }
 
 const vhostDomainBudget = 10
@@ -628,7 +636,7 @@ const vhostDomainBudget = 10
 func vhostDomainScan(names []string, timeout time.Duration) map[string]domainInfo {
 	uniq := map[string]bool{}
 	for _, n := range names {
-		if reg := vhostRegistrable(n); reg != "" {
+		if reg := vhostRegistrable(n); reg != "" && !noExpiryTLD[tldOf(reg)] {
 			uniq[reg] = true
 		}
 	}
@@ -636,30 +644,23 @@ func vhostDomainScan(names []string, timeout time.Duration) map[string]domainInf
 	client := &http.Client{Timeout: timeout}
 	budget := vhostDomainBudget
 	for reg := range uniq {
-		if info, ok := domainCached(reg); ok {
+		info, fresh, known := domainKnown(reg)
+		if fresh {
 			out[reg] = info
 			continue
 		}
 		if budget <= 0 {
+			if known {
+				out[reg] = info
+			}
 			continue
 		}
 		budget--
-		out[reg] = rdapLookupCached(client, reg)
+		out[reg] = domainRemember(reg, lookupDomain(client, reg, timeout))
 		time.Sleep(300 * time.Millisecond)
 	}
+	domainStoreSave()
 	return out
-}
-
-func rdapLookupCached(client *http.Client, domain string) domainInfo {
-	if info, ok := domainCached(domain); ok {
-		return info
-	}
-	info := rdapLookup(client, domain)
-	domainCache.Lock()
-	domainCache.info[domain] = info
-	domainCache.fetchedAt[domain] = time.Now()
-	domainCache.Unlock()
-	return info
 }
 
 const (

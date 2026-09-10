@@ -20,8 +20,23 @@ const (
 	TypeFlows     MessageType = "flows"
 	TypeDevConfig MessageType = "devconfig"
 	TypeDevTest   MessageType = "devtest"
+	TypeLookup    MessageType = "lookup"
 	TypeAck       MessageType = "ack"
 )
+
+type Lookup struct {
+	Nonce  string `json:"nonce"`
+	Kind   string `json:"kind"`
+	Domain string `json:"domain"`
+	Query  string `json:"query,omitempty"`
+}
+
+type LookupResult struct {
+	Nonce  string `json:"nonce"`
+	Status int    `json:"status,omitempty"`
+	Body   string `json:"body,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
 
 type DevTest struct {
 	Nonce     string `json:"nonce"`

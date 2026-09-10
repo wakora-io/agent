@@ -91,6 +91,10 @@ type Agent struct {
 	updateKick        chan struct{}
 	otlpAuto          atomic.Bool
 
+	lookupMu   sync.Mutex
+	lookupWait map[string]chan protocol.LookupResult
+	lookupSeq  atomic.Uint64
+
 	pmu          sync.Mutex
 	pending      map[uint64][]byte
 	pendingFreed chan struct{}
@@ -223,6 +227,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		profiling:         map[string]bool{},
 		vhostDone:         make(chan probeDone, 8),
 		vhostBusy:         map[string]bool{},
+		lookupWait:        map[string]chan protocol.LookupResult{},
 		pending:           map[uint64][]byte{},
 		pendingFreed:      make(chan struct{}, 1),
 	}
@@ -303,6 +308,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 	}
 	defs.OTLPEnsure = func(port int) { a.ensureOTLP(ctx, port) }
 	defs.SetExecTmpDir(filepath.Join(a.cfg.StateDir(), "tmp"))
+	defs.SetDomainStore(filepath.Join(a.cfg.StateDir(), "domains.json"))
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
 		a.lastConnect.Store(time.Now().Unix())
@@ -311,6 +317,8 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		defer func() { a.connected.Store(false); a.writeStatus() }()
 		conn = &trackedConn{inner: conn, a: a}
 		defer a.spoolPending()
+		defs.SetLookupRelay(func(req protocol.Lookup) (protocol.LookupResult, error) { return a.relayLookup(conn, req) })
+		defer defs.SetLookupRelay(nil)
 
 		kick := make(chan struct{}, 1)
 		dkick := make(chan struct{}, 1)
@@ -1041,6 +1049,50 @@ type probeDone struct {
 	service string
 	probe   protocol.Probe
 	o       defs.Outcome
+}
+
+var errLookupTimeout = errors.New("the platform did not answer the lookup in time")
+
+func (a *Agent) relayLookup(conn transport.Conn, req protocol.Lookup) (protocol.LookupResult, error) {
+	req.Nonce = strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.FormatUint(a.lookupSeq.Add(1), 36)
+	ch := make(chan protocol.LookupResult, 1)
+	a.lookupMu.Lock()
+	a.lookupWait[req.Nonce] = ch
+	a.lookupMu.Unlock()
+	defer func() {
+		a.lookupMu.Lock()
+		delete(a.lookupWait, req.Nonce)
+		a.lookupMu.Unlock()
+	}()
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return protocol.LookupResult{}, err
+	}
+	if err := conn.Send(protocol.Message{Type: protocol.TypeLookup, Payload: raw}); err != nil {
+		return protocol.LookupResult{}, err
+	}
+	select {
+	case res := <-ch:
+		return res, nil
+	case <-time.After(15 * time.Second):
+		return protocol.LookupResult{}, errLookupTimeout
+	}
+}
+
+func (a *Agent) deliverLookup(m protocol.Message) {
+	var res protocol.LookupResult
+	if json.Unmarshal(m.Payload, &res) != nil || res.Nonce == "" {
+		return
+	}
+	a.lookupMu.Lock()
+	ch := a.lookupWait[res.Nonce]
+	a.lookupMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- res:
+		default:
+		}
+	}
 }
 
 func (a *Agent) startVhosts(service string, p protocol.Probe) {
@@ -2321,6 +2373,8 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 	case protocol.TypeAck:
 		a.lastAck.Store(time.Now().Unix())
 		a.ackPending(m.Seq)
+	case protocol.TypeLookup:
+		a.deliverLookup(m)
 	case protocol.TypeConfig:
 		var set protocol.DefinitionSet
 		if err := json.Unmarshal(m.Payload, &set); err != nil {
