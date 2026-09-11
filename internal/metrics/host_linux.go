@@ -85,6 +85,7 @@ func diskPoints() []Point {
 	if err != nil {
 		return nil
 	}
+	hostRO := hostMountReadOnly()
 	var pts []Point
 	seenDev := map[string]bool{}
 	for _, line := range strings.Split(string(b), "\n") {
@@ -109,8 +110,12 @@ func diskPoints() []Point {
 			Point{Name: "host.disk.used_pct", Value: (total - avail) / total * 100, Tags: tags},
 		)
 		if readOnlyWatched(f[2]) {
+			ro, known := hostRO[mount]
+			if !known {
+				ro = fsReadOnly(&st)
+			}
 			readonly := 0.0
-			if fsReadOnly(&st) {
+			if ro {
 				readonly = 1
 			}
 			pts = append(pts, Point{Name: "host.disk.readonly", Value: readonly, Tags: tags})
@@ -125,6 +130,34 @@ func readOnlyWatched(fstype string) bool {
 
 func fsReadOnly(st *syscall.Statfs_t) bool {
 	return st.Flags&syscall.MS_RDONLY != 0
+}
+
+func hostMountReadOnly() map[string]bool {
+	b, err := os.ReadFile("/proc/1/mounts")
+	if err != nil {
+		return nil
+	}
+	return parseMountReadOnly(string(b))
+}
+
+func parseMountReadOnly(table string) map[string]bool {
+	out := map[string]bool{}
+	for _, line := range strings.Split(table, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || !realFilesystems[f[2]] {
+			continue
+		}
+		mount := strings.ReplaceAll(f[1], "\\040", " ")
+		ro := false
+		for _, o := range strings.Split(f[3], ",") {
+			if o == "ro" {
+				ro = true
+				break
+			}
+		}
+		out[mount] = ro
+	}
+	return out
 }
 
 func (c *Collector) cpuPoints() []Point {
