@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"wakora.io/agent/internal/apm"
+	"wakora.io/agent/internal/redact"
 )
 
 func Collect() []Fact {
@@ -488,6 +489,7 @@ func addCronEntry(agg map[string]*cronInfo, user, cmd, sched, source string) {
 	if len(agg) >= cronJobCap {
 		return
 	}
+	cmd = redact.Scrub(cmd)
 	if len(cmd) > 200 {
 		cmd = cmd[:200]
 	}

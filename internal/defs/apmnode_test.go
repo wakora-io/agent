@@ -108,10 +108,10 @@ func TestNodeDropin(t *testing.T) {
 	}
 	envFile := nodeEnvFile(perApp, "sha1")
 	want2 := "# wakora-artifact-sha sha1\n" +
-		"NODE_OPTIONS=\"--require /reg.js\"\n" +
-		"OTEL_EXPORTER_OTLP_ENDPOINT=\"http://127.0.0.1:4318\"\n" +
-		"OTEL_TRACES_EXPORTER=\"otlp\"\n" +
-		"OTEL_METRICS_EXPORTER=\"otlp\"\n"
+		"NODE_OPTIONS='--require /reg.js'\n" +
+		"OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'\n" +
+		"OTEL_TRACES_EXPORTER='otlp'\n" +
+		"OTEL_METRICS_EXPORTER='otlp'\n"
 	if envFile != want2 {
 		t.Fatalf("env file:\n%s\nwant:\n%s", envFile, want2)
 	}
