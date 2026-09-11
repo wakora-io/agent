@@ -333,6 +333,7 @@ type Probe struct {
 	PortFallback int               `json:"portFallback,omitempty"`
 	PortStale    string            `json:"-"`
 	PortBound    bool              `json:"-"`
+	Denied       string            `json:"-"`
 	Query        string            `json:"query,omitempty"`
 	KVMetrics    []KVMetric        `json:"kvMetrics,omitempty"`
 	KVFacts      []KVMetric        `json:"kvFacts,omitempty"`
@@ -401,6 +402,7 @@ type Definition struct {
 	Derived         []DerivedRule `json:"derived,omitempty"`
 	IntervalSec     int           `json:"intervalSec,omitempty"`
 	MinAgentVersion string        `json:"minAgentVersion,omitempty"`
+	Capabilities    []string      `json:"capabilities,omitempty"`
 }
 
 type AgentEvent struct {

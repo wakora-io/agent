@@ -91,6 +91,11 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 			recoverProbe(&o, r)
 		}
 	}()
+	if p.Denied != "" {
+		o.Check.Status = "fail"
+		o.Check.Error = p.Denied
+		return o
+	}
 	start := time.Now()
 	switch p.Type {
 	case "http":
