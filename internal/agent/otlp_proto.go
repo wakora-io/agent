@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"wakora.io/agent/internal/protocol"
+	"wakora.io/agent/internal/redact"
 )
 
 func convertOTLPProto(body []byte) ([]protocol.Span, error) {
@@ -76,7 +77,8 @@ func convertAttrsPb(kvs []*commonpb.KeyValue) map[string]string {
 		if kv.Key == "" {
 			continue
 		}
-		out[trim(kv.Key)] = trim(anyPbString(kv.Value))
+		k := trim(kv.Key)
+		out[k] = trim(redact.Attr(k, anyPbString(kv.Value)))
 	}
 	return out
 }

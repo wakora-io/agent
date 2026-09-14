@@ -13,6 +13,7 @@ import (
 
 	"wakora.io/agent/internal/config"
 	"wakora.io/agent/internal/protocol"
+	"wakora.io/agent/internal/redact"
 )
 
 const (
@@ -314,7 +315,8 @@ func convertAttrs(kvs []otlpKV) map[string]string {
 		if kv.Key == "" {
 			continue
 		}
-		out[trim(kv.Key)] = trim(anyToString(kv.Value))
+		k := trim(kv.Key)
+		out[k] = trim(redact.Attr(k, anyToString(kv.Value)))
 	}
 	return out
 }
