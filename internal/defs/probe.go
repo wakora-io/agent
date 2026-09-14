@@ -66,7 +66,7 @@ var execAllowlist = map[string]bool{
 	"vsftpd": true, "pure-ftpd": true, "pure-ftpd-mysql": true, "pure-ftpwho": true,
 	"pveversion": true, "qm": true, "pct": true, "pvesm": true,
 	"mongosh": true, "mongo": true, "systemctl": true,
-	"varnishstat": true, "unbound-control": true, "exim": true, "exim4": true,
+	"varnishstat": true, "unbound-control": true, "pdns_control": true, "exim": true, "exim4": true,
 	"pmgsh": true, "pmgversion": true,
 	"restic": true, "borg": true,
 	"sshd": true,
