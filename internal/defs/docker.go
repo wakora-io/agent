@@ -88,6 +88,7 @@ func runDocker(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			},
 		},
 	}
+	defer client.CloseIdleConnections()
 
 	var containers []dockerContainer
 	if err := dockerGet(client, "/containers/json?all=1", &containers); err != nil {

@@ -138,6 +138,7 @@ func probeExternal(url string, expectStatus int, bodyRe *regexp.Regexp, timeout 
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}
+	defer client.CloseIdleConnections()
 	start = time.Now()
 	resp, err := client.Do(req)
 	r.totalMs = msSince(start)

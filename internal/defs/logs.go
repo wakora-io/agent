@@ -426,6 +426,7 @@ func (l *LogTailer) dockerLogs(sock string, now time.Time) ([]protocol.LogLine, 
 			},
 		},
 	}
+	defer client.CloseIdleConnections()
 	resp, err := client.Get("http://docker/containers/json")
 	if err != nil {
 		return nil, err
@@ -489,6 +490,7 @@ func (l *LogTailer) k8sPodLogs(kubeconfig string, now time.Time) ([]protocol.Log
 	if err != nil {
 		return nil, err
 	}
+	defer kc.client.CloseIdleConnections()
 	pods, err := kc.pods()
 	if err != nil {
 		return nil, err

@@ -102,6 +102,7 @@ func runLinstor(o *Outcome, service string, p protocol.Probe, resolve CredResolv
 		bases = []string{"https://127.0.0.1:3371", "http://127.0.0.1:3370"}
 	}
 	client := linstorClient()
+	defer client.CloseIdleConnections()
 
 	var nodes []linstorNode
 	base := ""

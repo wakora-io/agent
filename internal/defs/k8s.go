@@ -45,6 +45,7 @@ func runK8s(o *Outcome, service string, p protocol.Probe, timeout time.Duration)
 		o.Check.Error = err.Error()
 		return
 	}
+	defer kc.client.CloseIdleConnections()
 	o.Check.Target = source
 
 	version := kc.version()

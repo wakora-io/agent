@@ -210,6 +210,7 @@ func runHTTP(o *Outcome, p protocol.Probe, timeout time.Duration, resolve CredRe
 	client := &http.Client{Timeout: timeout}
 	if p.Insecure {
 		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		defer client.CloseIdleConnections()
 	}
 	var resp *http.Response
 	var lastErr error
