@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,6 +99,41 @@ func TestIdentityRoundtrip(t *testing.T) {
 	}
 	if cfg.ServerID != "uuid-123" || cfg.Key != "secret-key" {
 		t.Fatalf("roundtrip: id=%q key=%q", cfg.ServerID, cfg.Key)
+	}
+}
+
+func TestSealedIdentityIsSetAside(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeINI(filepath.Join(dir, "identity"), map[string]map[string]string{"": {"uuid": "uuid-copied", "key": "c2VhbGVkLWVsc2V3aGVyZS1zZWFsZWQtZWxzZXdoZXJl"}}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if !errors.Is(err, ErrIdentitySealed) {
+		t.Fatalf("want ErrIdentitySealed, got %v", err)
+	}
+	if cfg == nil || cfg.Key != "" {
+		t.Fatal("a sealed identity must load as no key")
+	}
+	moved, err := SetAsideIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(filepath.Base(moved), "identity.undecryptable-") {
+		t.Fatalf("unexpected set-aside name %q", moved)
+	}
+	if _, err := os.Stat(moved); err != nil {
+		t.Fatalf("set-aside copy missing: %v", err)
+	}
+	cfg, err = Load(dir)
+	if err != nil || cfg.Key != "" || cfg.ServerID != "" {
+		t.Fatalf("after set-aside: err=%v id=%q key=%q", err, cfg.ServerID, cfg.Key)
+	}
+	if err := SaveIdentity(dir, "uuid-new", "k-new"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(dir)
+	if err != nil || cfg.ServerID != "uuid-new" || cfg.Key != "k-new" {
+		t.Fatalf("fresh identity: err=%v id=%q key=%q", err, cfg.ServerID, cfg.Key)
 	}
 }
 

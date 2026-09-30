@@ -100,17 +100,21 @@ func main() {
 	}
 
 	if seedErr != nil {
-		if !underServiceManager() {
+		if !runningAsService() {
 			log.Fatal(seedErr)
 		}
 		log.Printf("%v", seedErr)
 	}
 	cfg, err := config.Load(*configDir)
-	if err != nil {
-		if !underServiceManager() {
+	sealed := errors.Is(err, config.ErrIdentitySealed)
+	if err != nil && !(sealed && *key != "") {
+		if !runningAsService() {
+			if sealed {
+				log.Fatalf("%v - this identity was sealed on another machine; register this host with: wakora --key <TEAMKEY>", err)
+			}
 			log.Fatal(err)
 		}
-		log.Printf("%v - idle until re-registered", err)
+		log.Printf("%v - idle until re-registered with wakora --key <TEAMKEY>", err)
 	}
 	if *baseline {
 		cfg.Baseline = true
@@ -142,6 +146,14 @@ func main() {
 			regURL := deriveURL(cfg.Endpoint, "/register")
 			if regURL == "" {
 				log.Fatal("register: no endpoint built in; use --endpoint (dev)")
+			}
+			if sealed {
+				moved, err := config.SetAsideIdentity(*configDir)
+				if err != nil {
+					log.Fatalf("the identity sealed on another machine could not be set aside: %v", err)
+				}
+				log.Printf("identity sealed on another machine moved to %s, registering this host as a new server", moved)
+				cfg.ServerID, cfg.Key = "", ""
 			}
 			serverID, serverKey, err := bootstrap.Register(httpc, regURL, *key, secret.MachineID(), cfg.Hostname)
 			if err != nil {
@@ -396,6 +408,10 @@ func deriveURL(endpoint, path string) string {
 		scheme = "https"
 	}
 	return scheme + "://" + u.Host + path
+}
+
+func runningAsService() bool {
+	return underServiceManager() || os.Getenv("INVOCATION_ID") != "" || os.Getenv("RC_SVCNAME") != "" || !term.IsTerminal(int(os.Stderr.Fd()))
 }
 
 func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client, configDir string) bool {

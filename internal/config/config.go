@@ -1,11 +1,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/secret"
@@ -93,6 +95,8 @@ func (c *Config) StateDir() string {
 	return c.stateDir
 }
 
+var ErrIdentitySealed = errors.New("identity key is not decryptable on this machine")
+
 type identity struct {
 	uuid string
 	key  string
@@ -110,11 +114,20 @@ func loadIdentity(dir string) (identity, error) {
 	if enc := vals["key"]; enc != "" {
 		plain, err := secret.Decrypt(enc)
 		if err != nil {
-			return id, fmt.Errorf("identity key is not decryptable on this machine: %w", err)
+			return id, fmt.Errorf("%w: %v", ErrIdentitySealed, err)
 		}
 		id.key = plain
 	}
 	return id, nil
+}
+
+func SetAsideIdentity(dir string) (string, error) {
+	if dir == "" {
+		dir = defaultDir
+	}
+	path := filepath.Join(dir, "identity")
+	dst := path + ".undecryptable-" + time.Now().UTC().Format("20060102-150405")
+	return dst, os.Rename(path, dst)
 }
 
 func SaveIdentity(dir, serverID, key string) error {
