@@ -147,6 +147,7 @@ func main() {
 			if regURL == "" {
 				log.Fatal("register: no endpoint built in; use --endpoint (dev)")
 			}
+			prevID := cfg.ServerID
 			if sealed {
 				moved, err := config.SetAsideIdentity(*configDir)
 				if err != nil {
@@ -163,6 +164,7 @@ func main() {
 				log.Printf("register failed: %v", err)
 				log.Print("team key stored encrypted on this machine; the service retries registration until the gateway accepts (survives restarts)")
 			} else {
+				forgetServerState(cfg, prevID, serverID)
 				if err := config.SaveIdentity(*configDir, serverID, serverKey); err != nil {
 					log.Fatal(err)
 				}
@@ -436,6 +438,7 @@ func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client
 			if pending == "" {
 				continue
 			}
+			prevID := cfg.ServerID
 			serverID, serverKey, err := bootstrap.Register(httpc, regURL, pending, secret.MachineID(), cfg.Hostname)
 			if err != nil {
 				log.Printf("pending registration: %v (next try in %s)", err, backoff)
@@ -445,6 +448,7 @@ func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client
 				}
 				continue
 			}
+			forgetServerState(cfg, prevID, serverID)
 			if err := config.SaveIdentity(configDir, serverID, serverKey); err != nil {
 				log.Printf("pending registration: identity save failed: %v", err)
 				continue
@@ -453,6 +457,17 @@ func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client
 			_ = cfg.ReloadIdentity()
 			log.Printf("registered, server uuid %s", serverID)
 			return true
+		}
+	}
+}
+
+func forgetServerState(cfg *config.Config, prevID, newID string) {
+	if prevID == newID {
+		return
+	}
+	for _, p := range []string{cfg.RingPath(), defs.TenantPinPath(cfg.StateDir())} {
+		if err := os.Remove(p); err == nil {
+			log.Printf("new server uuid %s - removed %s left by the previous identity", newID, p)
 		}
 	}
 }

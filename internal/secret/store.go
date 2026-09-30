@@ -76,6 +76,35 @@ func GetCred(dir, name string) (Cred, bool) {
 	return c, true
 }
 
+var storeDir string
+
+func Sealed(name string) bool {
+	if storeDir == "" {
+		return false
+	}
+	all, err := loadRaw(storeDir)
+	if err != nil {
+		return false
+	}
+	fields, ok := all[name]
+	if !ok {
+		return false
+	}
+	for _, k := range []string{"user", "pass"} {
+		if _, err := Decrypt(fields[k]); err != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func MissingOr(name, text string) string {
+	if Sealed(name) {
+		return "secret " + name + " was sealed on another machine and cannot be read here - set it again: wakora secret set " + name
+	}
+	return text
+}
+
 func ListCreds(dir string) []string {
 	all, err := loadRaw(dir)
 	if err != nil {

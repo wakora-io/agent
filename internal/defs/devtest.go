@@ -16,7 +16,7 @@ func DeviceTest(t protocol.DevTest, resolve func(string) (secret.Cred, bool)) pr
 	if t.Secret != "" {
 		c, ok := resolve(t.Secret)
 		if !ok {
-			out.Error = "secret " + t.Secret + " is not set on this collector (wakora secret set " + t.Secret + ")"
+			out.Error = secret.MissingOr(t.Secret, "secret "+t.Secret+" is not set on this collector (wakora secret set "+t.Secret+")")
 			return out
 		}
 		cred = c

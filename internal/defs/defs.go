@@ -57,6 +57,10 @@ func Verify(set protocol.DefinitionSet, publisherKey string, tenantKey ed25519.P
 	return out
 }
 
+func TenantPinPath(stateDir string) string {
+	return filepath.Join(stateDir, "tenant-defs.pub")
+}
+
 func TenantDefsKey(stateDir string, set protocol.DefinitionSet) ed25519.PublicKey {
 	hasTenant := false
 	for _, sd := range set.Definitions {
@@ -72,7 +76,7 @@ func TenantDefsKey(stateDir string, set protocol.DefinitionSet) ed25519.PublicKe
 	if err != nil || len(cand) != ed25519.PublicKeySize {
 		return nil
 	}
-	pinPath := filepath.Join(stateDir, "tenant-defs.pub")
+	pinPath := TenantPinPath(stateDir)
 	if raw, err := os.ReadFile(pinPath); err == nil && len(raw) > 0 {
 		pinned, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
 		if err == nil && len(pinned) == ed25519.PublicKeySize {

@@ -23,6 +23,7 @@ import (
 var localSeed string
 
 func InitSeed(dir string) error {
+	storeDir = dir
 	path := filepath.Join(dir, ".seed")
 	b, err := os.ReadFile(path)
 	switch {

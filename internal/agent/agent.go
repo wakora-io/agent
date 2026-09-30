@@ -1747,7 +1747,7 @@ func (a *Agent) runTraps(conn transport.Conn, service string, p protocol.Probe) 
 				return a.sendCheck(conn, protocol.CheckResult{
 					ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
 					CheckID: service + "/" + p.Name, Kind: "traps", Target: "udp/" + strconv.Itoa(port),
-					Status: "fail", Error: "secret " + p.Secret + " not set (v3 traps need USM creds)",
+					Status: "fail", Error: secret.MissingOr(p.Secret, "secret "+p.Secret+" not set (v3 traps need USM creds)"),
 					Timestamp: time.Now().Unix(),
 				})
 			}
@@ -1978,7 +1978,7 @@ func (a *Agent) runConfigFetch(conn transport.Conn, service string, p protocol.P
 	}
 	cred, ok := a.resolveSecret(p.Secret)
 	if !ok {
-		return fail("ssh secret " + p.Secret + " is not set on this collector - run: wakora secret set " + p.Secret + " --user <user>")
+		return fail(secret.MissingOr(p.Secret, "ssh secret "+p.Secret+" is not set on this collector - run: wakora secret set "+p.Secret+" --user <user>"))
 	}
 	timeout := 20 * time.Second
 	if p.TimeoutSec > 0 {

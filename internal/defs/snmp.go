@@ -34,7 +34,7 @@ func runSNMP(o *Outcome, service string, p protocol.Probe, timeout time.Duration
 		c, ok := resolve(p.Secret)
 		if !ok {
 			o.Check.Status = "fail"
-			o.Check.Error = "secret " + p.Secret + " not set on host (wakora secret set)"
+			o.Check.Error = secret.MissingOr(p.Secret, "secret "+p.Secret+" not set on host (wakora secret set)")
 			return
 		}
 		cred = c

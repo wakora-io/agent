@@ -49,6 +49,36 @@ func TestListAndRemove(t *testing.T) {
 	}
 }
 
+func TestSealedCredIsNamed(t *testing.T) {
+	dir := t.TempDir()
+	if err := SetCred(dir, "readable", Cred{User: "u", Pass: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "secrets.conf"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("copied.pass = c2VhbGVkLWVsc2V3aGVyZS1zZWFsZWQtZWxzZXdoZXJl\ncopied.user = c2VhbGVkLWVsc2V3aGVyZS1zZWFsZWQtZWxzZXdoZXJl\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	prev := storeDir
+	storeDir = dir
+	defer func() { storeDir = prev }()
+	if !Sealed("copied") {
+		t.Fatal("an undecryptable secret must read as sealed")
+	}
+	if Sealed("readable") || Sealed("absent") {
+		t.Fatal("readable or absent secrets are not sealed")
+	}
+	if got := MissingOr("absent", "fallback"); got != "fallback" {
+		t.Fatalf("absent secret must keep the caller text, got %q", got)
+	}
+	if got := MissingOr("copied", "fallback"); !strings.Contains(got, "sealed on another machine") || !strings.Contains(got, "wakora secret set copied") {
+		t.Fatalf("sealed secret text: %q", got)
+	}
+}
+
 func TestMissingCred(t *testing.T) {
 	if _, ok := GetCred(t.TempDir(), "nope"); ok {
 		t.Fatal("missing cred reported present")
