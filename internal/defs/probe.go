@@ -412,6 +412,15 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 		return
 	}
 	if err != nil && !exitCodeAllowed(p, err) {
+		if p.Command == "sshd" && sshdPrivsepMissing(out) {
+			if cfg, ok := sshdConfigEffective(sshdConfigPath); ok {
+				o.Check.Status = "ok"
+				o.Check.Error = sshdFallbackNote
+				applyMetricRules(o, p.Metrics, cfg)
+				applyFactRules(o, p.Facts, cfg)
+				return
+			}
+		}
 		o.Check.Status = "fail"
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
