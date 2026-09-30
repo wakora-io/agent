@@ -169,6 +169,7 @@ func main() {
 					log.Fatal(err)
 				}
 				config.ClearPendingKey(*configDir)
+				config.ClearCopyRefusal(*configDir)
 				log.Printf("registered, server uuid %s", serverID)
 			}
 		}
@@ -204,8 +205,12 @@ func main() {
 		_ = config.WriteOverride(*configDir, "agent", "pin", "")
 		cfg.Pin = ""
 	}
+	if prev, ok := config.TakeIdentityChanged(*configDir); ok {
+		forgetServerState(cfg, prev, cfg.ServerID)
+	}
 	defs.Provision = apm.NewProvisioner(relURL, httpc, pubKey, cfg.StateDir())
 	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20, *spoolAge), pubKey)
+	a.SetRestart(exitForRestart)
 
 	if *test {
 		a.DryRun()
@@ -214,6 +219,11 @@ func main() {
 
 	if cfg.Endpoint == "" {
 		log.Fatal("no gateway endpoint built into this binary; use --endpoint (dev)")
+	}
+	if cfg.Key == "" {
+		if r, ok := config.LoadCopyRefusal(*configDir); ok {
+			log.Printf("this host is a copy of server %s that the platform did not register as a new host: %s - register with: wakora --key <TEAMKEY>", r.Of, r.Reason)
+		}
 	}
 	if cfg.Key == "" && config.LoadPendingKey(*configDir) == "" && !underServiceManager() && term.IsTerminal(int(os.Stderr.Fd())) {
 		log.Fatal("no identity; register with: wakora --key <TEAMKEY>")
@@ -454,6 +464,7 @@ func waitForIdentity(ctx context.Context, cfg *config.Config, httpc *http.Client
 				continue
 			}
 			config.ClearPendingKey(configDir)
+			config.ClearCopyRefusal(configDir)
 			_ = cfg.ReloadIdentity()
 			log.Printf("registered, server uuid %s", serverID)
 			return true

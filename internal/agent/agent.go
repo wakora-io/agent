@@ -89,6 +89,8 @@ type Agent struct {
 	vhostDone         chan probeDone
 	vhostBusy         map[string]bool
 	updateKick        chan struct{}
+	restart           func()
+	instance          string
 	otlpAuto          atomic.Bool
 
 	lookupMu   sync.Mutex
@@ -116,6 +118,8 @@ var errPendingStalled = errors.New("pending buffer full: gateway not acknowledgi
 var probeTick = 15 * time.Second
 
 func (a *Agent) SetUpdateKick(ch chan struct{}) { a.updateKick = ch }
+
+func (a *Agent) SetRestart(f func()) { a.restart = f }
 
 type trackedConn struct {
 	inner transport.Conn
@@ -230,6 +234,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		lookupWait:        map[string]chan protocol.LookupResult{},
 		pending:           map[uint64][]byte{},
 		pendingFreed:      make(chan struct{}, 1),
+		instance:          newInstanceID(),
 	}
 	a.key.Store(cfg.Key)
 	a.pin.Store(cfg.Pin)
@@ -606,6 +611,7 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 		Hostname:  a.cfg.Hostname,
 		Version:   buildinfo.Version,
 		Pin:       a.EffectivePin(),
+		Instance:  a.instance,
 		Timestamp: time.Now().Unix(),
 	})
 	if err != nil {
@@ -2490,6 +2496,10 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 			case tkick <- t:
 			default:
 			}
+		case "reidentify":
+			a.reidentify(c.Key)
+		case "copyRefused":
+			a.refuseCopy(c.Key)
 		case "uninstall":
 			if !defs.VerifyUninstallOrder(c.Key, a.publisherKey, a.cfg.ServerID, a.cfg.StateDir()) {
 				log.Print("uninstall order rejected: signature or uuid mismatch")

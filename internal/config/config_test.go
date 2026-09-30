@@ -137,6 +137,42 @@ func TestSealedIdentityIsSetAside(t *testing.T) {
 	}
 }
 
+func TestIdentityChangedMarker(t *testing.T) {
+	dir := t.TempDir()
+	if _, ok := TakeIdentityChanged(dir); ok {
+		t.Fatal("no marker must read as absent")
+	}
+	if err := MarkIdentityChanged(dir, "uuid-original"); err != nil {
+		t.Fatal(err)
+	}
+	prev, ok := TakeIdentityChanged(dir)
+	if !ok || prev != "uuid-original" {
+		t.Fatalf("marker: ok=%v prev=%q", ok, prev)
+	}
+	if _, ok := TakeIdentityChanged(dir); ok {
+		t.Fatal("the marker must be consumed once")
+	}
+}
+
+func TestCopyRefusalRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	if _, ok := LoadCopyRefusal(dir); ok {
+		t.Fatal("no refusal must read as absent")
+	}
+	want := CopyRefusal{Of: "uuid-original", Reason: "plan limit = 3 hosts reached", At: 1700000000}
+	if err := SaveCopyRefusal(dir, want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := LoadCopyRefusal(dir)
+	if !ok || got != want {
+		t.Fatalf("refusal: ok=%v got=%+v", ok, got)
+	}
+	ClearCopyRefusal(dir)
+	if _, ok := LoadCopyRefusal(dir); ok {
+		t.Fatal("refusal must be gone after clear")
+	}
+}
+
 func TestSaveKeyKeepsUUID(t *testing.T) {
 	dir := t.TempDir()
 	if err := SaveIdentity(dir, "uuid-1", "k1"); err != nil {

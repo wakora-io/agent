@@ -81,7 +81,13 @@ type Heartbeat struct {
 	Hostname  string `json:"hostname,omitempty"`
 	Version   string `json:"version,omitempty"`
 	Pin       string `json:"pin,omitempty"`
+	Instance  string `json:"instance,omitempty"`
 	Timestamp int64  `json:"ts"`
+}
+
+type Reidentity struct {
+	ServerID string `json:"serverId"`
+	Key      string `json:"key"`
 }
 
 type Span struct {

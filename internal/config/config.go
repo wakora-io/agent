@@ -122,11 +122,19 @@ func loadIdentity(dir string) (identity, error) {
 }
 
 func SetAsideIdentity(dir string) (string, error) {
+	return setAsideIdentity(dir, "undecryptable")
+}
+
+func SetAsideCopiedIdentity(dir string) (string, error) {
+	return setAsideIdentity(dir, "copy")
+}
+
+func setAsideIdentity(dir, tag string) (string, error) {
 	if dir == "" {
 		dir = defaultDir
 	}
 	path := filepath.Join(dir, "identity")
-	dst := path + ".undecryptable-" + time.Now().UTC().Format("20060102-150405")
+	dst := path + "." + tag + "-" + time.Now().UTC().Format("20060102-150405")
 	return dst, os.Rename(path, dst)
 }
 
@@ -194,6 +202,58 @@ func LoadPendingKey(dir string) string {
 
 func ClearPendingKey(dir string) {
 	_ = os.Remove(PendingKeyPath(dir))
+}
+
+func dirOrDefault(dir string) string {
+	if dir == "" {
+		return defaultDir
+	}
+	return dir
+}
+
+func MarkIdentityChanged(dir, prevID string) error {
+	return writeINI(filepath.Join(dirOrDefault(dir), "identity-changed"), map[string]map[string]string{"": {"previous": prevID}})
+}
+
+func TakeIdentityChanged(dir string) (string, bool) {
+	path := filepath.Join(dirOrDefault(dir), "identity-changed")
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	prev := parseINI(f)[""]["previous"]
+	f.Close()
+	_ = os.Remove(path)
+	return prev, true
+}
+
+type CopyRefusal struct {
+	Of     string
+	Reason string
+	At     int64
+}
+
+func SaveCopyRefusal(dir string, r CopyRefusal) error {
+	return writeINI(filepath.Join(dirOrDefault(dir), "copy-refused"), map[string]map[string]string{"": {
+		"of":     r.Of,
+		"reason": r.Reason,
+		"at":     strconv.FormatInt(r.At, 10),
+	}})
+}
+
+func LoadCopyRefusal(dir string) (CopyRefusal, bool) {
+	f, err := os.Open(filepath.Join(dirOrDefault(dir), "copy-refused"))
+	if err != nil {
+		return CopyRefusal{}, false
+	}
+	defer f.Close()
+	kv := parseINI(f)[""]
+	at, _ := strconv.ParseInt(kv["at"], 10, 64)
+	return CopyRefusal{Of: kv["of"], Reason: kv["reason"], At: at}, true
+}
+
+func ClearCopyRefusal(dir string) {
+	_ = os.Remove(filepath.Join(dirOrDefault(dir), "copy-refused"))
 }
 
 func WriteOverride(dir, service, key, value string) error {
