@@ -1,6 +1,8 @@
 package doctor
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +72,36 @@ func TestIdentityNotRegistered(t *testing.T) {
 	c := checkIdentity(in)
 	if c.State != Warn || !strings.Contains(c.Detail, "not registered") {
 		t.Fatalf("empty dir must read not-registered, got %v %q", c.State, c.Detail)
+	}
+}
+
+func TestIdentityCopyRefused(t *testing.T) {
+	in := Input{ConfigDir: t.TempDir(), RefusedOf: "uuid-original-0001", RefusedReason: "no free host slot on the plan"}
+	c := checkIdentity(in)
+	if c.State != Fail || !strings.Contains(c.Detail, "copy of server uuid-ori") || !strings.Contains(c.Detail, "no free host slot") {
+		t.Fatalf("copy refusal must be named, got %v %q", c.State, c.Detail)
+	}
+}
+
+func TestSecretsCheck(t *testing.T) {
+	c := checkSecrets(Input{SecretsStored: 3})
+	if c.State != Ok || !strings.Contains(c.Detail, "3 stored") {
+		t.Fatalf("readable secrets: %v %q", c.State, c.Detail)
+	}
+	c = checkSecrets(Input{SecretsStored: 3, SecretsSealed: []string{"mysql", "snmp-core"}})
+	if c.State != Warn || !strings.Contains(c.Detail, "2 of 3") || !strings.Contains(c.Detail, "mysql, snmp-core") {
+		t.Fatalf("sealed secrets: %v %q", c.State, c.Detail)
+	}
+}
+
+func TestAuthRetiredKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "status.json"), []byte(`{"lastError":"retired-key","writtenAt":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	auth, flow := checkAuthFlow(Input{StateDir: dir}, Check{State: Ok})
+	if auth.State != Fail || !strings.Contains(auth.Detail, "snapshot") || flow.State != Skip {
+		t.Fatalf("retired key: %v %q / %v", auth.State, auth.Detail, flow.State)
 	}
 }
 

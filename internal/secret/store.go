@@ -98,6 +98,24 @@ func Sealed(name string) bool {
 	return false
 }
 
+func SealedNames(dir string) (int, []string) {
+	all, err := loadRaw(dir)
+	if err != nil {
+		return 0, nil
+	}
+	var sealed []string
+	for name, fields := range all {
+		for _, k := range []string{"user", "pass"} {
+			if _, err := Decrypt(fields[k]); err != nil {
+				sealed = append(sealed, name)
+				break
+			}
+		}
+	}
+	sort.Strings(sealed)
+	return len(all), sealed
+}
+
 func MissingOr(name, text string) string {
 	if Sealed(name) {
 		return "secret " + name + " was sealed on another machine and cannot be read here - set it again: wakora secret set " + name

@@ -33,6 +33,8 @@ func (a *Agent) RecordDialError(err error) {
 	switch {
 	case errors.Is(err, transport.ErrDeregistered):
 		a.lastError.Store("deregistered")
+	case errors.Is(err, transport.ErrKeyRetired):
+		a.lastError.Store("retired-key")
 	case errors.Is(err, transport.ErrUnauthorized):
 		a.lastError.Store("unauthorized")
 	case err != nil:

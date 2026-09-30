@@ -26,6 +26,8 @@ var ErrDeregistered = errors.New("transport: deregistered")
 
 var ErrUnauthorized = errors.New("transport: unauthorized")
 
+var ErrKeyRetired = errors.New("transport: key already replaced")
+
 type Client struct {
 	Endpoint    string
 	Dialer      Dialer

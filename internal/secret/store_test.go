@@ -77,6 +77,10 @@ func TestSealedCredIsNamed(t *testing.T) {
 	if got := MissingOr("copied", "fallback"); !strings.Contains(got, "sealed on another machine") || !strings.Contains(got, "wakora secret set copied") {
 		t.Fatalf("sealed secret text: %q", got)
 	}
+	total, sealed := SealedNames(dir)
+	if total != 2 || len(sealed) != 1 || sealed[0] != "copied" {
+		t.Fatalf("sealed names: total=%d sealed=%v", total, sealed)
+	}
 }
 
 func TestMissingCred(t *testing.T) {

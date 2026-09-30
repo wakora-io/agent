@@ -82,6 +82,9 @@ func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
 			return nil, ErrDeregistered
 		}
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			if resp.Header.Get("X-Wakora-Reason") == "retired-key" {
+				return nil, ErrKeyRetired
+			}
 			return nil, ErrUnauthorized
 		}
 		return nil, err

@@ -61,6 +61,11 @@ type Input struct {
 	Key         string
 	IdentityErr error
 	HTTP        *http.Client
+
+	RefusedOf     string
+	RefusedReason string
+	SecretsStored int
+	SecretsSealed []string
 }
 
 type status struct {
@@ -80,6 +85,9 @@ func Run(in Input) []Check {
 
 	id := checkIdentity(in)
 	out = append(out, id)
+	if in.SecretsStored > 0 {
+		out = append(out, checkSecrets(in))
+	}
 
 	host, port := hostPort(in.Endpoint)
 	dns := checkDNS(host)
@@ -194,12 +202,15 @@ func checkDisk(in Input) Check {
 
 func checkIdentity(in Input) Check {
 	idPath := filepath.Join(in.ConfigDir, "identity")
-	fi, err := os.Stat(idPath)
-	if err != nil {
+	if _, err := os.Stat(idPath); err != nil {
+		if in.RefusedOf != "" {
+			return Check{Name: "identity", State: Fail,
+				Detail: "this host is a copy of server " + shortID(in.RefusedOf) + "... and was not registered as a new host: " + in.RefusedReason,
+				Next:   "resolve the reason above, then register this host: wakora --key <TEAMKEY> - the copied identity was moved aside, not deleted"}
+		}
 		return Check{Name: "identity", State: Warn, Detail: "not registered",
 			Next: "register this host: wakora --key <TEAMKEY>"}
 	}
-	_ = fi
 	if f, err := os.Open(idPath); err != nil {
 		return Check{Name: "identity", State: Warn, Detail: "present but this user cannot read it",
 			Next: "run as root: sudo wakora doctor"}
@@ -207,18 +218,30 @@ func checkIdentity(in Input) Check {
 		f.Close()
 	}
 	if in.IdentityErr != nil {
-		return Check{Name: "identity", State: Fail, Detail: "sealed to this machine and no longer decryptable",
-			Next: "the hardware or the root seed changed - re-register: wakora --key <TEAMKEY>"}
+		return Check{Name: "identity", State: Fail, Detail: "sealed on another machine and not decryptable here (a copied disk or image, or the machine id changed)",
+			Next: "register this host as a new server: wakora --key <TEAMKEY> - the old identity file is moved aside, not deleted"}
 	}
 	if in.ServerID == "" {
 		return Check{Name: "identity", State: Warn, Detail: "not registered",
 			Next: "register this host: wakora --key <TEAMKEY>"}
 	}
-	short := in.ServerID
-	if len(short) > 8 {
-		short = short[:8]
+	return Check{Name: "identity", State: Ok, Detail: "uuid " + shortID(in.ServerID) + "..., registered"}
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
 	}
-	return Check{Name: "identity", State: Ok, Detail: "uuid " + short + "..., registered"}
+	return id
+}
+
+func checkSecrets(in Input) Check {
+	if len(in.SecretsSealed) == 0 {
+		return Check{Name: "secrets", State: Ok, Detail: fmt.Sprintf("%d stored, all readable here", in.SecretsStored)}
+	}
+	return Check{Name: "secrets", State: Warn,
+		Detail: fmt.Sprintf("%d of %d sealed on another machine: %s", len(in.SecretsSealed), in.SecretsStored, strings.Join(in.SecretsSealed, ", ")),
+		Next:   "set each of them again on this host: wakora secret set <name>"}
 }
 
 func checkDNS(host string) Check {
@@ -330,6 +353,10 @@ func checkAuthFlow(in Input, id Check) (Check, Check) {
 		return Check{Name: "auth", State: Warn, Detail: "this host was removed from the console (410) - the agent is idle",
 				Next: "re-enroll with wakora --key <TEAMKEY>, or run wakora uninstall to clean up"},
 			skip("data flow", "host removed from the console")
+	case "retired-key":
+		return Check{Name: "auth", State: Fail, Detail: "the key this host holds was already replaced - it was restored from a snapshot or backup older than its last key rotation",
+				Next: "register again: wakora --key <TEAMKEY> (the host keeps its uuid and history), then restart: wakora service restart"},
+			skip("data flow", "not authenticated")
 	case "unauthorized":
 		return Check{Name: "auth", State: Fail, Detail: "the gateway rejected the per-server key (401)",
 				Next: "the key was revoked or rotated out - re-register: wakora --key <TEAMKEY>"},

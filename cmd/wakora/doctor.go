@@ -7,6 +7,7 @@ import (
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
 	"wakora.io/agent/internal/doctor"
+	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
 )
 
@@ -32,6 +33,10 @@ func runDoctor(configDir string, args []string) {
 		IdentityErr: idErr,
 		HTTP:        transport.PinnedClient(pin),
 	}
+	if r, ok := config.LoadCopyRefusal(configDir); ok {
+		in.RefusedOf, in.RefusedReason = r.Of, r.Reason
+	}
+	in.SecretsStored, in.SecretsSealed = secret.SealedNames(cfg.Dir())
 
 	checks := doctor.Run(in)
 	fmt.Println("Wakora agent " + buildinfo.Version)
