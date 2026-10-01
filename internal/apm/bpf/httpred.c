@@ -88,16 +88,28 @@ static __always_inline __u16 sockDport(struct sock *sk)
 
 static __always_inline __u64 iterBase(struct msghdr *msg)
 {
-	__u8 t = BPF_CORE_READ(msg, msg_iter.iter_type);
-	if (t == 0)
-		return (__u64)BPF_CORE_READ(msg, msg_iter.__ubuf_iovec.iov_base);
-	if (t == 1) {
-		const struct iovec *iov = BPF_CORE_READ(msg, msg_iter.__iov);
-		if (!iov)
-			return 0;
-		return (__u64)BPF_CORE_READ(iov, iov_base);
+	unsigned int t;
+	if (bpf_core_field_exists(msg->msg_iter.iter_type))
+		t = BPF_CORE_READ(msg, msg_iter.iter_type);
+	else
+		t = BPF_CORE_READ(msg, msg_iter.type) & ~1u;
+	if (bpf_core_enum_value_exists(enum iter_type, ITER_UBUF) &&
+	    t == bpf_core_enum_value(enum iter_type, ITER_UBUF)) {
+		if (bpf_core_field_exists(msg->msg_iter.__ubuf_iovec))
+			return (__u64)BPF_CORE_READ(msg, msg_iter.__ubuf_iovec.iov_base);
+		return (__u64)BPF_CORE_READ(msg, msg_iter.ubuf);
 	}
-	return 0;
+	if (!bpf_core_enum_value_exists(enum iter_type, ITER_IOVEC) ||
+	    t != bpf_core_enum_value(enum iter_type, ITER_IOVEC))
+		return 0;
+	const struct iovec *iov;
+	if (bpf_core_field_exists(msg->msg_iter.__iov))
+		iov = BPF_CORE_READ(msg, msg_iter.__iov);
+	else
+		iov = BPF_CORE_READ(msg, msg_iter.iov);
+	if (!iov)
+		return 0;
+	return (__u64)BPF_CORE_READ(iov, iov_base);
 }
 
 static __always_inline int isRequestStart(const char *b)

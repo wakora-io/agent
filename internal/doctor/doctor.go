@@ -342,7 +342,7 @@ func checkAuthFlow(in Input, id Check) (Check, Check) {
 	st, ok := readStatus(in.StateDir)
 	if !ok {
 		return Check{Name: "auth", State: Info, Detail: "not reported by the running agent",
-				Next: "the agent is not running or predates status reporting - the console shows this host's last-seen; start it: wakora service start"},
+				Next: "the agent is not running or predates status reporting - the console shows this host's last-seen; start it: " + serviceCmd("start")},
 			skip("data flow", "no status from the agent")
 	}
 	if st.ConnectedNow {
@@ -355,7 +355,7 @@ func checkAuthFlow(in Input, id Check) (Check, Check) {
 			skip("data flow", "host removed from the console")
 	case "retired-key":
 		return Check{Name: "auth", State: Fail, Detail: "the key this host holds was already replaced - it was restored from a snapshot or backup older than its last key rotation",
-				Next: "register again: wakora --key <TEAMKEY> (the host keeps its uuid and history), then restart: wakora service restart"},
+				Next: "register again: wakora --key <TEAMKEY> (the host keeps its uuid and history), then restart: " + serviceCmd("restart")},
 			skip("data flow", "not authenticated")
 	case "unauthorized":
 		return Check{Name: "auth", State: Fail, Detail: "the gateway rejected the per-server key (401)",
@@ -363,11 +363,11 @@ func checkAuthFlow(in Input, id Check) (Check, Check) {
 			skip("data flow", "not authenticated")
 	case "":
 		return Check{Name: "auth", State: Warn, Detail: "the agent is not connected right now",
-				Next: "start it: wakora service start (the network checks above show the path is fine)"},
+				Next: "start it: " + serviceCmd("start") + " (the network checks above show the path is fine)"},
 			flowFromStatus(st)
 	default:
 		return Check{Name: "auth", State: Warn, Detail: "last connection error: " + st.LastError,
-				Next: "see the network checks above; start the service: wakora service start"},
+				Next: "see the network checks above; start the service: " + serviceCmd("start")},
 			skip("data flow", "not connected")
 	}
 }

@@ -81,7 +81,7 @@ func TestCopyReasonIsBoundedAndNeverEmpty(t *testing.T) {
 	if copyReason("  ") == "" {
 		t.Fatal("empty reason must fall back to a default")
 	}
-	long := copyReason(strings.Repeat("ā", copyReasonMax+50))
+	long := copyReason(strings.Repeat("\u0101", copyReasonMax+50))
 	if n := len([]rune(long)); n != copyReasonMax {
 		t.Fatalf("reason length %d", n)
 	}

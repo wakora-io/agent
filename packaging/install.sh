@@ -58,9 +58,6 @@ if ! command -v openssl >/dev/null 2>&1; then
   echo "openssl required to verify the signed binary but not found; aborting" >&2
   rm -f "$TMP"; exit 1
 fi
-# ed25519 needs pkeyutl -rawin (openssl >= 3); older systems (Ubuntu 20.04,
-# Debian 10: openssl 1.1.1) verify the ECDSA co-signature instead - same
-# binary, second key, still fail-closed everywhere
 if openssl pkeyutl -help 2>&1 | grep -q rawin; then
   if ! curl -fsSL "$BASE/bin/$ASSET.sig" -o "$TMP.sig" 2>/dev/null || [ ! -s "$TMP.sig" ]; then
     echo "binary signature missing from channel; aborting" >&2
@@ -145,9 +142,6 @@ fi
 
 echo "Done! Host will appear in the console within ~1 minute"
 
-# self-diagnostics: a green checklist beats silence as a first impression. this
-# is display-only - a transient "data flow: connecting" right after install must
-# never fail the installer, so the doctor's exit code is ignored
 sleep 2
 echo
 /usr/local/bin/wakora doctor || true

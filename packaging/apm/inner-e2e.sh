@@ -48,8 +48,6 @@ sleep 2
 body=$(php -r 'echo file_get_contents("http://127.0.0.1:8083/x.php");')
 [ "$body" = "ok" ] || { echo "root-span app request failed: $body"; exit 1; }
 sleep 3
-# the generic request root is a SERVER span named "GET /x.php" - a non-WP app
-# must not export client-only traces (protobuf body carries the span name raw)
 grep -q 'GET /x.php' /tmp/otlp-body.bin || { echo "generic root span missing from the export"; exit 1; }
 echo "e2e ok: non-WP request exports a generic server root span"
 

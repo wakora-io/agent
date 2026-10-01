@@ -189,15 +189,12 @@ func TestWindowHoldsThroughQuietMinutes(t *testing.T) {
 	if v != 6 {
 		t.Fatalf("six restarts in the window, got %v", v)
 	}
-	// the quiet minute after a burst must NOT read zero - that is exactly what
-	// made a per-minute rate useless for a crash loop
 	o = Outcome{Metrics: []protocol.MetricPoint{{Name: "svc.docker.group.restarts", Value: 16}}}
 	applyRates(&o, "docker", p, t0.Add(2*time.Minute))
 	v, _ = rateOf(o, "svc.docker.group.restarts_1h")
 	if v != 6 {
 		t.Fatalf("a quiet minute must keep the window count, got %v", v)
 	}
-	// once the burst ages out of the window the count falls back to zero
 	o = Outcome{Metrics: []protocol.MetricPoint{{Name: "svc.docker.group.restarts", Value: 16}}}
 	applyRates(&o, "docker", p, t0.Add(90*time.Minute))
 	v, _ = rateOf(o, "svc.docker.group.restarts_1h")

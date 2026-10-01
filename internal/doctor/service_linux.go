@@ -37,14 +37,14 @@ func checkService() Check {
 		}
 		if active != "" {
 			return Check{Name: "service", State: Warn, Detail: "systemd unit " + active + " (" + kv["SubState"] + ")",
-				Next: "start it: systemctl start wakora-agent (or wakora service start)"}
+				Next: "start it: systemctl start wakora-agent"}
 		}
 	}
 	if running, _ := processRunning(); running {
 		return Check{Name: "service", State: Ok, Detail: "running (process alive; not a systemd unit)"}
 	}
 	return Check{Name: "service", State: Warn, Detail: "not running as a managed service",
-		Next: "install and start: wakora service install"}
+		Next: "start it: " + serviceCmd("start") + ", or install the service: curl -fsSL https://get.wakora.io | bash -s -- --key <TEAMKEY>"}
 }
 
 func monotonicUptime(mono string) string {

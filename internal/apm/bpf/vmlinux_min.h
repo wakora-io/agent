@@ -88,10 +88,18 @@ struct iovec {
 	__u64 iov_len;
 } __attribute__((preserve_access_index));
 
+enum iter_type {
+	ITER_UBUF = 0,
+	ITER_IOVEC = 1,
+};
+
 struct iov_iter {
 	__u8 iter_type;
+	unsigned int type;
 	struct iovec __ubuf_iovec;
+	void *ubuf;
 	const struct iovec *__iov;
+	const struct iovec *iov;
 } __attribute__((preserve_access_index));
 
 struct msghdr {
