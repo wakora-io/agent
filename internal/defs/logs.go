@@ -381,6 +381,8 @@ var embeddedLevelRes = []struct {
 	{regexp.MustCompile(`open\(\) "[^"]*" failed \(2: No such file or directory\)`), "notice"},
 	{regexp.MustCompile(`access forbidden by rule`), "notice"},
 	{regexp.MustCompile(`kex_exchange_identification: `), "notice"},
+	{regexp.MustCompile(`PAM service\(sshd\) ignoring max retries`), "notice"},
+	{regexp.MustCompile(`maximum authentication attempts exceeded for `), "notice"},
 	{regexp.MustCompile(`directory index of .* is forbidden`), "notice"},
 	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?notice\b`), "notice"},
 	{regexp.MustCompile(`\[NOTICE\]`), "notice"},

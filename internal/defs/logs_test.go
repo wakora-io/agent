@@ -59,6 +59,10 @@ func TestDowngradeTransportError(t *testing.T) {
 		{"open() \"/usr/share/nginx/html/favicon.ico\" failed (2: No such file or directory), client: 203.0.113.30, server: example.com, request: \"GET /favicon.ico HTTP/1.1\"", "notice"},
 		{"open() \"/www/example.com/www/public404\" failed (2: No such file or directory), client: 203.0.113.31, server: example.com", "notice"},
 		{"open() \"/www/example.com/www/index.html\" failed (13: Permission denied), client: 203.0.113.32, server: example.com", "error"},
+		{"PAM service(sshd) ignoring max retries; 6 > 3", "notice"},
+		{"error: maximum authentication attempts exceeded for invalid user test from 203.0.113.40 port 51122 ssh2 [preauth]", "notice"},
+		{"error: maximum authentication attempts exceeded for root from 203.0.113.41 port 40110 ssh2 [preauth]", "notice"},
+		{"fatal: chroot(\"/run/sshd\"): No such file or directory [preauth]", "error"},
 		{"plain broken pipe", "error"},
 	}
 	for _, c := range cases {
