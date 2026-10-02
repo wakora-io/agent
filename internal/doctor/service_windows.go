@@ -14,7 +14,7 @@ func checkService() Check {
 		return Check{Name: "service", State: Warn, Detail: "cannot query the service manager", Next: "run as Administrator"}
 	}
 	defer m.Disconnect()
-	s, err := m.OpenService("wakora-agent")
+	s, err := m.OpenService("wakora")
 	if err != nil {
 		return Check{Name: "service", State: Warn, Detail: "service not installed",
 			Next: "install and start: wakora service install"}

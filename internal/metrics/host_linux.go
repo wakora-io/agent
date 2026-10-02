@@ -34,8 +34,12 @@ func memPoints() []Point {
 	if err != nil {
 		return nil
 	}
+	return memPointsFrom(string(b))
+}
+
+func memPointsFrom(meminfo string) []Point {
 	vals := map[string]float64{}
-	for _, line := range strings.Split(string(b), "\n") {
+	for _, line := range strings.Split(meminfo, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 2 {
 			continue
@@ -44,14 +48,26 @@ func memPoints() []Point {
 			vals[strings.TrimSuffix(f[0], ":")] = v
 		}
 	}
-	total := vals["MemTotal"]
-	avail := vals["MemAvailable"]
-	pts := []Point{
-		{Name: "host.mem.total_kb", Value: total},
-		{Name: "host.mem.available_kb", Value: avail},
+	var pts []Point
+	total, hasTotal := vals["MemTotal"]
+	if hasTotal {
+		pts = append(pts, Point{Name: "host.mem.total_kb", Value: total})
 	}
-	if total > 0 {
-		pts = append(pts, Point{Name: "host.mem.used_pct", Value: (total - avail) / total * 100})
+	avail, hasAvail := vals["MemAvailable"]
+	if !hasAvail {
+		if free, ok := vals["MemFree"]; ok {
+			avail = free + vals["Buffers"] + vals["Cached"] + vals["SReclaimable"]
+			hasAvail = true
+		}
+	}
+	if hasAvail {
+		if hasTotal && avail > total {
+			avail = total
+		}
+		pts = append(pts, Point{Name: "host.mem.available_kb", Value: avail})
+		if total > 0 {
+			pts = append(pts, Point{Name: "host.mem.used_pct", Value: (total - avail) / total * 100})
+		}
 	}
 	if st := vals["SwapTotal"]; st > 0 {
 		pts = append(pts, Point{Name: "host.swap.used_pct", Value: (st - vals["SwapFree"]) / st * 100})

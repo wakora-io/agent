@@ -120,13 +120,19 @@ type LogTailer struct {
 	floodNotes  []FloodNote
 	dirF        map[string]dirTarget
 	fds         *fdCache
+	fcgiPrev    map[string]fcgiSeen
+}
+
+type fcgiSeen struct {
+	level string
+	ts    int64
 }
 
 func NewLogTailer(key string) *LogTailer {
 	return &LogTailer{key: key, offsets: map[string]int64{}, seenF: map[string]bool{}, utf16F: map[string]bool{}, res: map[string]*regexp.Regexp{},
 		ctrSince: map[string]int64{}, winSince: map[string]int64{}, podSince: map[string]string{}, futSeen: map[uint64]bool{},
 		floodStreak: map[string]int{}, floodNext: map[string]time.Time{}, floodTold: map[string]time.Time{},
-		dirF: map[string]dirTarget{}, fds: newFdCache()}
+		dirF: map[string]dirTarget{}, fds: newFdCache(), fcgiPrev: map[string]fcgiSeen{}}
 }
 
 func (l *LogTailer) CloseFDs() {
@@ -304,11 +310,13 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 				}
 			}
 			level = downgradeTransportError(level, raw)
+			ts := parseLineTs(raw, now)
+			level = l.fcgiChunkLevel(path, raw, level, ts)
 			if logLevelRank[level] > minRank {
 				continue
 			}
 			out = append(out, protocol.LogLine{
-				Ts: parseLineTs(raw, now), Service: svc, Level: level, Message: l.scrub(raw),
+				Ts: ts, Service: svc, Level: level, Message: l.scrub(raw),
 			})
 		}
 	}
@@ -378,6 +386,47 @@ var embeddedLevelRes = []struct {
 	{regexp.MustCompile(`(?i)\blevel[=:]\s*"?(?:info|debug|trace)\b`), "info"},
 	{regexp.MustCompile(`(?i)"(?:level|severity|loglevel)"\s*:\s*"(?:info|debug|trace)"`), "info"},
 	{regexp.MustCompile(`\[(?:INFO|DEBUG)\]`), "info"},
+}
+
+var fcgiStderrRe = regexp.MustCompile(`\] (\d+#\d+: \*\d+) FastCGI sent in stderr: "(PHP message:)?`)
+
+const (
+	fcgiChunkWindow = 5
+	fcgiPrevCap     = 2048
+)
+
+func hasEmbeddedLevel(msg string) bool {
+	for _, m := range embeddedLevelRes {
+		if m.re.MatchString(msg) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *LogTailer) fcgiChunkLevel(path, raw, level string, ts int64) string {
+	m := fcgiStderrRe.FindStringSubmatch(raw)
+	if m == nil {
+		return level
+	}
+	key := path + "|" + m[1]
+	if m[2] == "" && level == "error" && !hasEmbeddedLevel(raw) {
+		if prev, ok := l.fcgiPrev[key]; ok && ts >= prev.ts && ts-prev.ts <= fcgiChunkWindow {
+			level = prev.level
+		}
+	}
+	if len(l.fcgiPrev) >= fcgiPrevCap {
+		for k, v := range l.fcgiPrev {
+			if ts-v.ts > fcgiChunkWindow {
+				delete(l.fcgiPrev, k)
+			}
+		}
+		if len(l.fcgiPrev) >= fcgiPrevCap {
+			l.fcgiPrev = map[string]fcgiSeen{}
+		}
+	}
+	l.fcgiPrev[key] = fcgiSeen{level: level, ts: ts}
+	return level
 }
 
 var kernelBookkeepingRe = regexp.MustCompile(`(?:kauditd_printk_skb|net_ratelimit|printk): \d+ callbacks suppressed`)
