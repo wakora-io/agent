@@ -210,6 +210,7 @@ func main() {
 	}
 	defs.Provision = apm.NewProvisioner(relURL, httpc, pubKey, cfg.StateDir())
 	a := agent.New(cfg, buffer.New(cfg.RingPath(), 64<<20, *spoolAge), pubKey)
+	a.SetSpanSpool(buffer.New(cfg.SpanRingPath(), 16<<20, *spoolAge))
 	a.SetRestart(exitForRestart)
 
 	if *test {
@@ -476,7 +477,7 @@ func forgetServerState(cfg *config.Config, prevID, newID string) {
 	if prevID == newID {
 		return
 	}
-	for _, p := range []string{cfg.RingPath(), defs.TenantPinPath(cfg.StateDir())} {
+	for _, p := range []string{cfg.RingPath(), cfg.SpanRingPath(), defs.TenantPinPath(cfg.StateDir())} {
 		if err := os.Remove(p); err == nil {
 			log.Printf("new server uuid %s - removed %s left by the previous identity", newID, p)
 		}

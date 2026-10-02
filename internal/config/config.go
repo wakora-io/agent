@@ -87,6 +87,10 @@ func (c *Config) RingPath() string {
 	return filepath.Join(c.stateDir, "buffer.jsonl")
 }
 
+func (c *Config) SpanRingPath() string {
+	return filepath.Join(c.stateDir, "spans.jsonl")
+}
+
 func (c *Config) Dir() string {
 	return c.dir
 }

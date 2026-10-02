@@ -155,18 +155,21 @@ func (a *Agent) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	select {
 	case a.spans <- spans:
-		if proto {
-			w.Header().Set("Content-Type", "application/x-protobuf")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(otlpProtoResponse())
+	default:
+		if !a.spoolSpans(spans) {
+			http.Error(w, "agent busy or offline, retry later", http.StatusTooManyRequests)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{}"))
-	default:
-		http.Error(w, "agent busy or offline, retry later", http.StatusTooManyRequests)
 	}
+	if proto {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(otlpProtoResponse())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("{}"))
 }
 
 func (a *Agent) handleOTLPMetrics(w http.ResponseWriter, r *http.Request) {

@@ -139,9 +139,10 @@ func (g *fakeGateway) snapshot() (hb int, conns int, points map[string]float64, 
 }
 
 func TestAgentCycleE2E(t *testing.T) {
-	oldTick := probeTick
+	oldTick, oldSpread := probeTick, probeStartSpread
 	probeTick = 300 * time.Millisecond
-	defer func() { probeTick = oldTick }()
+	probeStartSpread = 0
+	defer func() { probeTick, probeStartSpread = oldTick, oldSpread }()
 
 	dir := t.TempDir()
 	artifact := filepath.Join(dir, "backup.tar")

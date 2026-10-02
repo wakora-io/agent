@@ -56,6 +56,9 @@ func TestDowngradeTransportError(t *testing.T) {
 		{"directory index of \"/www/example.com/www/\" is forbidden, client: 203.0.113.30, server: example.com", "notice"},
 		{"kex_exchange_identification: Connection closed by remote host", "notice"},
 		{"kex_exchange_identification: read: Connection reset by peer", "notice"},
+		{"open() \"/usr/share/nginx/html/favicon.ico\" failed (2: No such file or directory), client: 203.0.113.30, server: example.com, request: \"GET /favicon.ico HTTP/1.1\"", "notice"},
+		{"open() \"/www/example.com/www/public404\" failed (2: No such file or directory), client: 203.0.113.31, server: example.com", "notice"},
+		{"open() \"/www/example.com/www/index.html\" failed (13: Permission denied), client: 203.0.113.32, server: example.com", "error"},
 		{"plain broken pipe", "error"},
 	}
 	for _, c := range cases {

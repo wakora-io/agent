@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 type Agent struct {
 	cfg          *config.Config
 	ring         *buffer.Ring
+	spanRing     *buffer.Ring
 	publisherKey string
 	metrics      *metrics.Collector
 	detector     *anomaly.Detector
@@ -51,6 +53,7 @@ type Agent struct {
 	logDeep      map[string]bool
 	active       []protocol.Definition
 	lastRun      map[string]time.Time
+	probeSeen    map[string]bool
 	defSig       map[string]uint64
 	serviceFacts map[string]map[string]string
 	probeFacts   map[string][]protocol.Fact
@@ -117,9 +120,13 @@ var errPendingStalled = errors.New("pending buffer full: gateway not acknowledgi
 
 var probeTick = 15 * time.Second
 
+var probeStartSpread = 60 * time.Second
+
 func (a *Agent) SetUpdateKick(ch chan struct{}) { a.updateKick = ch }
 
 func (a *Agent) SetRestart(f func()) { a.restart = f }
+
+func (a *Agent) SetSpanSpool(r *buffer.Ring) { a.spanRing = r }
 
 type trackedConn struct {
 	inner transport.Conn
@@ -211,6 +218,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		metrics:           metrics.NewCollector(),
 		detector:          anomaly.New(),
 		lastRun:           map[string]time.Time{},
+		probeSeen:         map[string]bool{},
 		defSig:            map[string]uint64{},
 		serviceFacts:      map[string]map[string]string{},
 		probeFacts:        map[string][]protocol.Fact{},
@@ -344,6 +352,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			return err
 		}
 		a.drainSpool(conn)
+		a.drainSpans(conn)
 		if err := a.sendMetrics(conn); err != nil {
 			return err
 		}
@@ -432,6 +441,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					}
 				}
 			case <-pt.C:
+				a.drainSpans(conn)
 				if err := a.runDueProbes(conn); err != nil {
 					return err
 				}
@@ -823,20 +833,55 @@ type dueRun struct {
 	probes []protocol.Probe
 }
 
+func probeInterval(d protocol.Definition, p protocol.Probe) time.Duration {
+	if p.IntervalSec > 0 {
+		return time.Duration(p.IntervalSec) * time.Second
+	}
+	if d.IntervalSec > 0 {
+		return time.Duration(d.IntervalSec) * time.Second
+	}
+	return time.Minute
+}
+
+func probeKey(d protocol.Definition, p protocol.Probe) string {
+	return d.Service + "/" + p.Type + "/" + p.Name
+}
+
+func spreadFirstRuns(active []protocol.Definition, lastRun map[string]time.Time, seen map[string]bool, now time.Time, spread time.Duration, pick func(time.Duration) time.Duration) {
+	for _, d := range active {
+		for _, p := range d.Probes {
+			key := probeKey(d, p)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if _, ok := lastRun[key]; ok {
+				continue
+			}
+			interval := probeInterval(d, p)
+			window := spread
+			if interval < window {
+				window = interval
+			}
+			if window <= 0 {
+				continue
+			}
+			lastRun[key] = now.Add(pick(window) - interval)
+		}
+	}
+}
+
+func randomWithin(window time.Duration) time.Duration {
+	return time.Duration(rand.Int64N(int64(window)))
+}
+
 func selectDueProbes(active []protocol.Definition, lastRun map[string]time.Time, now time.Time) []dueRun {
 	var due []dueRun
 	for _, d := range active {
-		defInterval := time.Duration(d.IntervalSec) * time.Second
-		if defInterval <= 0 {
-			defInterval = time.Minute
-		}
 		var ready []protocol.Probe
 		for _, p := range d.Probes {
-			interval := defInterval
-			if p.IntervalSec > 0 {
-				interval = time.Duration(p.IntervalSec) * time.Second
-			}
-			key := d.Service + "/" + p.Type + "/" + p.Name
+			interval := probeInterval(d, p)
+			key := probeKey(d, p)
 			if now.Sub(lastRun[key]) >= interval {
 				lastRun[key] = now
 				ready = append(ready, p)
@@ -861,7 +906,9 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 		}
 	}
 	a.mu.Lock()
-	due := selectDueProbes(a.active, a.lastRun, time.Now())
+	now := time.Now()
+	spreadFirstRuns(a.active, a.lastRun, a.probeSeen, now, probeStartSpread, randomWithin)
+	due := selectDueProbes(a.active, a.lastRun, now)
 	a.mu.Unlock()
 
 	factsChanged := false
@@ -2514,7 +2561,37 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 }
 
 func (a *Agent) drainSpool(conn transport.Conn) {
-	_ = a.ring.Drain(func(line []byte) error {
+	a.drainRing(conn, a.ring)
+}
+
+func (a *Agent) drainSpans(conn transport.Conn) {
+	if a.spanRing == nil || a.spanRing.Size() == 0 {
+		return
+	}
+	a.drainRing(conn, a.spanRing)
+}
+
+func (a *Agent) spoolSpans(spans []protocol.Span) bool {
+	if a.spanRing == nil {
+		return false
+	}
+	msg, err := protocol.Encode(protocol.TypeSpans, 0, protocol.SpanBatch{
+		ServerID: a.cfg.ServerID,
+		Hostname: a.cfg.Hostname,
+		Spans:    spans,
+	})
+	if err != nil {
+		return false
+	}
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return false
+	}
+	return a.spanRing.Append(raw) == nil
+}
+
+func (a *Agent) drainRing(conn transport.Conn, ring *buffer.Ring) {
+	_ = ring.Drain(func(line []byte) error {
 		var m protocol.Message
 		if err := json.Unmarshal(line, &m); err != nil {
 			return nil
