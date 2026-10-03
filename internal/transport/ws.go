@@ -69,11 +69,17 @@ func PinnedClient(pin string) *http.Client {
 			return nil
 		},
 	}
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}
+	return &http.Client{Transport: &http.Transport{
+		TLSClientConfig:     cfg,
+		DialContext:         dialEach,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}}
 }
 
 func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
-	c, resp, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{
+	dctx, cancel := context.WithTimeout(ctx, wsHandshakeTimeout)
+	defer cancel()
+	c, resp, err := websocket.Dial(dctx, endpoint, &websocket.DialOptions{
 		HTTPClient: d.client,
 		HTTPHeader: http.Header{"X-Wakora-Key": {d.keyFn()}},
 	})

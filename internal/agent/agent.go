@@ -120,6 +120,8 @@ var errPendingStalled = errors.New("pending buffer full: gateway not acknowledgi
 
 var probeTick = 15 * time.Second
 
+var pingEvery = 10 * time.Second
+
 var probeStartSpread = 60 * time.Second
 
 func (a *Agent) SetUpdateKick(ch chan struct{}) { a.updateKick = ch }
@@ -364,29 +366,32 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		hbStop := make(chan struct{})
 		defer close(hbStop)
 		go func() {
-			t := time.NewTicker(heartbeatEvery)
-			defer t.Stop()
+			fail := func(err error) {
+				select {
+				case hbErr <- err:
+				default:
+				}
+			}
+			pt := time.NewTicker(pingEvery)
+			defer pt.Stop()
+			ht := time.NewTicker(heartbeatEvery)
+			defer ht.Stop()
 			for {
 				select {
 				case <-hbStop:
 					return
-				case <-t.C:
+				case <-pt.C:
 					pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 					err := conn.Ping(pctx)
 					cancel()
 					if err != nil {
 						log.Printf("link dead (ping failed): %v", err)
-						select {
-						case hbErr <- err:
-						default:
-						}
+						fail(err)
 						return
 					}
+				case <-ht.C:
 					if err := a.sendHeartbeat(conn); err != nil {
-						select {
-						case hbErr <- err:
-						default:
-						}
+						fail(err)
 						return
 					}
 				}
