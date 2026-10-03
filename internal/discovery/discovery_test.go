@@ -22,6 +22,7 @@ func TestContainerCgroup(t *testing.T) {
 		"0::/kubepods/burstable/pod1/abc",
 		"0::/lxc/1082/ns/init.scope",
 		"0::/lxc.payload.web1/init.scope",
+		"0::/machine.slice/systemd-nspawn@build.service/payload/system.slice/nginx.service",
 	}
 	for _, s := range inContainer {
 		if !containerCgroup(s) {

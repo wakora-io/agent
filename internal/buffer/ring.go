@@ -63,32 +63,56 @@ func (r *Ring) trim() error {
 	if !needSize && !needAge {
 		return nil
 	}
-	data, err := os.ReadFile(r.path)
+	var start int64
+	if needSize {
+		start = info.Size() - r.maxSize*9/10
+	}
+	return r.rewriteFrom(start, true)
+}
+
+func (r *Ring) rewriteFrom(start int64, dropStale bool) error {
+	src, err := os.Open(r.path)
 	if err != nil {
 		return err
 	}
-	if needSize && int64(len(data)) > r.maxSize {
-		data = data[int64(len(data))-r.maxSize:]
-		if i := bytes.IndexByte(data, '\n'); i >= 0 && i+1 < len(data) {
-			data = data[i+1:]
+	skipPartial := false
+	if start > 0 {
+		var prev [1]byte
+		if _, err := src.ReadAt(prev[:], start-1); err == nil && prev[0] != '\n' {
+			skipPartial = true
+		}
+		if _, err := src.Seek(start, io.SeekStart); err != nil {
+			src.Close()
+			return err
 		}
 	}
-	if r.maxAge > 0 {
-		var keep bytes.Buffer
-		keep.Grow(len(data))
-		for _, line := range bytes.Split(data, []byte("\n")) {
-			if len(line) == 0 {
-				continue
+	br := bufio.NewReaderSize(src, 64<<10)
+	defer src.Close()
+	return atomicfile.WriteFunc(r.path, 0o600, func(w io.Writer) error {
+		defer src.Close()
+		first := true
+		for {
+			rec, n, oversized, rerr := readRecord(br, maxDrainRecord)
+			if n > 0 && !(first && skipPartial) && !oversized {
+				line := bytes.TrimSuffix(rec, []byte("\n"))
+				if len(line) > 0 && !(dropStale && r.stale(line)) {
+					if _, err := w.Write(line); err != nil {
+						return err
+					}
+					if _, err := w.Write([]byte{'\n'}); err != nil {
+						return err
+					}
+				}
 			}
-			if r.stale(line) {
-				continue
+			first = false
+			if rerr == io.EOF {
+				return nil
 			}
-			keep.Write(line)
-			keep.WriteByte('\n')
+			if rerr != nil {
+				return rerr
+			}
 		}
-		data = keep.Bytes()
-	}
-	return atomicfile.Write(r.path, data, 0o600)
+	})
 }
 
 func (r *Ring) oldestStale() bool {
@@ -193,12 +217,15 @@ func (r *Ring) dropPrefix(offset int64) {
 	if offset <= 0 {
 		return
 	}
-	data, err := os.ReadFile(r.path)
-	if err != nil || offset >= int64(len(data)) {
-		if err == nil {
-			_ = os.Remove(r.path)
-		}
+	info, err := os.Stat(r.path)
+	if err != nil {
 		return
 	}
-	_ = atomicfile.Write(r.path, data[offset:], 0o600)
+	if offset >= info.Size() {
+		_ = os.Remove(r.path)
+		return
+	}
+	if err := r.rewriteFrom(offset, false); err != nil {
+		log.Printf("spool: cannot drop the replayed prefix: %v", err)
+	}
 }

@@ -157,6 +157,7 @@ func (e *Engine) readLoop() {
 			e.mu.Lock()
 			e.lastErr = err
 			e.mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 		if len(rec.RawSample) < 13 {

@@ -26,4 +26,8 @@ func TestProcIOBytes(t *testing.T) {
 	if n := procIOBytes(raw); n != 12288 {
 		t.Fatalf("io %d, want 12288", n)
 	}
+	raw = "read_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 6144\n"
+	if n := procIOBytes(raw); n != 6144 {
+		t.Fatalf("io %d, want 6144 with truncated writes subtracted", n)
+	}
 }

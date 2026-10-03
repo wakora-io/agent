@@ -125,8 +125,12 @@ func vmMemPoints(total uint64) []Point {
 	if pct > 100 {
 		pct = 100
 	}
+	var avail uint64
+	if usedBytes < total {
+		avail = total - usedBytes
+	}
 	return []Point{
 		{Name: "host.mem.used_pct", Value: pct},
-		{Name: "host.mem.available_kb", Value: float64(total-usedBytes) / 1024},
+		{Name: "host.mem.available_kb", Value: float64(avail) / 1024},
 	}
 }

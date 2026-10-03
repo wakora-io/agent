@@ -1,8 +1,11 @@
 package defs
 
 import (
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/go-sql-driver/mysql"
 
 	"wakora.io/agent/internal/protocol"
 	"wakora.io/agent/internal/secret"
@@ -60,6 +63,33 @@ func TestRemotePlaintextNeedsAnExplicitSignedException(t *testing.T) {
 	}
 	if !strings.Contains(dsn, "sslmode=disable") {
 		t.Fatalf("an explicit insecure definition must still be able to connect: %q", dsn)
+	}
+}
+
+func TestPasswordsWithDelimitersSurviveTheDSN(t *testing.T) {
+	cred := secret.Cred{User: "mon@itor", Pass: "p@ss:w/rd?x#1"}
+	dsn, _, err := buildDSN(protocol.Probe{Driver: "mysql", Address: "db.internal:3306"}, cred, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("mysql dsn does not parse: %v", err)
+	}
+	if cfg.User != cred.User || cfg.Passwd != cred.Pass || cfg.Addr != "db.internal:3306" {
+		t.Fatalf("mysql dsn lost the credential: user=%q pass=%q addr=%q", cfg.User, cfg.Passwd, cfg.Addr)
+	}
+	dsn, _, err = buildDSN(protocol.Probe{Driver: "postgres", Address: "[2001:db8::5]:5433"}, cred, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("postgres dsn does not parse: %v", err)
+	}
+	pass, _ := u.User.Password()
+	if u.User.Username() != cred.User || pass != cred.Pass || u.Hostname() != "2001:db8::5" || u.Port() != "5433" {
+		t.Fatalf("postgres dsn lost the credential or the address: %q", dsn)
 	}
 }
 

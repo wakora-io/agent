@@ -95,7 +95,7 @@ func (s *SyslogListener) Start() {
 			if err != nil {
 				return
 			}
-			s.ingest(from.IP.String(), string(buf[:n]))
+			s.safeIngest(from.IP.String(), string(buf[:n]))
 		}
 	}()
 }
@@ -106,10 +106,15 @@ func (s *SyslogListener) Close() {
 	}
 }
 
+func (s *SyslogListener) safeIngest(source, line string) {
+	defer recoverListener("syslog", s.port)
+	s.ingest(source, line)
+}
+
 func (s *SyslogListener) ingest(source, line string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.allow) > 0 && !s.allow[source] {
+	if !s.allow[source] {
 		s.dropped++
 		return
 	}

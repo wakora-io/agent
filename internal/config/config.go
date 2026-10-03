@@ -43,7 +43,7 @@ func Load(dir string) (*Config, error) {
 	if dir == "" {
 		dir = defaultDir
 	}
-	_ = winsec.ProtectDir(dir)
+	winsec.Protect(dir)
 	c := &Config{dir: dir, stateDir: defaultStateDir, Endpoint: buildinfo.Endpoint, Overrides: map[string]map[string]string{}}
 	if h, err := os.Hostname(); err == nil {
 		c.Hostname = h
@@ -149,7 +149,7 @@ func SaveIdentity(dir, serverID, key string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	_ = winsec.ProtectDir(dir)
+	winsec.Protect(dir)
 	enc, err := secret.Encrypt(key)
 	if err != nil {
 		return err
@@ -180,6 +180,7 @@ func SavePendingKey(dir, teamKey string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	winsec.Protect(dir)
 	enc, err := secret.Encrypt(teamKey)
 	if err != nil {
 		return err

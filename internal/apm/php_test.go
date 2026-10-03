@@ -1,6 +1,9 @@
 package apm
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const phpInfoSample = `phpinfo()
 PHP Version => 8.3.6
@@ -118,6 +121,15 @@ func TestOtelIniWithSDK(t *testing.T) {
 	}
 	if contains(ini, "otel.traces.exporter") {
 		t.Fatal("legacy keys must not appear in sdk mode")
+	}
+}
+
+func TestOtelIniValuesCannotAddDirectives(t *testing.T) {
+	ini := OtelIni("/opt/otel.so", "shop\nopen_basedir=/", "http://127.0.0.1:4318\r\ndisable_functions=", "/var/lib/wakora/apm/sdk", "")
+	for _, line := range strings.Split(ini, "\n") {
+		if strings.HasPrefix(line, "open_basedir") || strings.HasPrefix(line, "disable_functions") {
+			t.Fatalf("a value smuggled its own directive:\n%s", ini)
+		}
 	}
 }
 

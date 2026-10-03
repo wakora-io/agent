@@ -76,6 +76,7 @@ func (t *TrapListener) Start() {
 		tl.Params = gosnmp.Default
 	}
 	tl.OnNewTrap = func(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
+		defer recoverListener("trap", t.port)
 		t.ingest(addr.IP.String(), packet)
 	}
 	t.tl = tl
@@ -141,13 +142,16 @@ func (t *TrapListener) SetAllowed(ips []string) {
 }
 
 func (t *TrapListener) ingest(source string, packet *gosnmp.SnmpPacket) {
+	t.mu.Lock()
+	if !t.allow[source] {
+		t.dropped++
+		t.mu.Unlock()
+		return
+	}
+	t.mu.Unlock()
 	oid, vars := summarizeTrap(packet)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.allow[source] {
-		t.dropped++
-		return
-	}
 	t.total++
 	if len(t.events) >= trapEventCap {
 		t.events = t.events[1:]

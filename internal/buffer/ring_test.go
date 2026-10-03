@@ -43,6 +43,42 @@ func TestSpoolRewritesLeaveNoPartialFileBehind(t *testing.T) {
 	}
 }
 
+func TestTrimLeavesHeadroomAndWholeRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "buffer.jsonl")
+	r := New(path, 4096, 0)
+	rewrites := 0
+	prev := int64(0)
+	for i := 0; i < 400; i++ {
+		if err := r.Append([]byte(`{"n":` + strings.Repeat("7", 50) + `}`)); err != nil {
+			t.Fatal(err)
+		}
+		size := r.Size()
+		if size < prev {
+			rewrites++
+		}
+		prev = size
+	}
+	if rewrites > 120 {
+		t.Fatalf("spool rewrote %d times for 400 appends - the trim has no headroom", rewrites)
+	}
+	if r.Size() > 4096 {
+		t.Fatalf("spool %d bytes over its cap", r.Size())
+	}
+	var got int
+	if err := r.Drain(func(b []byte) error {
+		if !strings.HasPrefix(string(b), `{"n":`) || !strings.HasSuffix(string(b), "}") {
+			t.Fatalf("torn record after trim: %q", b)
+		}
+		got++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got == 0 {
+		t.Fatal("trim dropped every record")
+	}
+}
+
 func TestAppendDrain(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "buf.jsonl")
 	r := New(path, 1<<20, 0)

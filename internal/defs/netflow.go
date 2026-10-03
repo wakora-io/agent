@@ -121,7 +121,7 @@ func (f *FlowListener) Start() {
 			}
 			pkt := make([]byte, n)
 			copy(pkt, buf[:n])
-			f.Ingest(from.IP.String(), pkt)
+			f.safeIngest(from.IP.String(), pkt)
 		}
 	}()
 }
@@ -132,13 +132,18 @@ func (f *FlowListener) Close() {
 	}
 }
 
+func (f *FlowListener) safeIngest(source string, pkt []byte) {
+	defer recoverListener("netflow", f.port)
+	f.Ingest(source, pkt)
+}
+
 func (f *FlowListener) Ingest(source string, pkt []byte) {
 	if len(pkt) < 4 {
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.allow) > 0 && !f.allow[source] {
+	if !f.allow[source] {
 		f.dropped++
 		return
 	}

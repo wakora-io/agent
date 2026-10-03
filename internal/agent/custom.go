@@ -30,9 +30,11 @@ func (a *Agent) serveCustomMetrics(ctx context.Context, port int) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ingest", a.handleCustomIngest)
 	srv := &http.Server{
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
 	if err != nil {
@@ -99,13 +101,7 @@ func sanitizeCustom(m customMetric) (protocol.MetricPoint, bool) {
 			if n >= customMaxTags {
 				break
 			}
-			if len(k) > customMaxValueLen {
-				k = k[:customMaxValueLen]
-			}
-			if len(v) > customMaxValueLen {
-				v = v[:customMaxValueLen]
-			}
-			tags[k] = v
+			tags[clip(k, customMaxValueLen)] = clip(v, customMaxValueLen)
 			n++
 		}
 	}

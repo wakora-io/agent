@@ -141,7 +141,14 @@ func splitMinor(versionShort string) (major, minor int, ok bool) {
 	return major, minor, true
 }
 
+var iniLineBreaks = strings.NewReplacer("\r", "", "\n", "", "\x00", "")
+
 func OtelIni(soPath, serviceName, endpoint, sdkDir, artifactSha string) string {
+	soPath = iniLineBreaks.Replace(soPath)
+	serviceName = iniLineBreaks.Replace(serviceName)
+	endpoint = iniLineBreaks.Replace(endpoint)
+	sdkDir = iniLineBreaks.Replace(sdkDir)
+	artifactSha = iniLineBreaks.Replace(artifactSha)
 	var b strings.Builder
 	if artifactSha != "" {
 		fmt.Fprintf(&b, "; wakora-artifact-sha %s\n", artifactSha)

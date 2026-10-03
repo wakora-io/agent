@@ -42,6 +42,7 @@ type Agent struct {
 	detector     *anomaly.Detector
 	key          atomic.Value
 	seq          atomic.Uint64
+	noteErrAt    atomic.Int64
 	connected    atomic.Bool
 
 	mu           sync.Mutex
@@ -102,6 +103,7 @@ type Agent struct {
 
 	pmu          sync.Mutex
 	pending      map[uint64][]byte
+	pendingBytes int
 	pendingFreed chan struct{}
 
 	pin         atomic.Value
@@ -114,6 +116,7 @@ type Agent struct {
 }
 
 var pendingCap = 8192
+var pendingByteCap = 32 << 20
 var pendingStallTimeout = 30 * time.Second
 
 var errPendingStalled = errors.New("pending buffer full: gateway not acknowledging")
@@ -158,7 +161,7 @@ func (a *Agent) trackPending(m protocol.Message) ([]byte, error) {
 	}
 	a.pmu.Lock()
 	deadline := time.Now().Add(pendingStallTimeout)
-	for len(a.pending) >= pendingCap {
+	for len(a.pending) >= pendingCap || (len(a.pending) > 0 && a.pendingBytes+len(raw) > pendingByteCap) {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			a.pmu.Unlock()
@@ -175,14 +178,21 @@ func (a *Agent) trackPending(m protocol.Message) ([]byte, error) {
 		}
 		a.pmu.Lock()
 	}
+	if old, ok := a.pending[m.Seq]; ok {
+		a.pendingBytes -= len(old)
+	}
 	a.pending[m.Seq] = raw
+	a.pendingBytes += len(raw)
 	a.pmu.Unlock()
 	return raw, nil
 }
 
 func (a *Agent) ackPending(seq uint64) {
 	a.pmu.Lock()
-	delete(a.pending, seq)
+	if raw, ok := a.pending[seq]; ok {
+		a.pendingBytes -= len(raw)
+		delete(a.pending, seq)
+	}
 	a.pmu.Unlock()
 	select {
 	case a.pendingFreed <- struct{}{}:
@@ -194,6 +204,7 @@ func (a *Agent) spoolPending() {
 	a.pmu.Lock()
 	pend := a.pending
 	a.pending = map[uint64][]byte{}
+	a.pendingBytes = 0
 	a.pmu.Unlock()
 	n := 0
 	for _, raw := range pend {
@@ -915,6 +926,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 	spreadFirstRuns(a.active, a.lastRun, a.probeSeen, now, probeStartSpread, randomWithin)
 	due := selectDueProbes(a.active, a.lastRun, now)
 	a.mu.Unlock()
+	a.closeUnusedListeners()
 
 	factsChanged := false
 	for _, run := range due {
@@ -1717,7 +1729,7 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 			ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
 			Kind: "log_source_flooding", Detail: string(detail), Timestamp: time.Now().Unix(),
 		}); err == nil {
-			conn.Send(msg)
+			a.sendNote(conn, msg, "log_source_flooding")
 		}
 	}
 	if len(lines) == 0 {
@@ -1766,10 +1778,19 @@ func (a *Agent) capLogs(conn transport.Conn, lines []protocol.LogLine) []protoco
 			ServerID: a.cfg.ServerID, Hostname: a.cfg.Hostname,
 			Kind: "log_volume_capped", Detail: string(detail), Timestamp: time.Now().Unix(),
 		}); err == nil {
-			conn.Send(msg)
+			a.sendNote(conn, msg, "log_volume_capped")
 		}
 	}
 	return kept
+}
+
+func (a *Agent) sendNote(conn transport.Conn, msg protocol.Message, what string) {
+	if err := conn.Send(msg); err != nil {
+		now := time.Now().Unix()
+		if last := a.noteErrAt.Load(); now-last >= 60 && a.noteErrAt.CompareAndSwap(last, now) {
+			log.Printf("could not send the %s event: %v", what, err)
+		}
+	}
 }
 
 func (a *Agent) snmpTargets() map[string][]string {
@@ -1819,12 +1840,7 @@ func (a *Agent) runTraps(conn transport.Conn, service string, p protocol.Probe) 
 		log.Printf("trap listener started on udp/%d (v3=%v)", port, p.V3)
 	}
 	targets := a.snmpTargets()
-	allowed := make([]string, 0, len(targets)+len(p.AllowFrom))
-	for host := range targets {
-		allowed = append(allowed, host)
-	}
-	allowed = append(allowed, p.AllowFrom...)
-	l.SetAllowed(allowed)
+	l.SetAllowed(a.listenerAllowed(p.AllowFrom))
 
 	events, total, dropped, lerr := l.Drain()
 	check := protocol.CheckResult{
@@ -1906,7 +1922,7 @@ func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe)
 		a.syslogL[port] = l
 		log.Printf("syslog listener started on udp/%d", port)
 	}
-	l.Configure(p.Counters, p.AllowFrom)
+	l.Configure(p.Counters, a.listenerAllowed(p.AllowFrom))
 	total, severe, dropped, matches, lerr := l.Snapshot()
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,
@@ -1951,6 +1967,67 @@ func (a *Agent) runSyslog(conn transport.Conn, service string, p protocol.Probe)
 	return a.sendSyslogLines(conn, l.DrainLines())
 }
 
+func (a *Agent) listenerAllowed(extra []string) []string {
+	targets := a.snmpTargets()
+	allowed := make([]string, 0, len(targets)+len(extra))
+	for host := range targets {
+		allowed = append(allowed, host)
+	}
+	return append(allowed, extra...)
+}
+
+func listenerPort(p protocol.Probe) int {
+	if p.Port > 0 {
+		return p.Port
+	}
+	switch p.Type {
+	case "traps":
+		return 162
+	case "syslog":
+		return 514
+	case "netflow":
+		return 2055
+	}
+	return 0
+}
+
+func (a *Agent) closeUnusedListeners() {
+	want := map[string]map[int]bool{"traps": {}, "syslog": {}, "netflow": {}}
+	a.mu.Lock()
+	for _, d := range a.active {
+		if a.denySvc[d.Service] {
+			continue
+		}
+		for _, p := range d.Probes {
+			if ports, ok := want[p.Type]; ok {
+				ports[listenerPort(p)] = true
+			}
+		}
+	}
+	a.mu.Unlock()
+	for port, l := range a.trapL {
+		if !want["traps"][port] {
+			l.Close()
+			delete(a.trapL, port)
+			log.Printf("trap listener on udp/%d closed: no active definition uses it", port)
+		}
+	}
+	for port, l := range a.syslogL {
+		if !want["syslog"][port] {
+			l.Close()
+			delete(a.syslogL, port)
+			log.Printf("syslog listener on udp/%d closed: no active definition uses it", port)
+		}
+	}
+	for port, l := range a.flowL {
+		if !want["netflow"][port] {
+			l.Close()
+			delete(a.flowL, port)
+			log.Printf("netflow listener on udp/%d closed: no active definition uses it", port)
+		}
+	}
+}
+
 func (a *Agent) runNetflow(conn transport.Conn, service string, p protocol.Probe) error {
 	port := p.Port
 	if port <= 0 {
@@ -1963,13 +2040,7 @@ func (a *Agent) runNetflow(conn transport.Conn, service string, p protocol.Probe
 		a.flowL[port] = l
 		log.Printf("netflow listener started on udp/%d", port)
 	}
-	targets := a.snmpTargets()
-	allowed := make([]string, 0, len(targets)+len(p.AllowFrom))
-	for host := range targets {
-		allowed = append(allowed, host)
-	}
-	allowed = append(allowed, p.AllowFrom...)
-	l.Configure(allowed)
+	l.Configure(a.listenerAllowed(p.AllowFrom))
 	dropped, lerr := l.Snapshot()
 	check := protocol.CheckResult{
 		ServerID:  a.cfg.ServerID,

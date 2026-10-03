@@ -186,8 +186,12 @@ func (c *Collector) cpuPoints() []Point {
 	if len(f) < 5 || f[0] != "cpu" {
 		return nil
 	}
+	fields := f[1:]
+	if len(fields) > 8 {
+		fields = fields[:8]
+	}
 	var total, idle uint64
-	for i, s := range f[1:] {
+	for i, s := range fields {
 		v, err := strconv.ParseUint(s, 10, 64)
 		if err != nil {
 			continue
@@ -214,24 +218,7 @@ func (c *Collector) netPoints(now time.Time) []Point {
 	if err != nil {
 		return nil
 	}
-	var rx, tx uint64
-	lines := strings.Split(string(b), "\n")
-	for _, line := range lines[2:] {
-		name, rest, ok := strings.Cut(line, ":")
-		if !ok || strings.TrimSpace(name) == "lo" {
-			continue
-		}
-		f := strings.Fields(rest)
-		if len(f) < 9 {
-			continue
-		}
-		if v, err := strconv.ParseUint(f[0], 10, 64); err == nil {
-			rx += v
-		}
-		if v, err := strconv.ParseUint(f[8], 10, 64); err == nil {
-			tx += v
-		}
-	}
+	rx, tx := sumUplinks(string(b), sysNetProbe{"/sys/class/net"})
 	prevRx, prevTx, prevAt := c.prevNetRx, c.prevNetTx, c.prevNetAt
 	c.prevNetRx, c.prevNetTx, c.prevNetAt = rx, tx, now
 	if !c.hasPrev || prevAt.IsZero() {
@@ -245,4 +232,70 @@ func (c *Collector) netPoints(now time.Time) []Point {
 		{Name: "host.net.rx_bytes_per_sec", Value: float64(rx-prevRx) / elapsed},
 		{Name: "host.net.tx_bytes_per_sec", Value: float64(tx-prevTx) / elapsed},
 	}
+}
+
+type netProbe interface {
+	hasDevice(name string) bool
+	isBridge(name string) bool
+	isBridgePort(name string) bool
+}
+
+type sysNetProbe struct{ root string }
+
+func (s sysNetProbe) exists(name, leaf string) bool {
+	_, err := os.Stat(s.root + "/" + name + "/" + leaf)
+	return err == nil
+}
+
+func (s sysNetProbe) hasDevice(name string) bool    { return s.exists(name, "device") }
+func (s sysNetProbe) isBridge(name string) bool     { return s.exists(name, "bridge") }
+func (s sysNetProbe) isBridgePort(name string) bool { return s.exists(name, "brport") }
+
+func sumUplinks(netdev string, probe netProbe) (rx, tx uint64) {
+	type counters struct{ rx, tx uint64 }
+	ifaces := map[string]counters{}
+	var order []string
+	lines := strings.Split(netdev, "\n")
+	if len(lines) < 3 {
+		return 0, 0
+	}
+	for _, line := range lines[2:] {
+		name, rest, ok := strings.Cut(line, ":")
+		name = strings.TrimSpace(name)
+		if !ok || name == "lo" {
+			continue
+		}
+		f := strings.Fields(rest)
+		if len(f) < 9 {
+			continue
+		}
+		var c counters
+		if v, err := strconv.ParseUint(f[0], 10, 64); err == nil {
+			c.rx = v
+		}
+		if v, err := strconv.ParseUint(f[8], 10, 64); err == nil {
+			c.tx = v
+		}
+		ifaces[name] = c
+		order = append(order, name)
+	}
+	physical := false
+	for _, name := range order {
+		if probe.hasDevice(name) {
+			physical = true
+			break
+		}
+	}
+	for _, name := range order {
+		if physical {
+			if !probe.hasDevice(name) {
+				continue
+			}
+		} else if probe.isBridge(name) || probe.isBridgePort(name) {
+			continue
+		}
+		rx += ifaces[name].rx
+		tx += ifaces[name].tx
+	}
+	return rx, tx
 }

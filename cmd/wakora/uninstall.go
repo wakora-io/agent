@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"wakora.io/agent/internal/bootstrap"
 	"wakora.io/agent/internal/buildinfo"
@@ -14,13 +15,25 @@ import (
 
 func runUninstall(configDir string, args []string) {
 	force, alreadyDereg := false, false
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
 		case "--force", "-force", "--yes", "-yes":
 			force = true
 		case "--deregistered", "-deregistered":
 			alreadyDereg = true
 			force = true
+		case "--config", "-config":
+			if i+1 < len(args) {
+				configDir = args[i+1]
+				i++
+			}
+		default:
+			if v, ok := strings.CutPrefix(a, "--config="); ok {
+				configDir = v
+			} else if v, ok := strings.CutPrefix(a, "-config="); ok {
+				configDir = v
+			}
 		}
 	}
 

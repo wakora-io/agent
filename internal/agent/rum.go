@@ -29,9 +29,7 @@ func sanitizeFrust(in []protocol.RumFrust) []protocol.RumFrust {
 		if !rumFrustNames[f.Name] {
 			continue
 		}
-		if len(f.Sel) > 120 {
-			f.Sel = f.Sel[:120]
-		}
+		f.Sel = clip(f.Sel, 120)
 		if f.Count < 1 {
 			f.Count = 1
 		}
@@ -168,15 +166,9 @@ func (a *Agent) handleRumBeacon(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if len(it.Path) > 300 {
-		it.Path = it.Path[:300]
-	}
-	if len(it.Dev) > 30 {
-		it.Dev = it.Dev[:30]
-	}
-	if len(it.Browser) > 30 {
-		it.Browser = it.Browser[:30]
-	}
+	it.Path = clip(it.Path, 300)
+	it.Dev = clip(it.Dev, 30)
+	it.Browser = clip(it.Browser, 30)
 	if it.IP != "" && net.ParseIP(it.IP) == nil {
 		it.IP = ""
 	}

@@ -286,9 +286,9 @@ func checkTLS(host, port, pin string) Check {
 	}
 	defer conn.Close()
 	want, _ := base64.StdEncoding.DecodeString(pin)
-	for _, cert := range conn.ConnectionState().PeerCertificates {
-		sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
-		if want != nil && subtle(sum[:], want) {
+	if certs := conn.ConnectionState().PeerCertificates; len(certs) > 0 && len(want) == sha256.Size {
+		sum := sha256.Sum256(certs[0].RawSubjectPublicKeyInfo)
+		if subtle(sum[:], want) {
 			return Check{Name: "tls", State: Ok, Detail: "server key matches the pinned key"}
 		}
 	}

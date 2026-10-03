@@ -40,6 +40,7 @@ func TestNetflowV5Parses(t *testing.T) {
 	r[38] = 6
 
 	l := NewFlowListener(0)
+	l.Configure([]string{"192.0.2.9"})
 	l.Ingest("192.0.2.9", pkt)
 	batches := l.Drain(time.Now().Unix() + flowWindowSec + 1)
 	if len(batches) != 1 {
@@ -78,6 +79,7 @@ func flowRecord() []byte {
 
 func TestNetflowV9TemplateAndData(t *testing.T) {
 	l := NewFlowListener(0)
+	l.Configure([]string{"192.0.2.9"})
 
 	tpl := make([]byte, 20+4+4+20)
 	binary.BigEndian.PutUint16(tpl[0:2], 9)
@@ -109,6 +111,7 @@ func TestNetflowV9TemplateAndData(t *testing.T) {
 
 func TestNetflowIPFIXTemplateAndData(t *testing.T) {
 	l := NewFlowListener(0)
+	l.Configure([]string{"203.0.113.5"})
 
 	tpl := make([]byte, 16+4+4+20)
 	binary.BigEndian.PutUint16(tpl[0:2], 10)
@@ -157,5 +160,16 @@ func TestNetflowWindowAndAllowFrom(t *testing.T) {
 	}
 	if got := l.Drain(time.Now().Unix() + flowWindowSec + 1); len(got) != 1 {
 		t.Fatalf("the aged window must drain, got %+v", got)
+	}
+}
+
+func TestNetflowEmptyAllowListAcceptsNobody(t *testing.T) {
+	l := NewFlowListener(0)
+	pkt := make([]byte, 24+48)
+	binary.BigEndian.PutUint16(pkt[0:2], 5)
+	binary.BigEndian.PutUint16(pkt[2:4], 1)
+	l.Ingest("192.0.2.9", pkt)
+	if d, _ := l.Snapshot(); d != 1 {
+		t.Fatalf("with no device known every exporter must be dropped, dropped=%d", d)
 	}
 }

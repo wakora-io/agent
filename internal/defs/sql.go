@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/microsoft/go-mssqldb"
 	_ "github.com/microsoft/go-mssqldb/namedpipe"
@@ -167,38 +167,42 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 			if sock == "" {
 				return "", "", fmt.Errorf("no mysql unix socket found")
 			}
-			return fmt.Sprintf("%s:%s@unix(%s)/?timeout=5s&readTimeout=5s", cred.User, cred.Pass, sock), "mysql", nil
+			return mysqlDSN(cred, "unix", sock, false), "mysql", nil
 		}
 		addr := p.Address
 		if addr == "" {
 			addr = "127.0.0.1:3306"
 		}
-		tlsParam := ""
-		if !localTarget(addr) && !p.Insecure {
-			tlsParam = "&tls=true"
-		}
-		return fmt.Sprintf("%s:%s@tcp(%s)/?timeout=5s&readTimeout=5s%s", cred.User, cred.Pass, addr, tlsParam), "mysql", nil
+		return mysqlDSN(cred, "tcp", addr, !localTarget(addr) && !p.Insecure), "mysql", nil
 	case "postgres":
+		u := &url.URL{Scheme: "postgres", User: url.UserPassword(cred.User, cred.Pass), Path: "/postgres"}
+		q := url.Values{}
+		q.Set("connect_timeout", "5")
 		if p.Socket {
 			dir := findSocketDir(pgSocketDirs, ".s.PGSQL.5432")
 			if dir == "" {
 				return "", "", fmt.Errorf("no postgres unix socket found")
 			}
-			return fmt.Sprintf("postgres://%s:%s@/postgres?host=%s&connect_timeout=5", cred.User, cred.Pass, dir), "pgx", nil
+			q.Set("host", dir)
+			u.RawQuery = q.Encode()
+			return u.String(), "pgx", nil
 		}
 		addr := p.Address
 		if addr == "" {
 			addr = "127.0.0.1:5432"
 		}
-		host, port, _ := strings.Cut(addr, ":")
-		if port == "" {
-			port = "5432"
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			host, port = strings.Trim(addr, "[]"), "5432"
 		}
-		sslMode := "disable"
+		u.Host = net.JoinHostPort(host, port)
 		if !localTarget(addr) && !p.Insecure {
-			sslMode = "verify-full"
+			q.Set("sslmode", "verify-full")
+		} else {
+			q.Set("sslmode", "disable")
 		}
-		return fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=%s&connect_timeout=5", cred.User, cred.Pass, host, port, sslMode), "pgx", nil
+		u.RawQuery = q.Encode()
+		return u.String(), "pgx", nil
 	case "sqlserver", "mssql":
 		addr := p.Address
 		if addr == "" {
@@ -230,6 +234,20 @@ func buildDSN(p protocol.Probe, cred secret.Cred, hasSecret bool) (string, strin
 	default:
 		return "", "", fmt.Errorf("unsupported sql driver %q", p.Driver)
 	}
+}
+
+func mysqlDSN(cred secret.Cred, network, addr string, verifyTLS bool) string {
+	cfg := mysql.NewConfig()
+	cfg.User = cred.User
+	cfg.Passwd = cred.Pass
+	cfg.Net = network
+	cfg.Addr = addr
+	cfg.Timeout = 5 * time.Second
+	cfg.ReadTimeout = 5 * time.Second
+	if verifyTLS {
+		cfg.TLSConfig = "true"
+	}
+	return cfg.FormatDSN()
 }
 
 func findSocket(paths []string) string {

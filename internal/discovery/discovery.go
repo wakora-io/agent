@@ -144,7 +144,7 @@ func CountByKind(facts []Fact) map[string]int {
 }
 
 func containerCgroup(s string) bool {
-	for _, marker := range []string{"docker-", "/docker/", "libpod-", "kubepods", "cri-containerd", "/lxc/", "lxc.payload"} {
+	for _, marker := range []string{"docker-", "/docker/", "libpod-", "kubepods", "cri-containerd", "/lxc/", "lxc.payload", "/systemd-nspawn@"} {
 		if strings.Contains(s, marker) {
 			return true
 		}

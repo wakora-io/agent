@@ -5,10 +5,12 @@ package discovery
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -271,10 +273,18 @@ func decodeAddr(hexAddr string) string {
 			strconv.FormatUint(b>>16&0xff, 10) + "." +
 			strconv.FormatUint(b>>24&0xff, 10)
 	}
-	if strings.Trim(hexAddr, "0") == "" {
-		return "::"
+	if len(hexAddr) != 32 {
+		return ""
 	}
-	return "ipv6"
+	raw, err := hex.DecodeString(hexAddr)
+	if err != nil {
+		return ""
+	}
+	ip := make(net.IP, 16)
+	for i := 0; i < 16; i += 4 {
+		binary.BigEndian.PutUint32(ip[i:], binary.LittleEndian.Uint32(raw[i:]))
+	}
+	return ip.String()
 }
 
 func socketInodes() map[string]int {

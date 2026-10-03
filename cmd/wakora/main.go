@@ -73,6 +73,15 @@ func main() {
 		fmt.Println(buildinfo.Version)
 		return
 	}
+	if buildinfo.Version != "dev" {
+		for _, f := range []*string{endpoint, certPin, publisherKey, updateURL} {
+			if *f != "" {
+				log.Printf("--endpoint, --cert-pin, --publisher-key and --update-url are developer flags; this release build keeps its built-in values")
+				break
+			}
+		}
+		*endpoint, *certPin, *publisherKey, *updateURL = "", "", "", ""
+	}
 
 	seedErr := secret.InitSeed(*configDir)
 

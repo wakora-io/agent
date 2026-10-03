@@ -1,11 +1,20 @@
 package atomicfile
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 )
 
 func Write(path string, data []byte, perm os.FileMode) error {
+	return WriteFunc(path, perm, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+}
+
+func WriteFunc(path string, perm os.FileMode, fill func(io.Writer) error) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
@@ -17,7 +26,13 @@ func Write(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	bw := bufio.NewWriterSize(tmp, 64<<10)
+	if err := fill(bw); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := bw.Flush(); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err

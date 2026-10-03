@@ -122,7 +122,7 @@ func parseProcStat(s string) (string, uint64, uint64, bool) {
 }
 
 func procIOBytes(s string) uint64 {
-	var total uint64
+	var total, cancelled uint64
 	for _, line := range strings.Split(s, "\n") {
 		if v, ok := strings.CutPrefix(line, "read_bytes: "); ok {
 			if n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64); err == nil {
@@ -134,6 +134,14 @@ func procIOBytes(s string) uint64 {
 				total += n
 			}
 		}
+		if v, ok := strings.CutPrefix(line, "cancelled_write_bytes: "); ok {
+			if n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64); err == nil {
+				cancelled = n
+			}
+		}
 	}
-	return total
+	if cancelled >= total {
+		return 0
+	}
+	return total - cancelled
 }

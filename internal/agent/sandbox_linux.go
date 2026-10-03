@@ -36,12 +36,17 @@ func EnsureSandboxHeadroom() bool {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return false
 	}
+	dir := filepath.Join("/run/systemd/system", unit+".d")
 	if relaxRecent(sandboxMarker, time.Now(), sandboxRelaxWindow) {
-		log.Printf("sandbox: %s still mounts %s read-only for exec children after a relax attempt; not retrying (probes that need a writable path, such as a web server config dump, will keep failing until the unit file is updated)",
-			unit, strings.Join(blocked, " "))
+		effective := "unknown"
+		if out, err := exec.Command("systemctl", "show", "-p", "ProtectSystem", "--value", unit).Output(); err == nil {
+			effective = strings.TrimSpace(string(out))
+		}
+		_, dropInErr := os.Stat(filepath.Join(dir, sandboxDropIn))
+		log.Printf("sandbox: %s still mounts %s read-only for exec children after a relax attempt (effective ProtectSystem=%s, runtime drop-in present: %t); not retrying (probes that need a writable path, such as a web server config dump, will keep failing until the unit file is updated)",
+			unit, strings.Join(blocked, " "), effective, dropInErr == nil)
 		return false
 	}
-	dir := filepath.Join("/run/systemd/system", unit+".d")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("sandbox: cannot stage a runtime drop-in for %s: %v", unit, err)
 		return false

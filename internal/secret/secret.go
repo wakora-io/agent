@@ -44,7 +44,7 @@ func InitSeed(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("secret: cannot create %s: %w", dir, err)
 	}
-	_ = winsec.ProtectDir(dir)
+	winsec.Protect(dir)
 	s := hex.EncodeToString(raw)
 	if err := atomicfile.Write(path, []byte(s), 0o600); err != nil {
 		return fmt.Errorf("secret: cannot write %s: %w", path, err)

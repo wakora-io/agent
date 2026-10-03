@@ -62,7 +62,7 @@ func TestTrapBufferCap(t *testing.T) {
 
 func TestSyslogSeverityAndCounters(t *testing.T) {
 	l := NewSyslogListener(0)
-	l.Configure([]protocol.Counter{{Name: "dev.syslog.link_rate", Regex: "link (up|down)"}}, nil)
+	l.Configure([]protocol.Counter{{Name: "dev.syslog.link_rate", Regex: "link (up|down)"}}, []string{"192.0.2.23"})
 
 	l.ingest("192.0.2.23", "<3>Jul  3 00:00:01 sw1 port: link down on ether5")
 	l.ingest("192.0.2.23", "<14>Jul  3 00:00:02 sw1 info: link up on ether5")
@@ -89,6 +89,30 @@ func TestSyslogAllowFilter(t *testing.T) {
 	total, _, dropped, _, _ := l.Snapshot()
 	if total != 1 || dropped != 1 {
 		t.Fatalf("total=%d dropped=%d, want 1/1", total, dropped)
+	}
+}
+
+func TestListenerRecoverSwallowsAParserPanic(t *testing.T) {
+	survived := false
+	func() {
+		defer func() { survived = recover() == nil }()
+		func() {
+			defer recoverListener("syslog", 514)
+			panic("malformed packet")
+		}()
+	}()
+	if !survived {
+		t.Fatal("a parser panic escaped the listener guard")
+	}
+}
+
+func TestSyslogEmptyAllowListAcceptsNobody(t *testing.T) {
+	l := NewSyslogListener(0)
+	l.Configure(nil, nil)
+	l.ingest("192.0.2.87", "<14>anyone")
+	total, _, dropped, _, _ := l.Snapshot()
+	if total != 0 || dropped != 1 {
+		t.Fatalf("total=%d dropped=%d, want 0/1", total, dropped)
 	}
 }
 

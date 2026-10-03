@@ -789,10 +789,11 @@ func (l *LogTailer) tailFile(path string, now time.Time) ([]string, error) {
 		l.bomCheck(h.f, path, size)
 		return nil, nil
 	}
-	l.bomCheck(h.f, path, size)
 	if h.rotated {
 		l.offsets[path] = 0
+		delete(l.utf16F, path)
 	}
+	l.bomCheck(h.f, path, size)
 	start := l.offsets[path]
 	if size < start {
 		start = 0

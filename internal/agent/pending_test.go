@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,43 @@ func TestPendingBackpressureReleasesOnAck(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("trackPending did not unblock after ack freed a slot")
+	}
+}
+
+func TestPendingByteCapHoldsBigBatches(t *testing.T) {
+	oldBytes, oldTO := pendingByteCap, pendingStallTimeout
+	pendingByteCap, pendingStallTimeout = 4096, 2*time.Second
+	defer func() { pendingByteCap, pendingStallTimeout = oldBytes, oldTO }()
+
+	big := json.RawMessage(`"` + strings.Repeat("s", 3000) + `"`)
+	a := &Agent{pending: map[uint64][]byte{}, pendingFreed: make(chan struct{}, 1)}
+	if _, err := a.trackPending(protocol.Message{Seq: 1, Payload: big}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.trackPending(protocol.Message{Seq: 2, Payload: big})
+		done <- err
+	}()
+	select {
+	case <-done:
+		t.Fatal("a second batch past the byte cap must wait for an ack")
+	case <-time.After(150 * time.Millisecond):
+	}
+	a.ackPending(1)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("trackPending after ack: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the byte cap did not release after the ack")
+	}
+	a.pmu.Lock()
+	held := a.pendingBytes
+	a.pmu.Unlock()
+	if held <= 3000 || held > 4096 {
+		t.Fatalf("pendingBytes = %d, want the one tracked batch", held)
 	}
 }
 

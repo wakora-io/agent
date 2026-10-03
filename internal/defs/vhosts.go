@@ -563,6 +563,7 @@ func hostAddrSet() map[string]bool {
 }
 
 var cdnNetsCache struct {
+	mu   sync.Mutex
 	raw  string
 	nets []*net.IPNet
 }
@@ -571,6 +572,8 @@ func cdnNets(raw string) []*net.IPNet {
 	if raw == "" {
 		return nil
 	}
+	cdnNetsCache.mu.Lock()
+	defer cdnNetsCache.mu.Unlock()
 	if cdnNetsCache.raw == raw {
 		return cdnNetsCache.nets
 	}

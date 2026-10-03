@@ -95,9 +95,11 @@ func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
 		}
 		return nil, err
 	}
-	c.SetReadLimit(1 << 20)
+	c.SetReadLimit(readLimit)
 	return &wsConn{c: c}, nil
 }
+
+const readLimit = 16 << 20
 
 type wsConn struct {
 	c *websocket.Conn
@@ -121,6 +123,9 @@ func (w *wsConn) Recv() (protocol.Message, error) {
 	for {
 		_, data, err := w.c.Read(context.Background())
 		if err != nil {
+			if websocket.CloseStatus(err) == websocket.StatusMessageTooBig || strings.Contains(err.Error(), "read limited") {
+				return protocol.Message{}, fmt.Errorf("the gateway sent a frame larger than %d MiB: %w", readLimit>>20, err)
+			}
 			return protocol.Message{}, err
 		}
 		var m protocol.Message

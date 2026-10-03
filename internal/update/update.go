@@ -250,5 +250,14 @@ func (u *Updater) get(path string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("update: GET %s: %s", path, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxDownload+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxDownload {
+		return nil, fmt.Errorf("update: GET %s: larger than %d MiB", path, maxDownload>>20)
+	}
+	return b, nil
 }
+
+const maxDownload = 256 << 20

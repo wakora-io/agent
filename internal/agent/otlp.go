@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"wakora.io/agent/internal/config"
 	"wakora.io/agent/internal/protocol"
@@ -85,13 +86,19 @@ func (a *Agent) serveOTLP(ctx context.Context, port int, binds []string) {
 	mux.HandleFunc("/v1/traces", a.handleOTLPTraces)
 	mux.HandleFunc("/v1/metrics", a.handleOTLPMetrics)
 	mux.HandleFunc("/v1/rum", a.handleRumBeacon)
-	srv := &http.Server{Handler: mux, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 64 << 10}
 
 	hosts := []string{"127.0.0.1"}
 	for _, b := range binds {
-		if b = strings.TrimSpace(b); b != "" && b != "127.0.0.1" {
-			hosts = append(hosts, b)
+		b = strings.TrimSpace(strings.Trim(strings.TrimSpace(b), "[]"))
+		if b == "" || b == "127.0.0.1" {
+			continue
 		}
+		if ip := net.ParseIP(b); ip != nil && ip.IsUnspecified() {
+			log.Printf("otlp: refusing to listen on %s - it would accept spans from every network; bind the docker bridge gateway address instead", b)
+			continue
+		}
+		hosts = append(hosts, b)
 	}
 	bound := 0
 	for _, h := range hosts {
@@ -378,8 +385,15 @@ func spanStatus(raw json.RawMessage) string {
 }
 
 func trim(s string) string {
-	if len(s) > otlpMaxStrLen {
-		return s[:otlpMaxStrLen]
+	return clip(s, otlpMaxStrLen)
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return s
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

@@ -2,8 +2,10 @@ package secret
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -21,11 +23,22 @@ func storePath(dir string) string {
 	return filepath.Join(dir, "secrets.conf")
 }
 
+var credNameRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+func ValidCredName(name string) bool {
+	return credNameRe.MatchString(name)
+}
+
 func SetCred(dir, name string, c Cred) error {
+	if !ValidCredName(name) {
+		return fmt.Errorf("secret name %q: use letters, digits, dot, dash, underscore or colon", name)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	_ = winsec.ProtectDir(dir)
+	if err := winsec.ProtectDir(dir); err != nil {
+		return fmt.Errorf("cannot restrict %s to administrators, refusing to store a secret there: %w", dir, err)
+	}
 	all, err := loadRaw(dir)
 	if err != nil {
 		return err

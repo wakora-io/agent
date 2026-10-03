@@ -3,12 +3,14 @@
 package defs
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"wakora.io/agent/internal/protocol"
 )
@@ -67,19 +69,27 @@ func runAPMNodeProfile(o *Outcome, service string, p protocol.Probe) {
 	if windowSec <= 0 || windowSec > 30 {
 		windowSec = nodeProfileWindow
 	}
-	data := filepath.Join(os.TempDir(), "wk-nodeperf-"+strconv.Itoa(pids[0])+".data")
-	defer os.Remove(data)
+	dir, err := os.MkdirTemp("", "wk-nodeperf-")
+	if err != nil {
+		o.Check.Status = "fail"
+		o.Check.Error = "perf scratch dir: " + err.Error()
+		return
+	}
+	defer os.RemoveAll(dir)
+	data := filepath.Join(dir, "perf.data")
 	pidList := make([]string, len(pids))
 	for i, pid := range pids {
 		pidList[i] = strconv.Itoa(pid)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(windowSec+60)*time.Second)
+	defer cancel()
 	args := []string{"record", "-F", strconv.Itoa(nodeProfileHz), "-g", "-o", data, "-p", strings.Join(pidList, ","), "--", "sleep", strconv.Itoa(windowSec)}
-	if err := exec.Command("perf", args...).Run(); err != nil {
+	if err := exec.CommandContext(ctx, "perf", args...).Run(); err != nil {
 		o.Check.Status = "fail"
 		o.Check.Error = "perf record: " + err.Error()
 		return
 	}
-	out, err := exec.Command("perf", "script", "-i", data).Output()
+	out, err := exec.CommandContext(ctx, "perf", "script", "-i", data).Output()
 	if err != nil {
 		o.Check.Status = "fail"
 		o.Check.Error = "perf script: " + err.Error()

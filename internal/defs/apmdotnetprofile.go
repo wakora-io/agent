@@ -1,6 +1,7 @@
 package defs
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,7 +73,9 @@ func runAPMDotnetProfile(o *Outcome, service string, p protocol.Probe, stateDir 
 	defer os.RemoveAll(tmpDir)
 	traceFile := filepath.Join(tmpDir, "cpu.nettrace")
 
-	collect := exec.Command(toolPath, "collect",
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(windowSec+60)*time.Second)
+	defer cancel()
+	collect := exec.CommandContext(ctx, toolPath, "collect",
 		"--process-id", strconv.Itoa(pid),
 		"--providers", "Microsoft-DotNETCore-SampleProfiler",
 		"--duration", "00:00:00:"+twoDigits(windowSec),
@@ -84,7 +87,7 @@ func runAPMDotnetProfile(o *Outcome, service string, p protocol.Probe, stateDir 
 		return
 	}
 
-	convert := exec.Command(toolPath, "convert", traceFile, "--format", "Speedscope")
+	convert := exec.CommandContext(ctx, toolPath, "convert", traceFile, "--format", "Speedscope")
 	convert.Env = dotnetToolEnv(tmpDir)
 	if out, err := convert.CombinedOutput(); err != nil {
 		o.Check.Status = "fail"
@@ -125,7 +128,9 @@ func runAPMDotnetProfile(o *Outcome, service string, p protocol.Probe, stateDir 
 }
 
 func dotnetTargetPid(toolPath, pattern string) int {
-	out, err := exec.Command(toolPath, "ps").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, toolPath, "ps").Output()
 	if err != nil {
 		return 0
 	}

@@ -9,14 +9,15 @@ func TestDecodeAddr(t *testing.T) {
 		"0100007F":                         "127.0.0.1",
 		"00000000":                         "0.0.0.0",
 		"00000000000000000000000000000000": "::",
+		"00000000000000000000000001000000": "::1",
+		"B80D0120000000000000000005000000": "2001:db8::5",
+		"0000000000000000FFFF00000100007F": "127.0.0.1",
+		"zz":                               "",
 	}
 	for in, want := range cases {
 		if got := decodeAddr(in); got != want {
 			t.Fatalf("decodeAddr(%q) = %q, want %q", in, got, want)
 		}
-	}
-	if got := decodeAddr("fe800000000000000000000000000001"); got != "ipv6" {
-		t.Fatalf("v6 fallback: %q", got)
 	}
 }
 

@@ -519,7 +519,7 @@ func nodeMasters(proc string) []nodeMaster {
 }
 
 func nodeInContainer(cgroup string) bool {
-	for _, marker := range []string{"docker-", "/docker/", "libpod-", "kubepods", "cri-containerd", "/lxc/", "lxc.payload"} {
+	for _, marker := range []string{"docker-", "/docker/", "libpod-", "kubepods", "cri-containerd", "/lxc/", "lxc.payload", "/systemd-nspawn@"} {
 		if strings.Contains(cgroup, marker) {
 			return true
 		}
