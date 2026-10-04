@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -66,12 +67,23 @@ func runCIS(o *Outcome, service string) {
 		door("x11forwarding", "sshd-x11", "sshd X11 forwarding enabled", "low", "disable unless needed")
 	}
 
+	container := cisInContainer("/")
+
 	record(cisSysctl("net/ipv4/tcp_syncookies") == "1", "tcp-syncookies", "TCP SYN cookies disabled", "medium", "net.ipv4.tcp_syncookies should be 1")
-	record(cisSysctl("fs/suid_dumpable") == "0", "suid-dumpable", "SUID core dumps allowed", "medium", "fs.suid_dumpable should be 0")
-	record(cisSysctl("kernel/randomize_va_space") == "2", "aslr", "ASLR not fully enabled", "medium", "kernel.randomize_va_space should be 2")
+	if !container {
+		record(cisSysctl("fs/suid_dumpable") == "0", "suid-dumpable", "SUID core dumps allowed", "medium", "fs.suid_dumpable should be 0")
+		record(cisSysctl("kernel/randomize_va_space") == "2", "aslr", "ASLR not fully enabled", "medium", "kernel.randomize_va_space should be 2")
+	}
 	record(cisSysctl("net/ipv4/conf/all/accept_redirects") == "0", "icmp-redirects", "ICMP redirects accepted", "low", "net.ipv4.conf.all.accept_redirects should be 0")
 
-	record(cisAuditd(), "auditd", "auditd is not installed", "medium", "the audit daemon records security-relevant events")
+	if !container {
+		installed, running := cisAuditd("/")
+		title := "auditd is not installed"
+		if installed {
+			title = "auditd is installed but not running"
+		}
+		record(installed && running, "auditd", title, "medium", "the audit daemon records security-relevant events")
+	}
 	record(cisFirewall(), "firewall", "no host firewall detected", "medium", "ufw, firewalld or nftables should be active")
 
 	if defs, ok := cisReadFile("/etc/login.defs"); ok {
@@ -165,13 +177,45 @@ func cisSysctl(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func cisAuditd() bool {
-	for _, p := range []string{"/sbin/auditd", "/usr/sbin/auditd"} {
-		if _, err := os.Stat(p); err == nil {
-			return true
+func cisInContainer(root string) bool {
+	if b, err := os.ReadFile(filepath.Join(root, "run/systemd/container")); err == nil && strings.TrimSpace(string(b)) != "" {
+		return true
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "proc/1/environ")); err == nil {
+		for _, kv := range strings.Split(string(b), "\x00") {
+			if strings.HasPrefix(kv, "container=") && len(kv) > len("container=") {
+				return true
+			}
 		}
 	}
-	return false
+	_, err := os.Stat(filepath.Join(root, ".dockerenv"))
+	return err == nil
+}
+
+func cisAuditd(root string) (installed, running bool) {
+	for _, p := range []string{"sbin/auditd", "usr/sbin/auditd"} {
+		if _, err := os.Stat(filepath.Join(root, p)); err == nil {
+			installed = true
+			break
+		}
+	}
+	if !installed {
+		return false, false
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "proc"))
+	if err != nil {
+		return true, true
+	}
+	for _, e := range entries {
+		if n := e.Name(); n == "" || n[0] < '0' || n[0] > '9' {
+			continue
+		}
+		comm, err := os.ReadFile(filepath.Join(root, "proc", e.Name(), "comm"))
+		if err == nil && strings.TrimSpace(string(comm)) == "auditd" {
+			return true, true
+		}
+	}
+	return true, false
 }
 
 func cisFirewall() bool {
