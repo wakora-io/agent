@@ -414,6 +414,7 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 	if err != nil && !exitCodeAllowed(p, err) {
 		if p.Command == "sshd" && sshdPrivsepMissing(out) {
 			if cfg, ok := sshdConfigEffective(sshdConfigPath); ok {
+				cfg = sshdWithVerdict(cfg)
 				o.Check.Status = "ok"
 				o.Check.Error = sshdFallbackNote
 				applyMetricRules(o, p.Metrics, cfg)
@@ -433,6 +434,9 @@ func runExec(o *Outcome, p protocol.Probe, timeout time.Duration) {
 		return
 	}
 	o.Check.Status = "ok"
+	if p.Command == "sshd" {
+		out = sshdWithVerdict(out)
+	}
 	applyMetricRules(o, p.Metrics, out)
 	applyFactRules(o, p.Facts, out)
 }

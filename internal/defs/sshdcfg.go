@@ -14,7 +14,48 @@ const sshdFallbackNote = "sshd has not started since boot, values read from sshd
 var sshdFallbackDefaults = [][2]string{
 	{"permitrootlogin", "prohibit-password"},
 	{"passwordauthentication", "yes"},
+	{"kbdinteractiveauthentication", "yes"},
 	{"port", "22"},
+}
+
+func sshdKeyValues(out []byte) map[string]string {
+	kv := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(strings.ToLower(line))
+		if len(f) < 2 {
+			continue
+		}
+		if _, seen := kv[f[0]]; !seen {
+			kv[f[0]] = f[1]
+		}
+	}
+	return kv
+}
+
+func sshdRootPasswordLogin(kv map[string]string) bool {
+	if kv["permitrootlogin"] != "yes" {
+		return false
+	}
+	if kv["passwordauthentication"] != "no" {
+		return true
+	}
+	kbd, ok := kv["challengeresponseauthentication"]
+	if !ok {
+		kbd, ok = kv["kbdinteractiveauthentication"]
+	}
+	return !ok || kbd != "no"
+}
+
+func sshdWithVerdict(out []byte) []byte {
+	v := "no"
+	if sshdRootPasswordLogin(sshdKeyValues(out)) {
+		v = "yes"
+	}
+	res := append([]byte{}, out...)
+	if len(res) > 0 && res[len(res)-1] != '\n' {
+		res = append(res, '\n')
+	}
+	return append(res, []byte("rootpasswordlogin "+v+"\n")...)
 }
 
 func sshdPrivsepMissing(out []byte) bool {

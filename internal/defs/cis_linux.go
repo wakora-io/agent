@@ -61,7 +61,9 @@ func runCIS(o *Outcome, service string) {
 			}
 			record(v != "yes", id, title, sev, detail)
 		}
-		door("permitrootlogin", "sshd-root-login", "sshd permits root login", "high", "PermitRootLogin should be no or prohibit-password")
+		if _, has := sshd["permitrootlogin"]; has {
+			record(!sshdRootPasswordLogin(sshd), "sshd-root-login", "sshd lets root log in with a password", "high", "set PermitRootLogin prohibit-password, or switch off PasswordAuthentication and KbdInteractiveAuthentication")
+		}
 		door("passwordauthentication", "sshd-password-auth", "sshd accepts password auth", "medium", "prefer key-based auth")
 		door("permitemptypasswords", "sshd-empty-pass", "sshd permits empty passwords", "critical", "PermitEmptyPasswords should be no")
 		door("x11forwarding", "sshd-x11", "sshd X11 forwarding enabled", "low", "disable unless needed")
