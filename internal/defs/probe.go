@@ -173,8 +173,9 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 	o.Check.LatencyMs = float64(time.Since(start).Microseconds()) / 1000
 	if o.Check.Status == "ok" && (p.Type == "http" || p.Type == "tcp") {
 		o.Metrics = append(o.Metrics, protocol.MetricPoint{
-			Name:  "svc." + service + "." + p.Name + ".latency_ms",
-			Value: o.Check.LatencyMs,
+			Name:      "svc." + service + "." + p.Name + ".latency_ms",
+			Value:     o.Check.LatencyMs,
+			NoAnomaly: true,
 		})
 	}
 	applyRates(&o, service, p, time.Now())

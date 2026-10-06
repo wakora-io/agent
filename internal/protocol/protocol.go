@@ -64,9 +64,10 @@ type Message struct {
 }
 
 type MetricPoint struct {
-	Name  string            `json:"name"`
-	Value float64           `json:"value"`
-	Tags  map[string]string `json:"tags,omitempty"`
+	Name      string            `json:"name"`
+	Value     float64           `json:"value"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	NoAnomaly bool              `json:"-"`
 }
 
 type MetricsBatch struct {
@@ -204,6 +205,20 @@ type DefinitionSet struct {
 	LogDeep      []string           `json:"logDeep,omitempty"`
 	Pin          string             `json:"pin,omitempty"`
 	TenantKey    string             `json:"tenantKey,omitempty"`
+	Anomaly      *AnomalyConfig     `json:"anomaly,omitempty"`
+}
+
+type AnomalyClass struct {
+	Match    string  `json:"match"`
+	MinDelta float64 `json:"minDelta"`
+	UpOnly   bool    `json:"upOnly,omitempty"`
+}
+
+type AnomalyConfig struct {
+	Z       float64        `json:"z,omitempty"`
+	Sustain int            `json:"sustain,omitempty"`
+	Exclude []string       `json:"exclude,omitempty"`
+	Classes []AnomalyClass `json:"classes,omitempty"`
 }
 
 type RumError struct {

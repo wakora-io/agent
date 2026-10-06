@@ -95,6 +95,92 @@ func TestNewNormalRebaseline(t *testing.T) {
 	}
 }
 
+func TestExcludedFamilyNeverFires(t *testing.T) {
+	d := New()
+	values := append(flat(minSamples+2, 10), flat(6, 900)...)
+	if fired := feed(d, "host.top.cpu_pct", values, time.Now()); len(fired) != 0 {
+		t.Fatalf("excluded family fired %d", len(fired))
+	}
+	if len(d.states) != 0 {
+		t.Fatalf("excluded family kept state")
+	}
+}
+
+func TestTinyChangeOnZeroBaselineStaysQuiet(t *testing.T) {
+	d := New()
+	values := append(flat(minSamples+2, 0), flat(6, 0.02)...)
+	if fired := feed(d, "host.swap.used_pct", values, time.Now()); len(fired) != 0 {
+		t.Fatalf("zero sigma tiny change fired %d", len(fired))
+	}
+}
+
+func TestPercentNeedsTenPoints(t *testing.T) {
+	d := New()
+	values := append(flat(minSamples+2, 5), flat(6, 12)...)
+	if fired := feed(d, "host.cpu.used_pct", values, time.Now()); len(fired) != 0 {
+		t.Fatalf("7 points fired")
+	}
+	d = New()
+	values = append(flat(minSamples+2, 5), flat(6, 40)...)
+	if fired := feed(d, "host.cpu.used_pct", values, time.Now()); len(fired) != 1 {
+		t.Fatalf("35 points want 1 fire, got %d", len(fired))
+	}
+}
+
+func TestDropIsQuietForUpOnlyClass(t *testing.T) {
+	d := New()
+	values := append(flat(minSamples+2, 80), flat(6, 5)...)
+	if fired := feed(d, "host.cpu.used_pct", values, time.Now()); len(fired) != 0 {
+		t.Fatalf("cpu drop fired")
+	}
+	d = New()
+	values = append(flat(minSamples+2, 50<<20), flat(6, 0)...)
+	if fired := feed(d, "host.net.rx_bytes_per_sec", values, time.Now()); len(fired) != 1 {
+		t.Fatalf("traffic collapse want 1 fire, got %d", len(fired))
+	}
+}
+
+func TestServerConfigOverrides(t *testing.T) {
+	d := New()
+	d.SetConfig(Config{Exclude: []string{"host.cpu.%"}})
+	values := append(flat(minSamples+2, 5), flat(6, 90)...)
+	if fired := feed(d, "host.cpu.used_pct", values, time.Now()); len(fired) != 0 {
+		t.Fatalf("server exclusion ignored")
+	}
+	if fired := feed(d, "host.top.cpu_pct", values, time.Now()); len(fired) != 1 {
+		t.Fatalf("server exclude list must replace the default one")
+	}
+	d.SetConfig(Config{})
+	if len(d.cfg.Classes) == 0 || d.cfg.Z != zThreshold {
+		t.Fatalf("empty config must fall back to defaults")
+	}
+}
+
+func TestLike(t *testing.T) {
+	cases := []struct {
+		p, s string
+		want bool
+	}{
+		{"host.top.%", "host.top.io_bps", true},
+		{"host.top.%", "host.topx", false},
+		{"%.max_ms", "apm.backend.max_ms", true},
+		{"%_pct", "host.cpu.used_pct", true},
+		{"%_pct", "host.cpu.used_pctx", false},
+		{"host.load%per_core", "host.load1_per_core", true},
+		{"host.load1", "host.load1_per_core", false},
+		{"%uptime%", "svc.proxmox.guest.uptime", true},
+		{"%", "anything", true},
+		{"a%b%c", "axxbyyc", true},
+		{"a%b%c", "axxcyyb", false},
+		{"ab%ba", "aba", false},
+	}
+	for _, c := range cases {
+		if got := like(c.p, c.s); got != c.want {
+			t.Fatalf("like(%q, %q) = %v, want %v", c.p, c.s, got, c.want)
+		}
+	}
+}
+
 func TestSeriesAreIndependent(t *testing.T) {
 	d := New()
 	base := time.Now()

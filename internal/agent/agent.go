@@ -533,6 +533,9 @@ func (a *Agent) sendMetrics(conn transport.Conn) error {
 func (a *Agent) observePoints(conn transport.Conn, points []protocol.MetricPoint) error {
 	now := time.Now()
 	for _, p := range points {
+		if p.NoAnomaly {
+			continue
+		}
 		an := a.detector.Observe(p.Name, p.Tags, p.Value, now)
 		if an == nil {
 			continue
@@ -557,6 +560,17 @@ func (a *Agent) observePoints(conn transport.Conn, points []protocol.MetricPoint
 		}
 	}
 	return nil
+}
+
+func anomalyConfig(c *protocol.AnomalyConfig) anomaly.Config {
+	if c == nil {
+		return anomaly.Config{}
+	}
+	out := anomaly.Config{Z: c.Z, Sustain: c.Sustain, Exclude: c.Exclude}
+	for _, cl := range c.Classes {
+		out.Classes = append(out.Classes, anomaly.Class{Match: cl.Match, MinDelta: cl.MinDelta, UpOnly: cl.UpOnly})
+	}
+	return out
 }
 
 func anomalyDetail(an *anomaly.Anomaly) ([]byte, error) {
@@ -2521,6 +2535,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 		defs.SetStagingDenied(deny["staged"])
 		defs.SetDeepTraceAllowed(allow["deeptrace"])
 		defs.SetNodeProfileAllowed(allow["nodeprofile"])
+		a.detector.SetConfig(anomalyConfig(set.Anomaly))
 		a.setRumSites(set.RumSites)
 		denySvc := map[string]bool{}
 		for _, sv := range set.DenyServices {
