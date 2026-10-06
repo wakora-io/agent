@@ -57,7 +57,7 @@ func revNum(v string) (int, bool) {
 	return n, true
 }
 
-const PinFloor = 297
+const PinFloor = 340
 
 func PinSupported(v string) bool {
 	n, ok := revNum(v)

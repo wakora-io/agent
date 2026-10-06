@@ -20,14 +20,14 @@ func TestApplyPushedPinAdoptAndClear(t *testing.T) {
 		t.Fatal("empty push with no prior pin must stay empty")
 	}
 
-	a.applyPushedPin("r299")
-	if a.EffectivePin() != "r299" {
+	a.applyPushedPin("r341")
+	if a.EffectivePin() != "r341" {
 		t.Fatalf("console pin not adopted: %q", a.EffectivePin())
 	}
 	if !a.pinFromPush.Load() {
 		t.Fatal("pinFromPush must be set after a console pin")
 	}
-	if back, _ := config.Load(dir); back.Pin != "r299" {
+	if back, _ := config.Load(dir); back.Pin != "r341" {
 		t.Fatalf("pin not mirrored to wakora.conf: %q", back.Pin)
 	}
 

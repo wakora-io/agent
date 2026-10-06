@@ -169,17 +169,17 @@ func versionedServer(priv ed25519.PrivateKey, version string, issuedAt int64, bi
 
 func TestApplyPinnedVersion(t *testing.T) {
 	priv, pub := testKey(t)
-	bin := []byte("wakora r299 pinned build")
-	srv := versionedServer(priv, "r299", 500, bin)
+	bin := []byte("wakora r341 pinned build")
+	srv := versionedServer(priv, "r341", 500, bin)
 	defer srv.Close()
 
 	u := New(srv.URL, nil, pub, filepath.Join(t.TempDir(), "s"))
-	mf, err := u.PinnedManifest("r299")
-	if err != nil || mf.Version != "r299" {
+	mf, err := u.PinnedManifest("r341")
+	if err != nil || mf.Version != "r341" {
 		t.Fatalf("PinnedManifest err=%v mf=%+v", err, mf)
 	}
 	target := filepath.Join(t.TempDir(), "wakora")
-	if err := u.ApplyPinned(target, "r299"); err != nil {
+	if err := u.ApplyPinned(target, "r341"); err != nil {
 		t.Fatalf("ApplyPinned: %v", err)
 	}
 	got, _ := os.ReadFile(target)
@@ -205,8 +205,10 @@ func TestPinSupported(t *testing.T) {
 		{"r221", false},
 		{"r245", false},
 		{"r296", false},
-		{"r297", true},
-		{"r298", true},
+		{"r297", false},
+		{"r339", false},
+		{"r340", true},
+		{"r341", true},
 		{"dev", false},
 		{"", false},
 		{"garbage", false},
