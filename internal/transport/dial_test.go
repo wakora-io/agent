@@ -73,6 +73,54 @@ func TestDialEachSkipsLookupForALiteral(t *testing.T) {
 	c.Close()
 }
 
+func addrs(ss ...string) []net.IPAddr {
+	out := make([]net.IPAddr, 0, len(ss))
+	for _, s := range ss {
+		out = append(out, net.IPAddr{IP: net.ParseIP(s)})
+	}
+	return out
+}
+
+func TestOrderAddrsSpreadsTheFirstAddress(t *testing.T) {
+	t.Cleanup(avoided.reset)
+	first := map[string]int{}
+	for i := 0; i < 300; i++ {
+		got := orderAddrs(addrs("192.0.2.1", "192.0.2.2", "192.0.2.3"), time.Now())
+		if len(got) != 3 {
+			t.Fatalf("order lost an address: %v", got)
+		}
+		first[got[0].IP.String()]++
+	}
+	if len(first) != 3 {
+		t.Fatalf("every address must lead some dials, got %v", first)
+	}
+}
+
+func TestOrderAddrsPutsAnAvoidedAddressLast(t *testing.T) {
+	t.Cleanup(avoided.reset)
+	now := time.Now()
+	avoided.add("192.0.2.2", now)
+	for i := 0; i < 100; i++ {
+		got := orderAddrs(addrs("192.0.2.1", "192.0.2.2", "192.0.2.3"), now)
+		if len(got) != 3 || got[2].IP.String() != "192.0.2.2" {
+			t.Fatalf("an address that answered 5xx must go last, got %v", got)
+		}
+	}
+	got := orderAddrs(addrs("192.0.2.2"), now)
+	if len(got) != 1 {
+		t.Fatal("the only address stays dialable even while set aside")
+	}
+}
+
+func TestAvoidedAddressReturnsAfterAMinute(t *testing.T) {
+	t.Cleanup(avoided.reset)
+	now := time.Now()
+	avoided.add("192.0.2.2", now.Add(-avoidFor-time.Second))
+	if avoided.has("192.0.2.2", now) {
+		t.Fatal("a set-aside address returns to the shuffle after the window")
+	}
+}
+
 func TestDialEachNoAddresses(t *testing.T) {
 	withLookup(t)
 	if _, err := dialEach(context.Background(), "tcp", "gw.example.com:8443"); err == nil {

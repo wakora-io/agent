@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -23,10 +25,24 @@ import (
 type wsDialer struct {
 	keyFn  func() string
 	client *http.Client
+	last   atomic.Pointer[string]
 }
 
 func NewWSDialer(keyFn func() string, certPin string) Dialer {
-	return &wsDialer{keyFn: keyFn, client: PinnedClient(certPin)}
+	d := &wsDialer{keyFn: keyFn}
+	d.client = pinnedClient(certPin, d.dialRemember, true)
+	return d
+}
+
+func (d *wsDialer) dialRemember(ctx context.Context, network, addr string) (net.Conn, error) {
+	c, err := dialEach(ctx, network, addr)
+	if err == nil {
+		if ta, ok := c.RemoteAddr().(*net.TCPAddr); ok {
+			ip := ta.IP.String()
+			d.last.Store(&ip)
+		}
+	}
+	return c, err
 }
 
 func decodePin(pin string) ([]byte, error) {
@@ -45,6 +61,10 @@ func decodePin(pin string) ([]byte, error) {
 }
 
 func PinnedClient(pin string) *http.Client {
+	return pinnedClient(pin, dialEach, false)
+}
+
+func pinnedClient(pin string, dial func(context.Context, string, string) (net.Conn, error), fresh bool) *http.Client {
 	want, err := decodePin(pin)
 	if err != nil {
 		if buildinfo.Version != "dev" {
@@ -71,19 +91,27 @@ func PinnedClient(pin string) *http.Client {
 	}
 	return &http.Client{Transport: &http.Transport{
 		TLSClientConfig:     cfg,
-		DialContext:         dialEach,
+		DialContext:         dial,
 		TLSHandshakeTimeout: 10 * time.Second,
+		DisableKeepAlives:   fresh,
 	}}
 }
 
 func (d *wsDialer) Dial(ctx context.Context, endpoint string) (Conn, error) {
 	dctx, cancel := context.WithTimeout(ctx, wsHandshakeTimeout)
 	defer cancel()
+	d.last.Store(nil)
 	c, resp, err := websocket.Dial(dctx, endpoint, &websocket.DialOptions{
 		HTTPClient: d.client,
 		HTTPHeader: http.Header{"X-Wakora-Key": {d.keyFn()}},
 	})
 	if err != nil {
+		if resp != nil && resp.StatusCode >= 500 {
+			if ip := d.last.Load(); ip != nil {
+				avoided.add(*ip, time.Now())
+				return nil, fmt.Errorf("%s answered %d, the other addresses go first for %s: %w", *ip, resp.StatusCode, avoidFor, err)
+			}
+		}
 		if resp != nil && resp.StatusCode == http.StatusGone {
 			return nil, ErrDeregistered
 		}

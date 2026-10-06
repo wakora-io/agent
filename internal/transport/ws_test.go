@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +89,42 @@ func TestPinnedClientRejectsForeignLeaf(t *testing.T) {
 	if err == nil {
 		resp.Body.Close()
 		t.Fatal("pin accepted an unrelated certificate")
+	}
+}
+
+func statusServer(t *testing.T, code int) (*httptest.Server, string) {
+	t.Helper()
+	der, key := selfSignedCert(t, "eu.gw.wakora.io")
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(code)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv, pinOf(t, der)
+}
+
+func TestWSDialerSetsAsideAnAddressAnswering5xx(t *testing.T) {
+	t.Cleanup(avoided.reset)
+	srv, pin := statusServer(t, http.StatusServiceUnavailable)
+	d := NewWSDialer(func() string { return "k" }, pin)
+	if _, err := d.Dial(context.Background(), "wss://"+srv.Listener.Addr().String()+"/ws"); err == nil {
+		t.Fatal("a 503 must fail the dial")
+	}
+	if !avoided.has("127.0.0.1", time.Now()) {
+		t.Fatal("the address that answered 503 must go last for the next dials")
+	}
+}
+
+func TestWSDialerKeepsAnAddressAnswering401(t *testing.T) {
+	t.Cleanup(avoided.reset)
+	srv, pin := statusServer(t, http.StatusUnauthorized)
+	d := NewWSDialer(func() string { return "k" }, pin)
+	if _, err := d.Dial(context.Background(), "wss://"+srv.Listener.Addr().String()+"/ws"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("want ErrUnauthorized, got %v", err)
+	}
+	if avoided.has("127.0.0.1", time.Now()) {
+		t.Fatal("a refused key is not a sick node")
 	}
 }
 
