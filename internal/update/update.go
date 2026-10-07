@@ -119,30 +119,18 @@ func (u *Updater) applyManifest(target string, mf *manifest, dirPrefix string) e
 	if !ok || wantSha == "" {
 		return fmt.Errorf("update: asset %s absent from the signed manifest", name)
 	}
-	bin, err := u.get(dirPrefix + asset)
+	tmpName, err := u.download(dirPrefix+asset, filepath.Dir(target), wantSha)
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(bin)
-	if hex.EncodeToString(sum[:]) != wantSha {
-		return errors.New("update: checksum mismatch against signed manifest")
-	}
-	if err := u.verifyBinarySig(dirPrefix+asset, bin); err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(target)
-	tmp, err := os.CreateTemp(dir, ".wakora-*")
+	bin, err := readExact(tmpName)
 	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(bin); err != nil {
-		tmp.Close()
 		os.Remove(tmpName)
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	err = u.verifyBinarySig(dirPrefix+asset, bin)
+	bin = nil
+	if err != nil {
 		os.Remove(tmpName)
 		return err
 	}
@@ -155,6 +143,58 @@ func (u *Updater) applyManifest(target string, mf *manifest, dirPrefix string) e
 		return err
 	}
 	return nil
+}
+
+func (u *Updater) download(path, dir, wantSha string) (string, error) {
+	resp, err := u.client.Get(u.baseURL + path)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("update: GET %s: %s", path, resp.Status)
+	}
+	tmp, err := os.CreateTemp(dir, ".wakora-*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, maxDownload+1))
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && n > maxDownload {
+		err = fmt.Errorf("update: GET %s: larger than %d MiB", path, maxDownload>>20)
+	}
+	if err == nil && hex.EncodeToString(h.Sum(nil)) != wantSha {
+		err = errors.New("update: checksum mismatch against signed manifest")
+	}
+	if err != nil {
+		os.Remove(tmpName)
+		return "", err
+	}
+	return tmpName, nil
+}
+
+func readExact(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if st.Size() > maxDownload {
+		return nil, fmt.Errorf("update: %s larger than %d MiB", path, maxDownload>>20)
+	}
+	buf := make([]byte, st.Size())
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 func (u *Updater) fetchManifest() (*manifest, error) {

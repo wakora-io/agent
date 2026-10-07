@@ -151,6 +151,74 @@ func TestApplyChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsABinarySignatureThatDoesNotMatch(t *testing.T) {
+	priv, pub := testKey(t)
+	bin := []byte("real binary signed with a foreign key")
+	foreign, _ := testKey(t)
+	name := assetKey()
+	sum := sha256.Sum256(bin)
+	mf := manifest{Version: "r219", IssuedAt: 1000, Assets: map[string]string{name: hex.EncodeToString(sum[:])}}
+	mfBytes, _ := json.Marshal(mf)
+	mfSig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, mfBytes))
+	binSig := base64.StdEncoding.EncodeToString(ed25519.Sign(foreign, bin))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) { w.Write(mfBytes) })
+	mux.HandleFunc("/manifest.json.sig", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, mfSig) })
+	mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(bin) })
+	mux.HandleFunc("/"+name+".sig", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, binSig) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "wakora")
+	if err := os.WriteFile(target, []byte("current binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	u := New(srv.URL, nil, pub, filepath.Join(t.TempDir(), "s"))
+	if err := u.Apply(target); err == nil {
+		t.Fatal("a binary whose own signature is invalid must be rejected even when its sha matches")
+	}
+	if got, _ := os.ReadFile(target); string(got) != "current binary" {
+		t.Fatalf("target replaced by a rejected binary: %q", got)
+	}
+	assertNoTempLeft(t, dir)
+}
+
+func TestApplyChecksumMismatchLeavesNoTempFile(t *testing.T) {
+	priv, pub := testKey(t)
+	name := assetKey()
+	sum := sha256.Sum256([]byte("what the manifest promised"))
+	mf := manifest{Version: "r219", IssuedAt: 1000, Assets: map[string]string{name: hex.EncodeToString(sum[:])}}
+	mfBytes, _ := json.Marshal(mf)
+	mfSig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, mfBytes))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) { w.Write(mfBytes) })
+	mux.HandleFunc("/manifest.json.sig", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, mfSig) })
+	mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("something else")) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	u := New(srv.URL, nil, pub, filepath.Join(t.TempDir(), "s"))
+	if err := u.Apply(filepath.Join(dir, "wakora")); err == nil {
+		t.Fatal("checksum mismatch accepted")
+	}
+	assertNoTempLeft(t, dir)
+}
+
+func assertNoTempLeft(t *testing.T, dir string) {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), ".wakora-") {
+			t.Fatalf("temporary download left behind: %s", e.Name())
+		}
+	}
+}
+
 func versionedServer(priv ed25519.PrivateKey, version string, issuedAt int64, bin []byte) *httptest.Server {
 	name := assetKey()
 	sum := sha256.Sum256(bin)
