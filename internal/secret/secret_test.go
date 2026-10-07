@@ -1,6 +1,7 @@
 package secret
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,59 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 	}
 	if enc == enc2 {
 		t.Fatal("nonce reuse: identical ciphertexts")
+	}
+}
+
+func TestResealMovesALegacyValueOntoTheSeed(t *testing.T) {
+	defer func(prev string) { localSeed = prev }(localSeed)
+	localSeed = ""
+	legacy, err := Encrypt("pre-seed-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, ok := Reseal(legacy); ok || out != legacy {
+		t.Fatal("without a seed nothing may be re-sealed")
+	}
+	localSeed = "seed-for-test"
+	out, ok := Reseal(legacy)
+	if !ok || out == legacy {
+		t.Fatal("a value readable only without the seed was not re-sealed")
+	}
+	raw, err := base64.StdEncoding.DecodeString(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain, err := decryptWith(raw, true); err != nil || plain != "pre-seed-value" {
+		t.Fatalf("re-sealed value does not open with the seed: %q %v", plain, err)
+	}
+	if again, ok := Reseal(out); ok || again != out {
+		t.Fatal("a value already on the seed was re-sealed again")
+	}
+}
+
+func TestResealStoreRewritesOnlyLegacyFields(t *testing.T) {
+	defer func(prev string) { localSeed = prev }(localSeed)
+	dir := t.TempDir()
+	localSeed = ""
+	if err := SetCred(dir, "old", Cred{User: "u", Pass: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	localSeed = "seed-for-test"
+	if err := SetCred(dir, "new", Cred{User: "u2", Pass: "p2"}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := ResealStore(dir)
+	if err != nil || n != 2 {
+		t.Fatalf("want the two legacy fields re-sealed, got %d %v", n, err)
+	}
+	if n, _ := ResealStore(dir); n != 0 {
+		t.Fatalf("second pass re-sealed %d fields", n)
+	}
+	for name, want := range map[string]string{"old": "p", "new": "p2"} {
+		c, ok := GetCred(dir, name)
+		if !ok || c.Pass != want {
+			t.Fatalf("%s after re-seal: %+v %v", name, c, ok)
+		}
 	}
 }
 

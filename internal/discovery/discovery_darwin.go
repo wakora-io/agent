@@ -70,6 +70,7 @@ func processes() []Fact {
 	if err != nil {
 		return nil
 	}
+	comms := pidColumn("comm=")
 	agg := map[string]*procInfo{}
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
@@ -84,7 +85,10 @@ func processes() []Fact {
 		if err != nil {
 			continue
 		}
-		exe, _, _ := strings.Cut(strings.TrimSpace(cmd), " ")
+		exe := comms[pid]
+		if exe == "" {
+			exe, _, _ = strings.Cut(strings.TrimSpace(cmd), " ")
+		}
 		name := filepath.Base(exe)
 		if name == "" || name == "." {
 			continue
@@ -97,6 +101,32 @@ func processes() []Fact {
 		agg[name] = &procInfo{Count: 1, Pid: pid, Cmdline: cmd, Exe: exe}
 	}
 	return sortedFacts("process", agg)
+}
+
+func pidColumn(col string) map[int]string {
+	out, err := exec.Command("ps", "-axww", "-o", "pid=,"+col).Output()
+	if err != nil {
+		return nil
+	}
+	return parsePidColumn(string(out))
+}
+
+func parsePidColumn(out string) map[int]string {
+	m := map[int]string{}
+	for _, line := range strings.Split(out, "\n") {
+		pidStr, rest, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+		if v := strings.TrimSpace(rest); v != "" {
+			m[pid] = v
+		}
+	}
+	return m
 }
 
 func ports() []Fact {

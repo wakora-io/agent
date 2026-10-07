@@ -13,7 +13,7 @@ import (
 	"wakora.io/agent/internal/transport"
 )
 
-func runUninstall(configDir string, args []string) {
+func runUninstall(configDir string, args []string, endpoint, certPin string) {
 	force, alreadyDereg := false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -38,6 +38,13 @@ func runUninstall(configDir string, args []string) {
 	}
 
 	cfg, _ := config.Load(configDir)
+	if endpoint != "" {
+		cfg.Endpoint = endpoint
+	}
+	pin := buildinfo.CertPin
+	if certPin != "" {
+		pin = certPin
+	}
 	logDir := filepath.Dir(defaultLogFile)
 
 	if !force {
@@ -55,7 +62,7 @@ func runUninstall(configDir string, args []string) {
 
 	if !alreadyDereg && cfg.Key != "" && cfg.ServerID != "" {
 		if url := deriveURL(cfg.Endpoint, "/deregister"); url != "" {
-			httpc := transport.PinnedClient(buildinfo.CertPin)
+			httpc := transport.PinnedClient(pin)
 			if err := bootstrap.Deregister(httpc, url, cfg.ServerID, cfg.Key); err != nil {
 				log.Printf("gateway deregister failed (%v) - cleaning up locally; remove the host in the console too", err)
 			} else {

@@ -29,6 +29,7 @@ const (
 	evtQueryReverseDirection = 0x200
 	countCap                 = 20000
 	evtRenderEventXml        = 1
+	evtRenderMax             = 4 << 20
 	evtFormatMessageEvent    = 1
 	lastErrorsPerChannel     = 3
 	errorMessageCap          = 240
@@ -179,17 +180,23 @@ func describeEvent(ev uintptr) string {
 }
 
 func renderEventXML(ev uintptr) string {
-	var used, props uint32
 	buf := make([]uint16, 8192)
-	ret, _, _ := procEvtRender.Call(
-		0, ev, uintptr(evtRenderEventXml),
-		uintptr(len(buf)*2), uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&used)), uintptr(unsafe.Pointer(&props)),
-	)
-	if ret == 0 {
-		return ""
+	for attempt := 0; attempt < 2; attempt++ {
+		var used, props uint32
+		ret, _, err := procEvtRender.Call(
+			0, ev, uintptr(evtRenderEventXml),
+			uintptr(len(buf)*2), uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(unsafe.Pointer(&used)), uintptr(unsafe.Pointer(&props)),
+		)
+		if ret != 0 {
+			return windows.UTF16ToString(buf)
+		}
+		if err != windows.ERROR_INSUFFICIENT_BUFFER || used == 0 || used > evtRenderMax {
+			return ""
+		}
+		buf = make([]uint16, used/2+1)
 	}
-	return windows.UTF16ToString(buf)
+	return ""
 }
 
 func formatEventMessage(provider string, ev uintptr) string {

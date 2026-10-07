@@ -125,6 +125,31 @@ func loadIdentity(dir string) (identity, error) {
 	return id, nil
 }
 
+func Reseal(dir string) (int, error) {
+	dir = dirOrDefault(dir)
+	n := 0
+	for _, path := range []string{filepath.Join(dir, "identity"), PendingKeyPath(dir)} {
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		all := parseINI(f)
+		f.Close()
+		vals := all[""]
+		out, ok := secret.Reseal(vals["key"])
+		if !ok {
+			continue
+		}
+		vals["key"] = out
+		if err := writeINI(path, all); err != nil {
+			return n, err
+		}
+		n++
+	}
+	m, err := secret.ResealStore(dir)
+	return n + m, err
+}
+
 func SetAsideIdentity(dir string) (string, error) {
 	return setAsideIdentity(dir, "undecryptable")
 }

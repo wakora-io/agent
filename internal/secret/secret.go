@@ -94,15 +94,36 @@ func Encrypt(plain string) (string, error) {
 }
 
 func Decrypt(enc string) (string, error) {
+	plain, _, err := decrypt(enc)
+	return plain, err
+}
+
+func decrypt(enc string) (string, bool, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	plain, err := decryptWith(raw, true)
-	if err != nil && localSeed != "" {
-		return decryptWith(raw, false)
+	if err == nil || localSeed == "" {
+		return plain, false, err
 	}
-	return plain, err
+	plain, err = decryptWith(raw, false)
+	return plain, err == nil, err
+}
+
+func Reseal(enc string) (string, bool) {
+	if localSeed == "" || enc == "" {
+		return enc, false
+	}
+	plain, legacy, err := decrypt(enc)
+	if err != nil || !legacy {
+		return enc, false
+	}
+	out, err := Encrypt(plain)
+	if err != nil {
+		return enc, false
+	}
+	return out, true
 }
 
 func decryptWith(raw []byte, withSeed bool) (string, error) {

@@ -1,6 +1,7 @@
 package defs
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -10,7 +11,12 @@ import (
 	"github.com/gosnmp/gosnmp"
 )
 
-const trapEventCap = 100
+const (
+	trapEventCap         = 100
+	trapPacketMax        = 65535
+	usmUnknownEngineIDs  = ".1.3.6.1.6.3.15.1.1.4.0"
+	trapReadErrorBackoff = 100 * time.Millisecond
+)
 
 var trapNames = map[string]string{
 	"1.3.6.1.6.3.1.1.5.1": "coldStart",
@@ -47,7 +53,8 @@ type TrapListener struct {
 	allow   map[string]bool
 	lastErr error
 
-	tl *gosnmp.TrapListener
+	conn          *net.UDPConn
+	unknownEngine uint32
 }
 
 func NewTrapListener(port int) *TrapListener {
@@ -62,30 +69,116 @@ func (t *TrapListener) Port() int { return t.port }
 func (t *TrapListener) SetV3(a V3Auth) { t.v3 = &a }
 
 func (t *TrapListener) Start() {
-	tl := gosnmp.NewTrapListener()
+	params := gosnmp.Default
 	if t.v3 != nil {
-		params, err := v3ListenerParams(*t.v3)
+		p, err := v3ListenerParams(*t.v3)
 		if err != nil {
-			t.mu.Lock()
-			t.lastErr = err
-			t.mu.Unlock()
+			t.setErr(err)
 			return
 		}
-		tl.Params = params
-	} else {
-		tl.Params = gosnmp.Default
+		params = p
 	}
-	tl.OnNewTrap = func(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
-		defer recoverListener("trap", t.port)
-		t.ingest(addr.IP.String(), packet)
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: t.port})
+	if err != nil {
+		t.setErr(err)
+		return
 	}
-	t.tl = tl
-	go func() {
-		err := tl.Listen(fmt.Sprintf("0.0.0.0:%d", t.port))
-		t.mu.Lock()
-		t.lastErr = err
-		t.mu.Unlock()
-	}()
+	t.mu.Lock()
+	t.conn = conn
+	t.mu.Unlock()
+	go t.serve(conn, params)
+}
+
+func (t *TrapListener) setErr(err error) {
+	t.mu.Lock()
+	t.lastErr = err
+	t.mu.Unlock()
+}
+
+func (t *TrapListener) serve(conn *net.UDPConn, params *gosnmp.GoSNMP) {
+	buf := make([]byte, trapPacketMax)
+	for {
+		n, addr, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			t.setErr(err)
+			time.Sleep(trapReadErrorBackoff)
+			continue
+		}
+		source := addr.IP.String()
+		if !t.admits(source) {
+			continue
+		}
+		t.handle(conn, params, append([]byte(nil), buf[:n]...), addr, source)
+	}
+}
+
+func (t *TrapListener) admits(source string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.allow[source] {
+		t.dropped++
+		return false
+	}
+	return true
+}
+
+func (t *TrapListener) handle(conn *net.UDPConn, params *gosnmp.GoSNMP, msg []byte, addr *net.UDPAddr, source string) {
+	defer recoverListener("trap", t.port)
+	packet, err := params.UnmarshalTrap(msg, false)
+	if err != nil {
+		return
+	}
+	if t.unknownEngineReported(conn, params, packet, addr) {
+		return
+	}
+	t.ingest(source, packet)
+	if packet.PDUType != gosnmp.InformRequest {
+		return
+	}
+	packet.PDUType = gosnmp.GetResponse
+	packet.Error = gosnmp.NoError
+	packet.ErrorIndex = 0
+	if out, err := packet.MarshalMsg(); err == nil {
+		_, _ = conn.WriteToUDP(out, addr)
+	}
+}
+
+func (t *TrapListener) unknownEngineReported(conn *net.UDPConn, params *gosnmp.GoSNMP, packet *gosnmp.SnmpPacket, addr *net.UDPAddr) bool {
+	if packet.Version != gosnmp.Version3 || packet.SecurityModel != gosnmp.UserSecurityModel || params.SecurityModel != gosnmp.UserSecurityModel {
+		return false
+	}
+	own, ok := params.SecurityParameters.(*gosnmp.UsmSecurityParameters)
+	if !ok {
+		return false
+	}
+	theirs, ok := packet.SecurityParameters.(*gosnmp.UsmSecurityParameters)
+	if !ok {
+		return false
+	}
+	id := theirs.AuthoritativeEngineID
+	if id == own.AuthoritativeEngineID || (len(id) >= 5 && len(id) <= 32) {
+		return false
+	}
+	t.mu.Lock()
+	t.unknownEngine++
+	count := t.unknownEngine
+	t.mu.Unlock()
+	sp, ok := theirs.Copy().(*gosnmp.UsmSecurityParameters)
+	if !ok {
+		return true
+	}
+	sp.AuthoritativeEngineID = own.AuthoritativeEngineID
+	packet.PDUType = gosnmp.Report
+	packet.MsgFlags &= gosnmp.AuthPriv
+	packet.SecurityParameters = sp
+	packet.Variables = []gosnmp.SnmpPDU{{Name: usmUnknownEngineIDs, Value: int(count), Type: gosnmp.Integer}}
+	if out, err := packet.MarshalMsg(); err == nil {
+		_, _ = conn.WriteToUDP(out, addr)
+	}
+	return true
 }
 
 func v3ListenerParams(a V3Auth) (*gosnmp.GoSNMP, error) {
@@ -124,8 +217,12 @@ func v3ListenerParams(a V3Auth) (*gosnmp.GoSNMP, error) {
 }
 
 func (t *TrapListener) Close() {
-	if t.tl != nil {
-		t.tl.Close()
+	t.mu.Lock()
+	c := t.conn
+	t.conn = nil
+	t.mu.Unlock()
+	if c != nil {
+		_ = c.Close()
 	}
 }
 

@@ -99,7 +99,7 @@ func main() {
 	}
 
 	if args := flag.Args(); len(args) > 0 && args[0] == "uninstall" {
-		runUninstall(*configDir, args[1:])
+		runUninstall(*configDir, args[1:], *endpoint, *certPin)
 		return
 	}
 
@@ -113,6 +113,10 @@ func main() {
 			log.Fatal(seedErr)
 		}
 		log.Printf("%v", seedErr)
+	} else if n, err := config.Reseal(*configDir); err != nil {
+		log.Printf("re-sealing values readable without the seed failed: %v", err)
+	} else if n > 0 {
+		log.Printf("re-sealed %d stored value(s) that were readable without the seed", n)
 	}
 	cfg, err := config.Load(*configDir)
 	sealed := errors.Is(err, config.ErrIdentitySealed)

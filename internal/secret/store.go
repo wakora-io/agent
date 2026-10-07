@@ -89,6 +89,26 @@ func GetCred(dir, name string) (Cred, bool) {
 	return c, true
 }
 
+func ResealStore(dir string) (int, error) {
+	all, err := loadRaw(dir)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, fields := range all {
+		for k, enc := range fields {
+			if out, ok := Reseal(enc); ok {
+				fields[k] = out
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	return n, writeRaw(dir, all)
+}
+
 var storeDir string
 
 func Sealed(name string) bool {

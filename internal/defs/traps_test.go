@@ -1,7 +1,9 @@
 package defs
 
 import (
+	"net"
 	"testing"
+	"time"
 
 	"github.com/gosnmp/gosnmp"
 
@@ -42,6 +44,65 @@ func TestTrapListenerAllowFilter(t *testing.T) {
 	if events, _, _, _ := l.Drain(); len(events) != 0 {
 		t.Fatal("drain must clear buffered events")
 	}
+}
+
+func TestTrapListenerChecksTheSourceBeforeParsing(t *testing.T) {
+	probe, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.LocalAddr().(*net.UDPAddr).Port
+	probe.Close()
+
+	l := NewTrapListener(port)
+	l.SetAllowed([]string{"127.0.0.1"})
+	l.Start()
+	defer l.Close()
+
+	send := func(payload []byte) {
+		c, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		if _, err := c.Write(payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := &gosnmp.GoSNMP{Version: gosnmp.Version2c, Community: "public", Target: "127.0.0.1", Port: uint16(port)}
+	pdu, err := g.SnmpEncodePacket(gosnmp.SNMPv2Trap, []gosnmp.SnmpPDU{
+		{Name: ".1.3.6.1.2.1.1.3.0", Type: gosnmp.TimeTicks, Value: uint32(1)},
+		{Name: ".1.3.6.1.6.3.1.1.4.1.0", Type: gosnmp.ObjectIdentifier, Value: ".1.3.6.1.6.3.1.1.5.4"},
+	}, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor := func(cond func(events []TrapEvent, total, dropped uint64) bool) {
+		var events []TrapEvent
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			ev, total, dropped, _ := l.Drain()
+			events = append(events, ev...)
+			if cond(events, total, dropped) {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatal("listener did not reach the expected state")
+	}
+
+	send(pdu)
+	waitFor(func(ev []TrapEvent, total, dropped uint64) bool {
+		return total == 1 && len(ev) == 1 && ev[0].Name == "linkUp"
+	})
+
+	l.SetAllowed([]string{"192.0.2.1"})
+	send([]byte("not an snmp packet at all"))
+	send(pdu)
+	waitFor(func(ev []TrapEvent, total, dropped uint64) bool {
+		return total == 1 && dropped == 2 && len(ev) == 0
+	})
 }
 
 func TestTrapBufferCap(t *testing.T) {

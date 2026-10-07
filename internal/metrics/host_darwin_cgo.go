@@ -11,11 +11,17 @@ package metrics
 #include <stdlib.h>
 #include <string.h>
 
+static mach_port_t host_port(void) {
+    static mach_port_t port = MACH_PORT_NULL;
+    if (port == MACH_PORT_NULL) port = mach_host_self();
+    return port;
+}
+
 static int cpu_ticks(unsigned long long *user, unsigned long long *system,
                      unsigned long long *idle, unsigned long long *nice) {
     host_cpu_load_info_data_t info;
     mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
-    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO,
+    if (host_statistics(host_port(), HOST_CPU_LOAD_INFO,
                         (host_info_t)&info, &count) != KERN_SUCCESS) {
         return -1;
     }
@@ -30,12 +36,12 @@ static int vm_mem(unsigned long long *active, unsigned long long *wired,
                   unsigned long long *compressed, unsigned long long *pagesize) {
     vm_statistics64_data_t vm;
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+    if (host_statistics64(host_port(), HOST_VM_INFO64,
                           (host_info64_t)&vm, &count) != KERN_SUCCESS) {
         return -1;
     }
     vm_size_t ps = 0;
-    host_page_size(mach_host_self(), &ps);
+    host_page_size(host_port(), &ps);
     *active = vm.active_count;
     *wired = vm.wire_count;
     *compressed = vm.compressor_page_count;
