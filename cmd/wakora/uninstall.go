@@ -64,9 +64,9 @@ func runUninstall(configDir string, args []string, endpoint, certPin string) {
 		if url := deriveURL(cfg.Endpoint, "/deregister"); url != "" {
 			httpc := transport.PinnedClient(pin)
 			if err := bootstrap.Deregister(httpc, url, cfg.ServerID, cfg.Key); err != nil {
-				log.Printf("gateway deregister failed (%v) - cleaning up locally; remove the host in the console too", err)
+				log.Printf("deregister failed (%v) - cleaning up locally; remove the host in the console too", err)
 			} else {
-				log.Print("deregistered from the gateway (key revoked, telemetry purged)")
+				log.Print("deregistered (key revoked, telemetry purged)")
 			}
 		}
 	}

@@ -44,6 +44,8 @@ func DefaultConfig() Config {
 			"host.load15",
 			"%uptime%",
 			"svc.apm-profile.%",
+			"%days_left",
+			"svc.pmg.day_%",
 		},
 		Classes: []Class{
 			{Match: "host.load%per_core", MinDelta: 0.5, UpOnly: true},

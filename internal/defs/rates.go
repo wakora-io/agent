@@ -153,11 +153,13 @@ func applyRates(o *Outcome, service string, p protocol.Probe, now time.Time) {
 		}
 	}
 	var out []protocol.MetricPoint
-	for _, pt := range o.Metrics {
+	for i := range o.Metrics {
+		pt := o.Metrics[i]
 		rules := wanted[pt.Name]
 		if len(rules) == 0 {
 			continue
 		}
+		o.Metrics[i].NoAnomaly = true
 		key := rateKey(service, pt.Name, pt.Tags)
 		prev, seen := rateSeen[key]
 		rateSeen[key] = rateMark{value: pt.Value, at: now}

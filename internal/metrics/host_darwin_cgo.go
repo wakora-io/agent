@@ -49,7 +49,6 @@ static int vm_mem(unsigned long long *active, unsigned long long *wired,
     return 0;
 }
 
-// net_bytes sums rx/tx over non-loopback interfaces via the routing-table sysctl.
 static int net_bytes(unsigned long long *rx, unsigned long long *tx) {
     int mib[6] = {CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0};
     size_t len = 0;

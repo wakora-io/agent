@@ -48,6 +48,29 @@ func TestRatesNeedTwoSamples(t *testing.T) {
 	}
 }
 
+func TestRateSourceLeavesTheDetector(t *testing.T) {
+	rateReset()
+	p := protocol.Probe{Rates: []protocol.RateRule{{Name: "svc.mysql.aborted_connects", Per: "min"}}}
+	t0 := time.Unix(1500, 0)
+	o := Outcome{Metrics: []protocol.MetricPoint{{Name: "svc.mysql.aborted_connects", Value: 100}, {Name: "svc.mysql.connections", Value: 7}}}
+	applyRates(&o, "mysql", p, t0)
+	o = Outcome{Metrics: []protocol.MetricPoint{{Name: "svc.mysql.aborted_connects", Value: 160}, {Name: "svc.mysql.connections", Value: 7}}}
+	applyRates(&o, "mysql", p, t0.Add(60*time.Second))
+	seen := map[string]bool{}
+	for _, m := range o.Metrics {
+		seen[m.Name] = m.NoAnomaly
+	}
+	if !seen["svc.mysql.aborted_connects"] {
+		t.Fatal("a counter with a declared rate must not reach the anomaly detector")
+	}
+	if v, ok := seen["svc.mysql.aborted_connects_per_min"]; !ok || v {
+		t.Fatalf("the rate itself must reach the detector, present=%v", ok)
+	}
+	if seen["svc.mysql.connections"] {
+		t.Fatal("a gauge without a rate stays with the detector")
+	}
+}
+
 func TestRatesSkipACounterReset(t *testing.T) {
 	rateReset()
 	p := protocol.Probe{Rates: []protocol.RateRule{{Name: "svc.redis.total_commands_processed"}}}
