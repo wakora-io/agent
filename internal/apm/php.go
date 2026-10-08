@@ -103,6 +103,15 @@ func OtelArtifactName(r PHPRuntime) string {
 	return fmt.Sprintf("opentelemetry-%s-%s-%s-%s.so", r.VersionShort, r.ThreadTag(), r.Arch, r.Libc)
 }
 
+const OtelExtLine = "1.4"
+
+func OtelArtifactCurrent(r PHPRuntime) string {
+	if r.VersionShort == "" || r.Arch == "" || r.Libc == "" {
+		return ""
+	}
+	return fmt.Sprintf("opentelemetry-%s-%s-%s-%s-%s.so", OtelExtLine, r.VersionShort, r.ThreadTag(), r.Arch, r.Libc)
+}
+
 const PHPSDKBundle = "opentelemetry-php-sdk"
 
 func PHPSDKBundleFor(versionShort string) string {

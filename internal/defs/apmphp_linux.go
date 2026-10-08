@@ -39,7 +39,7 @@ func phpFpmBinary(opts map[string]string) string {
 		return opts["binary"]
 	}
 	candidates := []string{"php-fpm"}
-	for _, v := range []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4", "7.3", "7.2"} {
+	for _, v := range phpMinorsNewestFirst() {
 		short := strings.ReplaceAll(v, ".", "")
 		candidates = append(candidates, "php-fpm"+v, "php-fpm"+short, "php"+short+"-php-fpm")
 	}
@@ -53,7 +53,7 @@ func phpFpmBinary(opts map[string]string) string {
 
 func phpCLIBinary() string {
 	candidates := []string{"php"}
-	for _, v := range []string{"8.4", "8.3", "8.2", "8.1", "8.0", "7.4", "7.3", "7.2"} {
+	for _, v := range phpMinorsNewestFirst() {
 		candidates = append(candidates, "php"+v)
 	}
 	for _, c := range candidates {
@@ -148,7 +148,7 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 		"arch":         primary.rt.Arch,
 		"libc":         primary.rt.Libc,
 		"sapi":         sapi,
-		"otelArtifact": apm.OtelArtifactName(primary.rt),
+		"otelArtifact": otelArtifactFor(stateDir, primary.rt),
 	}
 	if sapi == "fpm" && (anyLoaded || p.Options["autostage"] == "1") && dirExists("/etc/nginx") {
 		res := basedirOutsideScan(filepath.Join(stateDir, "apm"))
@@ -186,7 +186,7 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 		if len(targets) > 1 {
 			stageID += "-" + minor
 			stageKey = "stage." + minor
-			o.Facts["artifact."+minor] = apm.OtelArtifactName(st.rt)
+			o.Facts["artifact."+minor] = otelArtifactFor(stateDir, st.rt)
 		}
 		if st.loaded {
 			o.Facts[stageKey] = "active"
@@ -198,7 +198,7 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 				}))
 			}
 			if p.Options["autostage"] == "1" && p.Options["autoprovision"] == "1" && Provision != nil {
-				artifact := apm.OtelArtifactName(st.rt)
+				artifact := otelArtifactFor(stateDir, st.rt)
 				if Provision.NeedsRefresh(artifact) {
 					Provision.Ensure(artifact, false)
 					o.Facts[stageKey] = "active (fetching new signed build)"
@@ -528,6 +528,33 @@ func fpmServiceName(opts map[string]string) string {
 	return "php-fpm"
 }
 
+func phpMinorsNewestFirst() []string {
+	var out []string
+	for m := 9; m >= 0; m-- {
+		out = append(out, fmt.Sprintf("8.%d", m))
+	}
+	return append(out, "7.4", "7.3", "7.2")
+}
+
+func otelArtifactFor(stateDir string, rt apm.PHPRuntime) string {
+	legacy := apm.OtelArtifactName(rt)
+	current := apm.OtelArtifactCurrent(rt)
+	if legacy == "" || current == "" {
+		return legacy
+	}
+	dir := filepath.Join(stateDir, "apm")
+	if fileExists(filepath.Join(dir, legacy)) {
+		return legacy
+	}
+	if fileExists(filepath.Join(dir, current)) {
+		return current
+	}
+	if Provision != nil && Provision.InChannel(current) {
+		return current
+	}
+	return legacy
+}
+
 func dirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
@@ -551,7 +578,7 @@ func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st
 		return
 	}
 	_ = apm.ResetStaged(stateDir, stageID+"-prep")
-	artifact := apm.OtelArtifactName(st.rt)
+	artifact := otelArtifactFor(stateDir, st.rt)
 	if artifact == "" {
 		o.Facts[stageKey] = "blocked: incomplete runtime fingerprint"
 		return

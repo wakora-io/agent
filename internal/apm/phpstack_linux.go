@@ -29,6 +29,7 @@ type phpOffsets struct {
 }
 
 var phpOffsetTable = map[string]phpOffsets{
+	"8.5": {egCurrentExecuteData: 512, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 168, zstrLen: 16, zstrVal: 24, ceName: 8},
 	"8.4": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 168, zstrLen: 16, zstrVal: 24, ceName: 8},
 	"8.3": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 144, zstrLen: 16, zstrVal: 24, ceName: 8},
 	"8.2": {egCurrentExecuteData: 488, edFunc: 24, edPrev: 48, funcType: 0, funcName: 8, funcScope: 16, funcFilename: 152, zstrLen: 16, zstrVal: 24, ceName: 8},

@@ -4,6 +4,16 @@ package apm
 
 import "testing"
 
+func TestPHP85OffsetsMoveTheExecuteDataPointer(t *testing.T) {
+	o85, ok := phpOffsetTable["8.5"]
+	if !ok {
+		t.Fatal("no offsets for php 8.5")
+	}
+	if o85.egCurrentExecuteData != 512 || o85.egCurrentExecuteData == phpOffsetTable["8.4"].egCurrentExecuteData {
+		t.Fatalf("8.5 moved current_execute_data to 512, got %d", o85.egCurrentExecuteData)
+	}
+}
+
 func TestClassifyWPPath(t *testing.T) {
 	cases := map[string]string{
 		"/var/www/wordpress/wp-content/plugins/woocommerce/includes/class-wc-query.php": "plugin:woocommerce",

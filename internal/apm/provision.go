@@ -144,6 +144,11 @@ func (p *Provisioner) LocalSha(name string) string {
 	return strings.TrimSpace(string(b))
 }
 
+func (p *Provisioner) InChannel(name string) bool {
+	_, err := p.lookup(name)
+	return err == nil
+}
+
 func (p *Provisioner) NeedsRefresh(name string) bool {
 	art, err := p.lookup(name)
 	if err != nil || art.Sha256 == "" {

@@ -58,6 +58,16 @@ func TestOtelArtifactName(t *testing.T) {
 	}
 }
 
+func TestOtelArtifactCurrentCarriesTheLine(t *testing.T) {
+	rt := PHPRuntime{VersionShort: "8.5", ThreadSafe: false, Arch: "amd64", Libc: "glibc"}
+	if got := OtelArtifactCurrent(rt); got != "opentelemetry-1.4-8.5-nts-amd64-glibc.so" {
+		t.Fatalf("current line artifact: %q", got)
+	}
+	if OtelArtifactCurrent(rt) == OtelArtifactName(rt) {
+		t.Fatal("the current line must never reuse a legacy name, the channel keeps those frozen")
+	}
+}
+
 func TestModuleLoaded(t *testing.T) {
 	list := "[PHP Modules]\nCore\ncurl\nopentelemetry\nmysqli\n"
 	if !ModuleLoaded(list, "opentelemetry") {
