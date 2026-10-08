@@ -94,7 +94,6 @@ if (PHP_SAPI !== 'cli'
                             CURLOPT_TIMEOUT_MS => 400,
                         ]);
                         curl_exec($wakoraRumCh);
-                        curl_close($wakoraRumCh);
                     } else {
                         @file_get_contents($wakoraRumEp, false, stream_context_create(['http' => [
                             'method' => 'POST',

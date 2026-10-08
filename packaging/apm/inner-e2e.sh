@@ -1,6 +1,7 @@
 #!/bin/sh
 set -e
 SO="$1"
+printf 'error_reporting=E_ALL\nlog_errors=1\nerror_log=/tmp/php-errors.log\ndisplay_errors=0\n' > /usr/local/etc/php/conf.d/zz-e2e-errors.ini
 mkdir /sdk /docroot /recv
 tar -C /sdk -xzf /art/opentelemetry-php-sdk.tar.gz
 
@@ -16,7 +17,6 @@ cat > /docroot/x.php <<'EOF'
 $ch = curl_init('http://127.0.0.1:4318/ping');
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_exec($ch);
-curl_close($ch);
 echo 'ok';
 EOF
 
@@ -333,3 +333,11 @@ case "$body" in
 esac
 rm -f /rum-sites.php
 echo "e2e ok: a page carrying the hosted snippet stays untouched - no double collection"
+
+problems="$(grep -E 'Deprecated|Warning|Notice|Fatal' /tmp/php-errors.log 2>/dev/null | grep -v 'in Command line code' || true)"
+if [ -n "$problems" ]; then
+  echo "$problems"
+  echo "php logged problems under the extension and the sdk - they would land in client error logs"
+  exit 1
+fi
+echo "e2e ok: php logged no deprecation, warning, notice or fatal"

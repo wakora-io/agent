@@ -15,16 +15,23 @@ php -r "copy('https://getcomposer.org/installer', '/tmp/composer-setup.php');"
 php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer --quiet
 mkdir /build
 cd /build
-composer init --no-interaction --name wakora/otel-php-sdk --description "Wakora vendored OTel PHP SDK bundle" >/dev/null 2>&1
-composer config platform-check false
-COMPOSER_ALLOW_SUPERUSER=1 composer require --no-interaction \
-  --ignore-platform-req=ext-opentelemetry \
-  --ignore-platform-req=ext-mysqli \
-  open-telemetry/sdk \
-  open-telemetry/exporter-otlp \
-  guzzlehttp/guzzle \
-  open-telemetry/opentelemetry-auto-wordpress \
-  $PKGS
+if [ -f /pub/composer.lock ]; then
+  cp /pub/composer.json /pub/composer.lock /build/
+  COMPOSER_ALLOW_SUPERUSER=1 composer install --no-interaction \
+    --ignore-platform-req=ext-opentelemetry \
+    --ignore-platform-req=ext-mysqli
+else
+  composer init --no-interaction --name wakora/otel-php-sdk --description "Wakora vendored OTel PHP SDK bundle" >/dev/null 2>&1
+  composer config platform-check false
+  COMPOSER_ALLOW_SUPERUSER=1 composer require --no-interaction \
+    --ignore-platform-req=ext-opentelemetry \
+    --ignore-platform-req=ext-mysqli \
+    open-telemetry/sdk \
+    open-telemetry/exporter-otlp \
+    guzzlehttp/guzzle \
+    open-telemetry/opentelemetry-auto-wordpress \
+    $PKGS
+fi
 sed "s/PHP_VERSION_ID < 80200/PHP_VERSION_ID < $MINID/" /in/wakora-otel.php > /build/wakora-otel.php
 php -l /build/wakora-otel.php >/dev/null
 tar -C /build -czf "/out/$OUTNAME.tar.gz" composer.json composer.lock vendor wakora-otel.php
