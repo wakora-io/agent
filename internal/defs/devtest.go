@@ -1,6 +1,7 @@
 package defs
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gosnmp/gosnmp"
@@ -8,6 +9,23 @@ import (
 	"wakora.io/agent/internal/protocol"
 	"wakora.io/agent/internal/secret"
 )
+
+func ServiceSecret(ds []protocol.Definition, name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, d := range ds {
+		if strings.HasPrefix(d.Service, "device_") {
+			continue
+		}
+		for _, p := range d.Probes {
+			if p.Secret == name || p.SecretOpt == name {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func DeviceTest(t protocol.DevTest, resolve func(string) (secret.Cred, bool)) protocol.DevTestResult {
 	out := protocol.DevTestResult{Nonce: t.Nonce}

@@ -435,7 +435,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					return err
 				}
 			case t := <-tkick:
-				res := defs.DeviceTest(t, a.resolveSecret)
+				res := a.deviceTest(t)
 				raw, err := json.Marshal(res)
 				if err == nil {
 					if err := conn.Send(protocol.Message{Type: protocol.TypeDevTest, Payload: raw}); err != nil {
@@ -1385,6 +1385,16 @@ func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
 	oldRaw, _ := json.Marshal(a.probeFacts[key])
 	a.probeFacts[key] = facts
 	return !bytes.Equal(newRaw, oldRaw)
+}
+
+func (a *Agent) deviceTest(t protocol.DevTest) protocol.DevTestResult {
+	a.mu.Lock()
+	taken := defs.ServiceSecret(a.defs, t.Secret)
+	a.mu.Unlock()
+	if taken {
+		return protocol.DevTestResult{Nonce: t.Nonce, Error: "secret " + t.Secret + " belongs to a service on this host and is never sent to a device"}
+	}
+	return defs.DeviceTest(t, a.resolveSecret)
 }
 
 func (a *Agent) resolveSecret(name string) (secret.Cred, bool) {

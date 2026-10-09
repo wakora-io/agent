@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,5 +89,25 @@ func TestRefusedListenerIsClosed(t *testing.T) {
 	a.closeUnusedListeners()
 	if len(a.syslogL) != 0 {
 		t.Fatal("a listener of a refused probe stayed open")
+	}
+}
+
+func TestDeviceTestNeverSendsAServiceSecret(t *testing.T) {
+	a := &Agent{
+		cfg: &config.Config{},
+		defs: []protocol.Definition{
+			{Service: "mysql", Probes: []protocol.Probe{{Type: "sql", Name: "status", Secret: "mysql"}}},
+			{Service: "linstor-controller", Probes: []protocol.Probe{{Type: "http", Name: "api", SecretOpt: "linstor-controller"}}},
+			{Service: "device_192_0_2_1", Probes: []protocol.Probe{{Type: "snmp", Name: "snmp", Secret: "snmp-lab"}}},
+		},
+	}
+	for _, name := range []string{"mysql", "linstor-controller"} {
+		res := a.deviceTest(protocol.DevTest{Nonce: "n", Target: "192.0.2.1", Secret: name})
+		if res.OK || res.Nonce != "n" || res.Error == "" || !strings.Contains(res.Error, "never sent to a device") {
+			t.Fatalf("secret %s reached a device test: %+v", name, res)
+		}
+	}
+	if defs.ServiceSecret(a.defs, "snmp-lab") || defs.ServiceSecret(a.defs, "") || defs.ServiceSecret(a.defs, "new-cred") {
+		t.Fatal("a device or new credential was taken for a service secret")
 	}
 }
