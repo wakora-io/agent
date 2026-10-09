@@ -74,7 +74,7 @@ func convertAttrsPb(kvs []*commonpb.KeyValue) map[string]string {
 		if len(out) >= otlpMaxAttrs {
 			break
 		}
-		if kv.Key == "" {
+		if kv.Key == "" || redact.VisitorAddress(kv.Key) {
 			continue
 		}
 		k := trim(kv.Key)

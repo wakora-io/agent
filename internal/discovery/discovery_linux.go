@@ -499,7 +499,7 @@ func addCronEntry(agg map[string]*cronInfo, user, cmd, sched, source string) {
 	if len(agg) >= cronJobCap {
 		return
 	}
-	cmd = redact.Scrub(cmd)
+	cmd = redact.ScrubCommand(cmd)
 	if len(cmd) > 200 {
 		cmd = cmd[:200]
 	}

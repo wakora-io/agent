@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"wakora.io/agent/internal/protocol"
 )
@@ -145,6 +147,41 @@ func writeRumSites(dir string, sites []string) {
 	}
 }
 
+const (
+	rumSitePerMin    = 6000
+	rumVisitorPerMin = 60
+	rumLimiterKeys   = 20000
+)
+
+type rumLimiter struct {
+	mu      sync.Mutex
+	window  int64
+	site    map[string]int
+	visitor map[string]int
+}
+
+func (l *rumLimiter) allow(site, ip string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if w := now.Unix() / 60; w != l.window || len(l.visitor) > rumLimiterKeys {
+		l.window = w
+		l.site = map[string]int{}
+		l.visitor = map[string]int{}
+	}
+	if l.site[site] >= rumSitePerMin {
+		return false
+	}
+	if ip != "" {
+		k := site + "|" + ip
+		if l.visitor[k] >= rumVisitorPerMin {
+			return false
+		}
+		l.visitor[k]++
+	}
+	l.site[site]++
+	return true
+}
+
 func (a *Agent) handleRumBeacon(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -171,6 +208,10 @@ func (a *Agent) handleRumBeacon(w http.ResponseWriter, r *http.Request) {
 	it.Browser = clip(it.Browser, 30)
 	if it.IP != "" && net.ParseIP(it.IP) == nil {
 		it.IP = ""
+	}
+	if !a.rumLimit.allow(it.Site, it.IP, time.Now()) {
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 	if it.Trace != "" && !rumTraceRe.MatchString(it.Trace) {
 		it.Trace = ""

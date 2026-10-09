@@ -90,7 +90,7 @@ func runAPMNodeWindows(o *Outcome, service string, p protocol.Probe, stateDir st
 		return masters[i].app < masters[j].app
 	})
 	for i := range masters {
-		masters[i].version = nodeVersionOf(masters[i].exe)
+		masters[i].version = fileVersion(masters[i].exe)
 	}
 	o.Check.Status = "ok"
 	prim := masters[0]

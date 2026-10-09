@@ -88,6 +88,8 @@ type Agent struct {
 	spans             chan []protocol.Span
 	rum               chan []protocol.RumItem
 	rumAllowed        atomic.Value
+	rumLimit          rumLimiter
+	cfgGen            atomic.Uint64
 	profiles          chan defs.Outcome
 	profiling         map[string]bool
 	vhostDone         chan probeDone
@@ -350,6 +352,7 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		dkick := make(chan struct{}, 1)
 		tkick := make(chan protocol.DevTest, 4)
 		readErr := make(chan error, 1)
+		a.cfgGen.Store(0)
 		go func() {
 			for {
 				m, err := conn.Recv()
@@ -959,6 +962,12 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 				if !defs.HasCapability(facts, p.Capability) {
 					continue
 				}
+			}
+			if p.Denied != "" {
+				if _, err := a.emitOutcome(conn, d.Service, d.Service+"/"+p.Name, defs.DeniedOutcome(d.Service, p)); err != nil {
+					return err
+				}
+				continue
 			}
 			if p.Type == "logtail" {
 				if err := a.runLogtail(conn, d.Service, p); err != nil {
@@ -1813,7 +1822,7 @@ func (a *Agent) snmpTargets() map[string][]string {
 	out := map[string][]string{}
 	for _, d := range a.active {
 		for _, p := range d.Probes {
-			if p.Type != "snmp" || p.Target == "" {
+			if p.Type != "snmp" || p.Target == "" || p.Denied != "" {
 				continue
 			}
 			host := p.Target
@@ -2013,6 +2022,9 @@ func (a *Agent) closeUnusedListeners() {
 			continue
 		}
 		for _, p := range d.Probes {
+			if p.Denied != "" {
+				continue
+			}
 			if ports, ok := want[p.Type]; ok {
 				ports[listenerPort(p)] = true
 			}
@@ -2133,7 +2145,10 @@ func (a *Agent) runConfigFetch(conn transport.Conn, service string, p protocol.P
 	if err != nil {
 		return fail(err.Error())
 	}
-	cfgText := defs.MaskConfig(defs.NormalizeConfig(raw, p.Normalize), p.Mask)
+	cfgText, err := defs.MaskConfig(defs.NormalizeConfig(raw, p.Normalize), p.Mask)
+	if err != nil {
+		return fail(err.Error())
+	}
 	sha := defs.ConfigSha(cfgText)
 	check.Status = "ok"
 	check.LatencyMs = float64(time.Since(started).Milliseconds())
@@ -2522,6 +2537,13 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 		var set protocol.DefinitionSet
 		if err := json.Unmarshal(m.Payload, &set); err != nil {
 			return
+		}
+		if set.Gen != 0 {
+			if last := a.cfgGen.Load(); set.Gen <= last {
+				log.Printf("config generation %d arrived after %d on this connection, ignored", set.Gen, last)
+				return
+			}
+			a.cfgGen.Store(set.Gen)
 		}
 		verified := defs.Verify(set, a.publisherKey, defs.TenantDefsKey(a.cfg.StateDir(), set))
 		deny := map[string]bool{}

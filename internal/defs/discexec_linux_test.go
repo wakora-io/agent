@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,41 @@ func TestTrustedCmdDropsToTheOwnerOfAUserBinary(t *testing.T) {
 	}
 	if got := cmd.SysProcAttr.Credential.Uid; got != 4242 {
 		t.Fatalf("dropped to uid %d, want the file owner 4242", got)
+	}
+}
+
+func TestTrustedCmdDropsSupplementaryGroups(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown the fixture")
+	}
+	if _, err := os.Stat("/usr/bin/id"); err != nil {
+		t.Skip("no /usr/bin/id here")
+	}
+	dir, err := os.MkdirTemp("", "wakora-drop-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "node")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n/usr/bin/id -G\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(p, 4242, 4242); err != nil {
+		t.Skipf("cannot chown here: %v", err)
+	}
+	cmd, err := trustedCmd(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skipf("the dropped child could not run here: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "4242" {
+		t.Fatalf("the dropped child kept extra groups: %q", got)
 	}
 }
 

@@ -72,6 +72,16 @@ var execAllowlist = map[string]bool{
 	"sshd": true,
 }
 
+func DeniedOutcome(service string, p protocol.Probe) Outcome {
+	return Outcome{Check: protocol.CheckResult{
+		CheckID:   service + "/" + p.Name,
+		Kind:      p.Type,
+		Status:    "fail",
+		Error:     p.Denied,
+		Timestamp: time.Now().Unix(),
+	}}
+}
+
 func RunProbe(service string, p protocol.Probe) Outcome {
 	return RunProbeWithSecrets(service, p, func(string) (secret.Cred, bool) { return secret.Cred{}, false })
 }
@@ -92,9 +102,7 @@ func RunProbeWithSecrets(service string, p protocol.Probe, resolve CredResolver)
 		}
 	}()
 	if p.Denied != "" {
-		o.Check.Status = "fail"
-		o.Check.Error = p.Denied
-		return o
+		return DeniedOutcome(service, p)
 	}
 	start := time.Now()
 	switch p.Type {

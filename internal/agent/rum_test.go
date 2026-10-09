@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"wakora.io/agent/internal/config"
 	"wakora.io/agent/internal/protocol"
@@ -64,6 +65,35 @@ func TestRumBeaconGate(t *testing.T) {
 	case <-a.rum:
 		t.Fatal("denied site forwarded")
 	default:
+	}
+}
+
+func TestRumLimiterCapsAVisitorAndASite(t *testing.T) {
+	var l rumLimiter
+	now := time.Unix(1_800_000_000, 0)
+	for i := 0; i < rumVisitorPerMin; i++ {
+		if !l.allow("shop.example.com", "203.0.113.9", now) {
+			t.Fatalf("beacon %d of a single visitor refused below the cap", i)
+		}
+	}
+	if l.allow("shop.example.com", "203.0.113.9", now) {
+		t.Fatal("one address flooding a site must be cut at the per-visitor cap")
+	}
+	if !l.allow("shop.example.com", "203.0.113.10", now) {
+		t.Fatal("another visitor must not pay for the flooder")
+	}
+	if !l.allow("shop.example.com", "203.0.113.9", now.Add(time.Minute)) {
+		t.Fatal("the next minute starts a fresh budget")
+	}
+	var s rumLimiter
+	for i := 0; i < rumSitePerMin; i++ {
+		s.allow("shop.example.com", "", now)
+	}
+	if s.allow("shop.example.com", "", now) {
+		t.Fatal("a site past its per-minute cap must be refused even with rotating or missing addresses")
+	}
+	if !s.allow("blog.example.net", "", now) {
+		t.Fatal("one site's flood must not starve another site")
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 
 func adminOwnedRoots() []string {
 	var out []string
-	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)", "ProgramData", "SystemRoot"} {
+	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)", "SystemRoot"} {
 		if v := os.Getenv(env); v != "" {
 			out = append(out, strings.ToLower(filepath.Clean(v))+string(filepath.Separator))
 		}

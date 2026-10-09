@@ -82,6 +82,13 @@ func SanitizeTenant(d *protocol.Definition) {
 	for i := range d.Probes {
 		p := &d.Probes[i]
 		t := strings.ToLower(strings.TrimSpace(p.Type))
+		if !granted[capCreds] {
+			p.Secret = ""
+			p.SecretOpt = ""
+		}
+		if !granted[capInsecure] {
+			p.Insecure = false
+		}
 		if t == "configfetch" && !isDevice {
 			p.Denied = "config backup runs only on approved network devices"
 			continue
@@ -94,13 +101,6 @@ func SanitizeTenant(d *protocol.Definition) {
 		} else if !probeFree[t] {
 			p.Denied = "probe type " + t + " is not available to workspace templates"
 			continue
-		}
-		if !granted[capCreds] {
-			p.Secret = ""
-			p.SecretOpt = ""
-		}
-		if !granted[capInsecure] {
-			p.Insecure = false
 		}
 		sanitizeProbeNames(p, prefixes)
 	}

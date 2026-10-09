@@ -85,7 +85,8 @@ func TestConvertOTLPRedactsQueryValuesOnBothWireFormats(t *testing.T) {
 		 "startTimeUnixNano":"100","endTimeUnixNano":"200",
 		 "attributes":[
 			{"key":"url.full","value":{"stringValue":"` + full + `"}},
-			{"key":"url.path","value":{"stringValue":"/v1/items"}}
+			{"key":"url.path","value":{"stringValue":"/v1/items"}},
+			{"key":"client.address","value":{"stringValue":"203.0.113.77"}}
 		 ],
 		 "status":{}}
 	]}]}]}`
@@ -110,6 +111,7 @@ func TestConvertOTLPRedactsQueryValuesOnBothWireFormats(t *testing.T) {
 				Attributes: []*commonpb.KeyValue{
 					{Key: "url.full", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: full}}},
 					{Key: "url.path", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "/v1/items"}}},
+					{Key: "http.client_ip", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "203.0.113.77"}}},
 				},
 			}}}},
 		}},
@@ -135,6 +137,11 @@ func TestConvertOTLPRedactsQueryValuesOnBothWireFormats(t *testing.T) {
 		}
 		if a["url.path"] != "/v1/items" {
 			t.Fatalf("%s wire format altered a plain path: %q", name, a["url.path"])
+		}
+		for k, v := range a {
+			if strings.Contains(v, "203.0.113.77") {
+				t.Fatalf("%s wire format kept the visitor address under %q", name, k)
+			}
 		}
 	}
 }

@@ -191,6 +191,26 @@ func TestVerifySanitisesTenantDefinitions(t *testing.T) {
 	}
 }
 
+func TestRefusedProbeKeepsNoCredential(t *testing.T) {
+	d := protocol.Definition{
+		Service:      "community_evil",
+		Capabilities: []string{"network"},
+		Probes: []protocol.Probe{
+			{Name: "cfg", Type: "configfetch", Target: "198.51.100.7", Secret: "mysql-monitor", Command: "cat"},
+			{Name: "tail", Type: "logs", Path: "/etc/shadow", Secret: "mysql-monitor", Insecure: true},
+		},
+	}
+	SanitizeTenant(&d)
+	for _, p := range d.Probes {
+		if p.Denied == "" {
+			t.Fatalf("probe %q must be refused", p.Type)
+		}
+		if p.Secret != "" || p.SecretOpt != "" || p.Insecure {
+			t.Fatalf("a refused %q probe still carries a credential or the tls opt-out", p.Type)
+		}
+	}
+}
+
 func TestDeniedProbeAnswersHonestly(t *testing.T) {
 	o := RunProbe("community_x", protocol.Probe{Name: "run", Type: "exec", Command: "systemctl", Denied: "this template runs without the exec capability"})
 	if o.Check.Status != "fail" {

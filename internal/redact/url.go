@@ -11,6 +11,12 @@ var urlInText = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s'"<>|\\]+`)
 
 var sensitiveHeader = regexp.MustCompile(`(?i)(authorization|cookie|token|api[_.\-]?key|secret|credential|password|passwd|session|signature|auth)`)
 
+var visitorKeys = map[string]bool{"client.address": true, "http.client_ip": true}
+
+func VisitorAddress(key string) bool {
+	return visitorKeys[key]
+}
+
 func Attr(key, value string) string {
 	if value == "" {
 		return value

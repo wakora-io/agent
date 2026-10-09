@@ -31,7 +31,7 @@ func trustedCmd(ctx context.Context, path string, args ...string) (*exec.Cmd, er
 		return nil, fmt.Errorf("defs: %s sits in a directory others can write, refusing to run it", path)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: st.Uid, Gid: st.Gid, NoSetGroups: true},
+		Credential: &syscall.Credential{Uid: st.Uid, Gid: st.Gid, Groups: []uint32{}},
 	}
 	return cmd, nil
 }

@@ -322,7 +322,7 @@ func convertAttrs(kvs []otlpKV) map[string]string {
 		if len(out) >= otlpMaxAttrs {
 			break
 		}
-		if kv.Key == "" {
+		if kv.Key == "" || redact.VisitorAddress(kv.Key) {
 			continue
 		}
 		k := trim(kv.Key)

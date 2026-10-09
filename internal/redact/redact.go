@@ -25,6 +25,7 @@ var rules = []rule{
 	{regexp.MustCompile(`([A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|APIKEY|API_KEY)=)("[^"]*"|'[^']*'|\S+)`), "${1}***"},
 	{regexp.MustCompile(`(?i)(\b(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mariadb|mariadb-dump)\b[^\n]*?\s-p)([^\s-]\S*)`), "${1}***"},
 	{regexp.MustCompile(`(?i)(\bcurl\b[^\n]*?\s-u\s*\S*?:)(\S+)`), "${1}***"},
+	{regexp.MustCompile(`(?i)(\bsshpass\b[^\n]*?\s-p\s*)("[^"]*"|'[^']*'|\S+)`), "${1}***"},
 	{regexp.MustCompile(`(-----BEGIN [A-Z ]*PRIVATE KEY-----).*`), "${1}***"},
 	{regexp.MustCompile(`(://[^:/@\s]+:)[^@/\s]+(@)`), "${1}***${2}"},
 	{regexp.MustCompile(`AKIA[0-9A-Z]{16}`), "***"},

@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -19,8 +20,11 @@ import (
 
 const configFetchCap = 512 * 1024
 
+const configSecretWords = `(?:password|passwd|secret|passphrase|community|private-key|wpa2?-pre-shared-key|pre-shared-key|auth-key|privacy-key)`
+
 var defaultConfigMasks = []string{
-	`((?i)(?:password|passwd|secret|passphrase|community|private-key|wpa2?-pre-shared-key|pre-shared-key|auth-key|privacy-key)[=:"' ]+)[^\s"']+`,
+	`((?i)` + configSecretWords + `["']?[ \t]*[=:][ \t]*)(?:"[^"\n]*"|'[^'\n]*'|[^\s"']+)`,
+	`((?i)` + configSecretWords + `[ \t]+)(?:"[^"\n]*"|'[^'\n]*'|[^\n]+)`,
 }
 
 func NormalizeConfig(raw string, drops []string) string {
@@ -52,20 +56,42 @@ func NormalizeConfig(raw string, drops []string) string {
 	return strings.Join(out, "\n")
 }
 
-func MaskConfig(raw string, extra []string) string {
-	pats := append(append([]string{}, defaultConfigMasks...), extra...)
-	for _, p := range pats {
+func MaskConfig(raw string, extra []string) (string, error) {
+	res := make([]*regexp.Regexp, 0, len(defaultConfigMasks)+len(extra))
+	for _, p := range append(append([]string{}, defaultConfigMasks...), extra...) {
 		re, err := regexp.Compile(p)
 		if err != nil {
-			continue
+			return "", fmt.Errorf("mask %q in the definition does not compile, nothing was stored: %v", p, err)
 		}
+		res = append(res, re)
+	}
+	for _, re := range res {
 		if re.NumSubexp() > 0 {
 			raw = re.ReplaceAllString(raw, "${1}***")
 		} else {
 			raw = re.ReplaceAllString(raw, "***")
 		}
 	}
-	return raw
+	return raw, nil
+}
+
+type capBuffer struct {
+	mu   sync.Mutex
+	buf  []byte
+	over bool
+}
+
+func (c *capBuffer) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	room := configFetchCap - len(c.buf)
+	if len(p) > room {
+		c.buf = append(c.buf, p[:max(room, 0)]...)
+		c.over = true
+	} else {
+		c.buf = append(c.buf, p...)
+	}
+	return len(p), nil
 }
 
 func ConfigSha(s string) string {
@@ -147,25 +173,22 @@ func FetchDeviceConfig(host string, port int, user, pass, command string, timeou
 	}
 	defer sess.Close()
 
-	type result struct {
-		out []byte
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		out, rerr := sess.CombinedOutput(command)
-		done <- result{out, rerr}
-	}()
+	out := &capBuffer{}
+	sess.Stdout = out
+	sess.Stderr = out
+	done := make(chan error, 1)
+	go func() { done <- sess.Run(command) }()
 	select {
-	case r := <-done:
-		if r.err != nil && len(r.out) == 0 {
-			return "", r.err
+	case rerr := <-done:
+		if rerr != nil {
+			return "", fmt.Errorf("the fetch command failed, nothing was stored: %v", rerr)
 		}
-		out := r.out
-		if len(out) > configFetchCap {
-			out = out[:configFetchCap]
+		out.mu.Lock()
+		defer out.mu.Unlock()
+		if out.over {
+			return "", fmt.Errorf("the configuration is larger than %d KiB, nothing was stored", configFetchCap/1024)
 		}
-		return string(out), nil
+		return string(out.buf), nil
 	case <-time.After(timeout + 5*time.Second):
 		return "", fmt.Errorf("the fetch command did not finish within %s", timeout+5*time.Second)
 	}

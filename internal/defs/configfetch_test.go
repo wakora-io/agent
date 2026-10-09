@@ -28,7 +28,10 @@ func TestNormalizeDropsVolatileLines(t *testing.T) {
 
 func TestMaskHidesSecretsByDefault(t *testing.T) {
 	raw := "set snmp community=labsecret\nset user password=\"hunter2\"\nset wpa2-pre-shared-key=wifikey99\nset name=keepme\n"
-	out := MaskConfig(raw, nil)
+	out, err := MaskConfig(raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, leak := range []string{"labsecret", "hunter2", "wifikey99"} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("secret %q leaked: %q", leak, out)
@@ -37,16 +40,74 @@ func TestMaskHidesSecretsByDefault(t *testing.T) {
 	if !strings.Contains(out, "keepme") {
 		t.Fatalf("non-secret value masked: %q", out)
 	}
-	extra := MaskConfig("token abc123", []string{`(token )\S+`})
-	if strings.Contains(extra, "abc123") || !strings.Contains(extra, "token ***") {
-		t.Fatalf("definition mask not applied: %q", extra)
+	extra, err := MaskConfig("token abc123", []string{`(token )\S+`})
+	if err != nil || strings.Contains(extra, "abc123") || !strings.Contains(extra, "token ***") {
+		t.Fatalf("definition mask not applied: %q %v", extra, err)
 	}
 	if ConfigSha(out) == ConfigSha(out+"x") {
 		t.Fatal("sha must move with content")
 	}
 }
 
+func TestMaskCoversQuotedAndSpacedSecrets(t *testing.T) {
+	raw := "/user add name=ops password=\"two words here\" group=full\n" +
+		"username admin secret 5 $1$abcd$efghijklmnop\n" +
+		"snmp-server community public RO\n" +
+		"set password ENC SH2xyzxyz\n" +
+		"set system pre-shared-key: 'with spaces too'\n" +
+		"set name=keepme\n"
+	out, err := MaskConfig(raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"two words", "here", "$1$abcd", "efghijklmnop", "public", "SH2xyzxyz", "with spaces"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("secret fragment %q leaked: %q", leak, out)
+		}
+	}
+	for _, keep := range []string{"group=full", "keepme", "username admin"} {
+		if !strings.Contains(out, keep) {
+			t.Fatalf("non-secret %q was masked: %q", keep, out)
+		}
+	}
+}
+
+func TestBrokenDefinitionMaskStoresNothing(t *testing.T) {
+	if _, err := MaskConfig("password=x", []string{"[broken"}); err == nil {
+		t.Fatal("a mask that does not compile must stop the store, not be skipped")
+	}
+}
+
+func TestFetchRefusesAFailedCommandAndAnOversizedConfig(t *testing.T) {
+	known := filepath.Join(t.TempDir(), "ssh-hostkeys")
+	addr, stop := testSSHServerExit(t, "% bad command name\n", 1)
+	defer stop()
+	host, port := splitTestAddr(addr)
+	if _, err := FetchDeviceConfig(host, port, "admin", "labpass", "/export", 5*time.Second, known); err == nil {
+		t.Fatal("an error message from a failed command must never become a configuration version")
+	}
+	addr2, stop2 := testSSHServerExit(t, strings.Repeat("x", configFetchCap+10), 0)
+	defer stop2()
+	host2, port2 := splitTestAddr(addr2)
+	if _, err := FetchDeviceConfig(host2, port2, "admin", "labpass", "/export", 5*time.Second, known); err == nil {
+		t.Fatal("a configuration larger than the cap must not be stored truncated")
+	}
+}
+
+func splitTestAddr(addr string) (string, int) {
+	host, portStr, _ := net.SplitHostPort(addr)
+	port := 0
+	for _, ch := range portStr {
+		port = port*10 + int(ch-'0')
+	}
+	return host, port
+}
+
 func testSSHServer(t *testing.T, reply string) (addr string, stop func()) {
+	return testSSHServerExit(t, reply, 0)
+}
+
+func testSSHServerExit(t *testing.T, reply string, code byte) (addr string, stop func()) {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -93,7 +154,7 @@ func testSSHServer(t *testing.T, reply string) (addr string, stop func()) {
 							if req.Type == "exec" {
 								req.Reply(true, nil)
 								ch.Write([]byte(reply))
-								ch.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+								ch.SendRequest("exit-status", false, []byte{0, 0, 0, code})
 								return
 							}
 							req.Reply(false, nil)
