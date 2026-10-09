@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 SO="$1"
-printf 'error_reporting=E_ALL\nlog_errors=1\nerror_log=/tmp/php-errors.log\ndisplay_errors=0\n' > /usr/local/etc/php/conf.d/zz-e2e-errors.ini
+printf 'error_reporting=E_ALL\nlog_errors=1\nerror_log=/tmp/php-errors.log\ndisplay_errors=0\nopcache.revalidate_freq=0\n' > /usr/local/etc/php/conf.d/zz-e2e-errors.ini
 mkdir /sdk /docroot /recv
 tar -C /sdk -xzf /art/opentelemetry-php-sdk.tar.gz
 
@@ -50,7 +50,6 @@ body=$(php -r 'echo file_get_contents("http://127.0.0.1:8083/x.php");')
 sleep 3
 grep -q 'GET /x.php' /tmp/otlp-body.bin || { echo "generic root span missing from the export"; exit 1; }
 echo "e2e ok: non-WP request exports a generic server root span"
-
 mkdir -p /docroot/psr1
 cat > /docroot/psr1/UriInterface.php <<'EOF'
 <?php
@@ -308,6 +307,19 @@ sleep 1
 lines_after=$(grep -c 'POST /v1/rum' /tmp/otlp.log || true)
 [ "$lines_after" -gt "$lines_before" ] || { echo "beacon was not relayed to the agent endpoint"; exit 1; }
 echo "e2e ok: beacon answers 204 and relays to the agent"
+
+lines_before=$(grep -c 'POST /v1/rum' /tmp/otlp.log || true)
+code=$(php -r '$c=stream_context_create(["http"=>["method"=>"POST","header"=>"Content-Type: text/plain\r\nOrigin: https://evil.example\r\nSec-Fetch-Site: cross-site","content"=>"{\"site\":\"127.0.0.1\",\"path\":\"/forged\",\"errors\":[{\"msg\":\"forged\",\"n\":1}]}","ignore_errors"=>true]]);@file_get_contents("http://127.0.0.1:8080/page.php?wkr-rum=1",false,$c);preg_match("#\\s(\\d{3})\\s#",$http_response_header[0],$m);echo $m[1];')
+[ "$code" = "204" ] || { echo "a cross-site beacon must still answer 204 (got $code)"; exit 1; }
+sleep 1
+lines_after=$(grep -c 'POST /v1/rum' /tmp/otlp.log || true)
+[ "$lines_after" -eq "$lines_before" ] || { echo "a beacon posted from another site was relayed to the agent"; exit 1; }
+code=$(php -r '$c=stream_context_create(["http"=>["method"=>"POST","header"=>"Content-Type: text/plain\r\nOrigin: http://127.0.0.1:8080\r\nSec-Fetch-Site: same-origin","content"=>"{\"site\":\"127.0.0.1\",\"path\":\"/own\"}","ignore_errors"=>true]]);@file_get_contents("http://127.0.0.1:8080/page.php?wkr-rum=1",false,$c);preg_match("#\\s(\\d{3})\\s#",$http_response_header[0],$m);echo $m[1];')
+[ "$code" = "204" ] || { echo "a same-origin beacon must answer 204 (got $code)"; exit 1; }
+sleep 1
+lines_after2=$(grep -c 'POST /v1/rum' /tmp/otlp.log || true)
+[ "$lines_after2" -gt "$lines_after" ] || { echo "a same-origin beacon with Origin was not relayed"; exit 1; }
+echo "e2e ok: a beacon from another site is answered but never relayed"
 
 echo "<?php return ['other.example.com'=>1];" > /rum-sites.php
 body=$(php -r '$c=stream_context_create(["http"=>["header"=>"Accept: text/html"]]);echo file_get_contents("http://127.0.0.1:8080/page.php",false,$c);')

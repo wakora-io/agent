@@ -16,6 +16,16 @@ if (PHP_SAPI !== 'cli'
         }
         if (isset($wakoraRumSites[$wakoraRumSite])) {
             $wakoraRumOwn = true;
+            $wakoraRumFetch = isset($_SERVER['HTTP_SEC_FETCH_SITE']) ? strtolower((string) $_SERVER['HTTP_SEC_FETCH_SITE']) : '';
+            $wakoraRumOrigin = isset($_SERVER['HTTP_ORIGIN']) ? strtolower((string) $_SERVER['HTTP_ORIGIN']) : '';
+            $wakoraRumOriginHost = $wakoraRumOrigin !== '' ? (string) parse_url($wakoraRumOrigin, PHP_URL_HOST) : '';
+            if (strncmp($wakoraRumOriginHost, 'www.', 4) === 0) {
+                $wakoraRumOriginHost = substr($wakoraRumOriginHost, 4);
+            }
+            $wakoraRumSame = ($wakoraRumFetch === '' || $wakoraRumFetch === 'same-origin')
+                && ($wakoraRumOrigin === '' || $wakoraRumOriginHost === $wakoraRumSite);
+        }
+        if ($wakoraRumOwn && $wakoraRumSame) {
             try {
                 $wakoraRumRaw = file_get_contents('php://input', false, null, 0, 32768);
                 $wakoraRumB = is_string($wakoraRumRaw) && $wakoraRumRaw !== '' ? json_decode($wakoraRumRaw, true, 4) : null;
@@ -115,7 +125,7 @@ if (PHP_SAPI !== 'cli'
         header('Cache-Control: no-store');
         exit;
     }
-    unset($wakoraRumOwn, $wakoraRumSites, $wakoraRumSite, $wakoraRumP);
+    unset($wakoraRumOwn, $wakoraRumSites, $wakoraRumSite, $wakoraRumP, $wakoraRumSame, $wakoraRumFetch, $wakoraRumOrigin, $wakoraRumOriginHost);
 }
 
 if (PHP_VERSION_ID < 80200 || PHP_SAPI === 'cli' || !extension_loaded('opentelemetry')) {
@@ -156,6 +166,7 @@ try {
     $wakoraEnv('OTEL_METRICS_EXPORTER', 'none');
     $wakoraEnv('OTEL_LOGS_EXPORTER', 'none');
     $wakoraEnv('OTEL_PROPAGATORS', 'tracecontext,baggage');
+    $wakoraEnv('OTEL_EXPERIMENTAL_SPAN_SUPPRESSION_STRATEGY', 'none');
     require __DIR__ . '/vendor/autoload.php';
 } catch (\Throwable $wakoraErr) {
     putenv('OTEL_PHP_AUTOLOAD_ENABLED');
@@ -337,7 +348,6 @@ try {
                 ->setAttribute('url.full', $wakoraScheme . '://' . $wakoraHost . $wakoraUri)
                 ->setAttribute('url.path', $wakoraPath)
                 ->setAttribute('url.scheme', $wakoraScheme)
-                ->setAttribute('client.address', isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '')
                 ->setAttribute('user_agent.original', isset($_SERVER['HTTP_USER_AGENT']) ? (string) $_SERVER['HTTP_USER_AGENT'] : '')
                 ->startSpan();
             $GLOBALS['wakoraRootSpan'] = [$wakoraSpan, $wakoraSpan->activate()];
