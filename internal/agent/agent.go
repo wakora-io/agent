@@ -1780,6 +1780,11 @@ func (a *Agent) runLogs(conn transport.Conn, service string, p protocol.Probe) e
 	if a.logDeep[service] {
 		p.MinLevel = "debug"
 	}
+	if p.TzFrom != "" {
+		if facts := a.serviceFacts[service]; facts != nil {
+			p.Tz = strings.TrimSpace(facts[p.TzFrom])
+		}
+	}
 	a.mu.Unlock()
 	if p.PathFrom != "" {
 		var fromPaths []string

@@ -363,6 +363,8 @@ type Probe struct {
 	Path         string            `json:"path,omitempty"`
 	PathFrom     string            `json:"pathFrom,omitempty"`
 	PathBase     string            `json:"pathBase,omitempty"`
+	TzFrom       string            `json:"tzFrom,omitempty"`
+	Tz           string            `json:"-"`
 	Hash         bool              `json:"hash,omitempty"`
 	Age          bool              `json:"age,omitempty"`
 	Counters     []Counter         `json:"counters,omitempty"`

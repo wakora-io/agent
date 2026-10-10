@@ -23,18 +23,18 @@ func TestParseLineTs(t *testing.T) {
 		{"Jul 26 21:05:01 host postfix/smtpd[1]: connect", time.Date(2026, 7, 26, 21, 5, 1, 0, time.Local)},
 	}
 	for _, c := range cases {
-		got := parseLineTs(c.line, now)
+		got := parseLineTsIn(c.line, now, time.Local)
 		if got != c.want.Unix() {
 			t.Fatalf("line %q: ts %d, want %d", c.line, got, c.want.Unix())
 		}
 	}
-	if got := parseLineTs("no timestamp here at all", now); got != now.Unix() {
+	if got := parseLineTsIn("no timestamp here at all", now, time.Local); got != now.Unix() {
 		t.Fatalf("no-ts line must fall back to receipt time")
 	}
-	if got := parseLineTs("2026/07/28 09:00:00 future line", now); got != now.Unix() {
+	if got := parseLineTsIn("2026/07/28 09:00:00 future line", now, time.Local); got != now.Unix() {
 		t.Fatalf("future line must fall back to receipt time")
 	}
-	if got := parseLineTs("2026/07/01 09:00:00 stale line", now); got != now.Unix() {
+	if got := parseLineTsIn("2026/07/01 09:00:00 stale line", now, time.Local); got != now.Unix() {
 		t.Fatalf("stale line must fall back to receipt time")
 	}
 }

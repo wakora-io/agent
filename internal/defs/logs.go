@@ -285,43 +285,66 @@ func (l *LogTailer) Collect(service string, p protocol.Probe, now time.Time) ([]
 	if forced != "" && levelRe == nil && logLevelRank[forced] > minRank {
 		paths = nil
 	}
+	loc := logLocation(p.Tz)
 	seen := map[string]bool{}
 	for _, path := range paths {
 		path = strings.ReplaceAll(path, "%s", "main")
-		if resolved, ok := l.resolveDir(path, now); ok {
+		targets := []string{path}
+		drained := ""
+		if resolved, prev, ok := l.resolveDir(path, now); ok {
 			if resolved == "" {
 				continue
 			}
-			path = resolved
-		}
-		seen[path] = true
-		lines, err := l.tailFile(path, now)
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		for _, raw := range lines {
-			level := "info"
-			if forced != "" {
-				level = forced
-			}
-			if levelRe != nil {
-				if m := levelRe.FindStringSubmatch(raw); len(m) >= 2 {
-					level = normalizeLevel(m[1])
+			targets = []string{resolved}
+			if prev != "" && prev != resolved {
+				drained = prev
+				targets = []string{prev, resolved}
+				if !l.seenF[resolved] {
+					l.seenF[resolved] = true
+					l.offsets[resolved] = 0
 				}
 			}
-			level = downgradeTransportError(level, raw)
-			ts := parseLineTs(raw, now)
-			level = l.fcgiChunkLevel(path, raw, level, ts)
-			if logLevelRank[level] > minRank {
-				continue
+		}
+		for _, target := range targets {
+			seen[target] = true
+			lines, err := l.tailFile(target, now)
+			if err != nil && firstErr == nil && target != drained {
+				firstErr = err
 			}
-			out = append(out, protocol.LogLine{
-				Ts: ts, Service: svc, Level: level, Message: l.scrub(raw),
-			})
+			for _, raw := range lines {
+				level := "info"
+				if forced != "" {
+					level = forced
+				}
+				if levelRe != nil {
+					if m := levelRe.FindStringSubmatch(raw); len(m) >= 2 {
+						level = normalizeLevel(m[1])
+					}
+				}
+				level = downgradeTransportError(level, raw)
+				ts := parseLineTsIn(raw, now, loc)
+				level = l.fcgiChunkLevel(target, raw, level, ts)
+				if logLevelRank[level] > minRank {
+					continue
+				}
+				out = append(out, protocol.LogLine{
+					Ts: ts, Service: svc, Level: level, Message: l.scrub(raw),
+				})
+			}
 		}
 	}
 	l.fds.sweep(seen)
 	return out, firstErr
+}
+
+func logLocation(tz string) *time.Location {
+	if tz == "" || strings.EqualFold(tz, "localtime") {
+		return time.Local
+	}
+	if loc, err := time.LoadLocation(tz); err == nil {
+		return loc
+	}
+	return time.Local
 }
 
 func normalizeLevel(s string) string {
@@ -674,8 +697,8 @@ func (l *LogTailer) futureDup(ln protocol.LogLine, now time.Time) bool {
 
 var syslogTsRe = regexp.MustCompile(`^[A-Z][a-z]{2} [ 0-9]\d \d{2}:\d{2}:\d{2}`)
 
-func parseLineTs(raw string, now time.Time) int64 {
-	ts, ok := lineTime(raw, now)
+func parseLineTsIn(raw string, now time.Time, loc *time.Location) int64 {
+	ts, ok := lineTime(raw, now, loc)
 	if !ok {
 		return now.Unix()
 	}
@@ -686,7 +709,7 @@ func parseLineTs(raw string, now time.Time) int64 {
 	return u
 }
 
-func lineTime(raw string, now time.Time) (time.Time, bool) {
+func lineTime(raw string, now time.Time, loc *time.Location) (time.Time, bool) {
 	head := raw
 	if len(head) > 40 {
 		head = head[:40]
@@ -695,12 +718,12 @@ func lineTime(raw string, now time.Time) (time.Time, bool) {
 		return t, true
 	}
 	if len(head) >= 19 && head[4] == '-' && head[7] == '-' && head[10] == ' ' {
-		if t, err := time.ParseInLocation("2006-01-02 15:04:05", head[:19], time.Local); err == nil {
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", head[:19], loc); err == nil {
 			return t, true
 		}
 	}
 	if len(head) >= 19 && head[4] == '/' && head[7] == '/' && head[10] == ' ' {
-		if t, err := time.ParseInLocation("2006/01/02 15:04:05", head[:19], time.Local); err == nil {
+		if t, err := time.ParseInLocation("2006/01/02 15:04:05", head[:19], loc); err == nil {
 			return t, true
 		}
 	}
@@ -712,14 +735,14 @@ func lineTime(raw string, now time.Time) (time.Time, bool) {
 				return t, true
 			}
 			for _, layout := range []string{"Mon Jan 02 15:04:05.000000 2006", "Mon Jan _2 15:04:05.000000 2006", "Mon Jan 02 15:04:05 2006", "Mon Jan _2 15:04:05 2006"} {
-				if t, err := time.ParseInLocation(layout, in, time.Local); err == nil {
+				if t, err := time.ParseInLocation(layout, in, loc); err == nil {
 					return t, true
 				}
 			}
 		}
 	}
 	if m := syslogTsRe.FindString(head); m != "" {
-		if t, err := time.ParseInLocation("Jan _2 15:04:05", strings.ReplaceAll(m, "  ", " "), time.Local); err == nil {
+		if t, err := time.ParseInLocation("Jan _2 15:04:05", strings.ReplaceAll(m, "  ", " "), loc); err == nil {
 			t = t.AddDate(now.Year(), 0, 0)
 			if t.After(now.Add(24 * time.Hour)) {
 				t = t.AddDate(-1, 0, 0)
@@ -737,20 +760,25 @@ func firstField(s string) string {
 	return s
 }
 
-func (l *LogTailer) resolveDir(path string, now time.Time) (string, bool) {
+func (l *LogTailer) resolveDir(path string, now time.Time) (string, string, bool) {
+	prev := ""
 	if e, ok := l.dirF[path]; ok {
 		if now.Sub(e.when) < dirResolveTTL {
-			return e.file, true
+			return e.file, "", true
 		}
+		prev = e.file
 		delete(l.dirF, path)
 	}
 	fi, err := os.Stat(path)
 	if err != nil || !fi.IsDir() {
-		return "", false
+		return "", "", false
 	}
 	file := newestLogIn(path)
 	l.dirF[path] = dirTarget{file: file, when: now}
-	return file, true
+	if prev == file {
+		prev = ""
+	}
+	return file, prev, true
 }
 
 func newestLogIn(dir string) string {
