@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -461,21 +462,109 @@ server {
 	}
 }
 
-func TestVhostUnixBackend(t *testing.T) {
+func TestBackendTargets(t *testing.T) {
+	ups := map[string][]string{
+		"app":   {"127.0.0.1:3000", "127.0.0.1:3001"},
+		"mixed": {"127.0.0.1:3000", "app.internal:3000"},
+		"bare":  {"127.0.0.1"},
+	}
 	for _, c := range []struct {
-		pass string
-		want string
+		dir, pass string
+		want      string
 	}{
-		{"unix:/run/php/a.sock;", "/run/php/a.sock"},
-		{"/run/php/b.sock", "/run/php/b.sock"},
-		{"127.0.0.1:9000", ""},
-		{"php_upstream", ""},
-		{"unix:/run/php/$ver.sock", ""},
-		{"", ""},
+		{"fastcgi_pass", "unix:/run/php/a.sock", "unix:/run/php/a.sock"},
+		{"fastcgi_pass", "/run/php/b.sock", "unix:/run/php/b.sock"},
+		{"fastcgi_pass", "127.0.0.1:9000", "127.0.0.1:9000"},
+		{"fastcgi_pass", "unix:/run/php/$ver.sock", ""},
+		{"fastcgi_pass", "", ""},
+		{"proxy_pass", "http://127.0.0.1:3000/", "127.0.0.1:3000"},
+		{"proxy_pass", "http://localhost", "localhost:80"},
+		{"proxy_pass", "https://[::1]:8443/api", "::1:8443"},
+		{"proxy_pass", "http://unix:/run/app.sock:/", "unix:/run/app.sock"},
+		{"proxy_pass", "http://app/api", "127.0.0.1:3000,127.0.0.1:3001"},
+		{"proxy_pass", "http://bare", "127.0.0.1:80"},
+		{"proxy_pass", "http://$backend", ""},
+		{"grpc_pass", "grpc://127.0.0.1:50051", "127.0.0.1:50051"},
+		{"uwsgi_pass", "127.0.0.1:3031", "127.0.0.1:3031"},
 	} {
-		got, ok := vhostUnixBackend(c.pass)
-		if (c.want == "") == ok || got != c.want {
-			t.Fatalf("pass %q: got %q ok=%v, want %q", c.pass, got, ok, c.want)
+		targets, ok := backendTargets(c.dir, c.pass, ups)
+		var got []string
+		for _, tg := range targets {
+			if tg.unix != "" {
+				got = append(got, "unix:"+tg.unix)
+			} else {
+				got = append(got, tg.host+":"+strconv.Itoa(tg.port))
+			}
+		}
+		if s := strings.Join(got, ","); s != c.want || ok != (c.want != "") {
+			t.Fatalf("%s %q: got %q ok=%v, want %q", c.dir, c.pass, s, ok, c.want)
+		}
+	}
+	if tg, ok := backendTargets("proxy_pass", "http://mixed", ups); !ok || len(tg) != 2 {
+		t.Fatalf("an upstream with a remote member still resolves its targets, got %v %v", tg, ok)
+	}
+}
+
+func TestScanNginxUpstreams(t *testing.T) {
+	got := scanNginxUpstreams([]byte(`
+http {
+	upstream app {
+		server 127.0.0.1:3000 weight=2;
+		server 127.0.0.1:3001 backup;
+	}
+	upstream one { server unix:/run/app.sock; }
+	server {
+		listen 80;
+		server_name example.com;
+		location / { proxy_pass http://app; }
+	}
+}
+`))
+	if s := strings.Join(got["app"], ","); s != "127.0.0.1:3000,127.0.0.1:3001" {
+		t.Fatalf("upstream app: %q", s)
+	}
+	if s := strings.Join(got["one"], ","); s != "unix:/run/app.sock" {
+		t.Fatalf("one-line upstream: %q", s)
+	}
+	if _, ok := got["example.com"]; ok {
+		t.Fatal("a server block leaked into the upstream map")
+	}
+}
+
+func TestJudgeBackends(t *testing.T) {
+	own := map[string]bool{"192.0.2.10": true}
+	ports := map[int]ListenPort{3000: {Pid: 42, Process: "node"}, 9000: {Pid: 7, Process: "php-fpm8.3"}}
+	unit := func(pid int) string {
+		if pid == 42 {
+			return "nodeapp.service"
+		}
+		return ""
+	}
+	ups := map[string][]string{"pair": {"127.0.0.1:3000", "127.0.0.1:3999"}, "far": {"198.51.100.5:3000"}}
+	for _, c := range []struct {
+		name     string
+		passes   [][2]string
+		ports    map[int]ListenPort
+		known    bool
+		gone     bool
+		down     string
+		upstream string
+	}{
+		{"node alive", [][2]string{{"proxy_pass", "http://127.0.0.1:3000"}}, ports, true, false, "", "node (nodeapp.service) :3000"},
+		{"own address", [][2]string{{"proxy_pass", "http://192.0.2.10:3000"}}, ports, true, false, "", "node (nodeapp.service) :3000"},
+		{"dead port", [][2]string{{"proxy_pass", "http://127.0.0.1:4000"}}, ports, true, true, "127.0.0.1:4000", ""},
+		{"php tcp alive", [][2]string{{"fastcgi_pass", "127.0.0.1:9000"}}, ports, true, false, "", ""},
+		{"php ok but api dead", [][2]string{{"fastcgi_pass", "127.0.0.1:9000"}, {"proxy_pass", "http://localhost:4000"}}, ports, true, true, "localhost:4000", ""},
+		{"one member of an upstream alive", [][2]string{{"proxy_pass", "http://pair"}}, ports, true, false, "", "node (nodeapp.service) :3000"},
+		{"remote upstream", [][2]string{{"proxy_pass", "http://far"}}, ports, false, false, "", ""},
+		{"remote host", [][2]string{{"proxy_pass", "http://198.51.100.5:3000"}}, ports, false, false, "", ""},
+		{"no port facts", [][2]string{{"proxy_pass", "http://127.0.0.1:4000"}}, nil, false, false, "", ""},
+		{"forwarded by the kernel, no listener", [][2]string{{"proxy_pass", "http://127.0.0.1:5000"}}, ports, true, false, "", ""},
+	} {
+		answers := func(addr string) bool { return addr == "127.0.0.1:5000" }
+		st, known := judgeBackends(c.passes, ups, own, c.ports, unit, answers)
+		if known != c.known || st.gone != c.gone || st.down != c.down || st.upstream != c.upstream {
+			t.Fatalf("%s: got %+v known=%v", c.name, st, known)
 		}
 	}
 }

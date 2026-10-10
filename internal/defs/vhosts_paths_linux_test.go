@@ -15,21 +15,21 @@ func TestVhostBackendGone(t *testing.T) {
 	}
 	svc := "vhostbackendtest"
 	vhostPoolsCache.Store(svc, map[string]vhostScanInfo{
-		"alive.example.com":  {pass: "unix:" + live},
-		"broken.example.com": {pass: "unix:" + dir + "/gone.sock"},
-		"remote.example.com": {pass: "127.0.0.1:9000"},
+		"alive.example.com":  {passes: [][2]string{{"fastcgi_pass", "unix:" + live}}},
+		"broken.example.com": {passes: [][2]string{{"fastcgi_pass", "unix:" + dir + "/gone.sock"}}},
+		"remote.example.com": {passes: [][2]string{{"proxy_pass", "http://198.51.100.5:8080"}}},
 		"static.example.com": {root: dir},
 	})
-	got := vhostBackendGone(svc)
-	if v, ok := got["broken.example.com"]; !ok || !v {
+	got := vhostBackendStates(svc)
+	if v, ok := got["broken.example.com"]; !ok || !v.gone || v.down != "unix:"+dir+"/gone.sock" {
 		t.Fatalf("a vhost pointing at a socket that does not exist must read missing, got %v", got)
 	}
-	if v, ok := got["alive.example.com"]; !ok || v {
+	if v, ok := got["alive.example.com"]; !ok || v.gone {
 		t.Fatalf("a vhost whose socket exists must read present, got %v", got)
 	}
 	for _, name := range []string{"remote.example.com", "static.example.com"} {
 		if _, ok := got[name]; ok {
-			t.Fatalf("%s carries no unix backend, so it gets no verdict, got %v", name, got)
+			t.Fatalf("%s carries no local backend, so it gets no verdict, got %v", name, got)
 		}
 	}
 }

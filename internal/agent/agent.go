@@ -698,8 +698,29 @@ func (a *Agent) sendDiscovery(conn transport.Conn) error {
 	a.mu.Lock()
 	a.facts = facts
 	a.mu.Unlock()
+	defs.SetListenPorts(listenPortsFrom(facts))
 	a.refreshActive()
 	return a.sendFacts(conn)
+}
+
+func listenPortsFrom(facts []discovery.Fact) map[int]defs.ListenPort {
+	out := map[int]defs.ListenPort{}
+	for _, f := range facts {
+		if f.Kind != "port" || !strings.HasSuffix(f.Key, "/tcp") {
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimSuffix(f.Key, "/tcp"))
+		if err != nil || port <= 0 {
+			continue
+		}
+		var info struct {
+			Pid     int    `json:"pid"`
+			Process string `json:"process"`
+		}
+		_ = json.Unmarshal([]byte(f.Payload), &info)
+		out[port] = defs.ListenPort{Pid: info.Pid, Process: info.Process}
+	}
+	return out
 }
 
 func (a *Agent) sendFacts(conn transport.Conn) error {

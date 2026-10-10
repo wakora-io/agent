@@ -132,6 +132,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			}
 			stickyPoolsCache.Store(service, s)
 			vhostPoolsCache.Store(service, scanVhostPools(out))
+			vhostUpstreamsCache.Store(service, scanNginxUpstreams(out))
 		} else {
 			apacheRootsCache.Store(service, apacheVhostRoots(out))
 		}
@@ -242,10 +243,10 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		deadConfirmed[name] = dnsConfirmedDead(name, res.alive)
 	}
 	poolMinor := map[string]fpmPoolInfo{}
-	backendGone := map[string]bool{}
+	backends := map[string]backendState{}
 	if p.Command == "nginx" {
 		poolMinor = vhostPoolMinorMap(service)
-		backendGone = vhostBackendGone(service)
+		backends = vhostBackendStates(service)
 	}
 	beEmitted := map[string]bool{}
 	apacheRoots := map[string]string{}
@@ -283,12 +284,19 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		if h.Redirect != "" {
 			pm["redirect"] = h.Redirect
 		}
+		be, beKnown := backends[h.Name]
+		if beKnown && be.upstream != "" {
+			pm["upstream"] = be.upstream
+		}
+		if beKnown && be.gone {
+			pm["backendDown"] = be.down
+		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
-		if gone, known := backendGone[h.Name]; known && !beEmitted[h.Name] && !vhostCatchAll(h.Name) {
+		if beKnown && !beEmitted[h.Name] && !vhostCatchAll(h.Name) {
 			beEmitted[h.Name] = true
 			v := 0.0
-			if gone {
+			if be.gone {
 				v = 1
 			}
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{
@@ -1040,8 +1048,9 @@ var stickyPoolsCache sync.Map
 var vhostPoolsCache sync.Map
 
 type vhostScanInfo struct {
-	pass string
-	root string
+	pass   string
+	root   string
+	passes [][2]string
 }
 
 func scanVhostPools(out []byte) map[string]vhostScanInfo {
@@ -1053,16 +1062,27 @@ func scanVhostPools(out []byte) map[string]vhostScanInfo {
 	var names []string
 	pass := ""
 	root := ""
+	var passes [][2]string
 
 	flush := func() {
-		if pass != "" || root != "" {
+		if pass != "" || root != "" || len(passes) > 0 {
 			for _, n := range names {
-				if _, ok := byName[n]; !ok {
-					byName[n] = vhostScanInfo{pass: pass, root: root}
+				prev, ok := byName[n]
+				if !ok {
+					byName[n] = vhostScanInfo{pass: pass, root: root, passes: passes}
+					continue
 				}
+				if prev.pass == "" {
+					prev.pass = pass
+				}
+				if prev.root == "" {
+					prev.root = root
+				}
+				prev.passes = append(append([][2]string{}, prev.passes...), passes...)
+				byName[n] = prev
 			}
 		}
-		names, pass, root = nil, "", ""
+		names, pass, root, passes = nil, "", "", nil
 	}
 
 	for _, raw := range strings.Split(string(out), "\n") {
@@ -1089,10 +1109,11 @@ func scanVhostPools(out []byte) map[string]vhostScanInfo {
 				switch f[0] {
 				case "server_name":
 					names = append(names, f[1:]...)
-				case "fastcgi_pass":
-					if pass == "" {
+				case "fastcgi_pass", "proxy_pass", "uwsgi_pass", "scgi_pass", "grpc_pass":
+					if f[0] == "fastcgi_pass" && pass == "" {
 						pass = f[1]
 					}
+					passes = append(passes, [2]string{f[0], f[1]})
 				case "root":
 					if root == "" {
 						root = strings.TrimSuffix(f[1], ";")
@@ -1212,36 +1233,6 @@ func scanFPMListenPools(globs []string) map[string]fpmPoolInfo {
 				out[strings.TrimSpace(string(lm[1]))] = info
 			}
 		}
-	}
-	return out
-}
-
-func vhostUnixBackend(pass string) (string, bool) {
-	p := strings.TrimSuffix(strings.TrimSpace(pass), ";")
-	p = strings.TrimPrefix(p, "unix:")
-	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "$ \t") {
-		return "", false
-	}
-	return p, true
-}
-
-func vhostBackendGone(service string) map[string]bool {
-	v, ok := vhostPoolsCache.Load(service)
-	if !ok {
-		return nil
-	}
-	scanByName, _ := v.(map[string]vhostScanInfo)
-	if len(scanByName) == 0 {
-		return nil
-	}
-	out := map[string]bool{}
-	for name, scan := range scanByName {
-		target, isUnix := vhostUnixBackend(scan.pass)
-		if !isUnix {
-			continue
-		}
-		_, err := os.Stat(target)
-		out[name] = os.IsNotExist(err)
 	}
 	return out
 }
