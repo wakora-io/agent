@@ -160,6 +160,11 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	for _, wi := range window {
 		probed[primaries[wi]] = true
 	}
+	aliases := vhostAliases(hosts)
+	certOnly := map[int]bool{}
+	for _, wi := range vhostCursors.window(service+"|alias", len(aliases), vhostBudget) {
+		certOnly[aliases[wi]] = true
+	}
 
 	spacing := time.Duration(0)
 	if n := len(window); n > 0 && p.IntervalSec > 0 {
@@ -190,14 +195,27 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}(i, h)
 	}
 	wg.Wait()
-
-	dnsNames := make([]string, 0, len(window))
-	seenName := map[string]bool{}
-	for _, pi := range primaries {
-		if !probed[pi] {
+	for i := range certOnly {
+		if hosts[i].Port == 80 && !hosts[i].SSL {
 			continue
 		}
-		if n := dnsProbeName(hosts[pi].Name); n != "" && !seenName[n] {
+		wg.Add(1)
+		go func(i int, h vhost) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = probeVhostCert(h, timeout)
+		}(i, hosts[i])
+	}
+	wg.Wait()
+
+	dnsNames := make([]string, 0, len(window)+len(certOnly))
+	seenName := map[string]bool{}
+	for i, h := range hosts {
+		if !probed[i] && !certOnly[i] {
+			continue
+		}
+		if n := dnsProbeName(h.Name); n != "" && !seenName[n] {
 			seenName[n] = true
 			dnsNames = append(dnsNames, n)
 		}
@@ -240,7 +258,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		r := results[i]
 		key := fmt.Sprintf("%s:%d", h.Name, h.Port)
 		sniffKey := service + "|" + key
-		if probed[i] {
+		if probed[i] || (certOnly[i] && r.hasSSL) {
 			vhostSniffedSSL.Store(sniffKey, r.hasSSL)
 		}
 		sniffed := false
@@ -278,7 +296,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 				Tags: map[string]string{"vhost": h.Name},
 			})
 		}
-		if !probed[i] {
+		if !probed[i] && !certOnly[i] {
 			continue
 		}
 
@@ -347,7 +365,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 				}
 			}
 		}
-		if h.Redirect == "" {
+		if h.Redirect == "" && probed[i] {
 			o.Extra = append(o.Extra, r.check)
 
 			if r.check.Status == "ok" {
@@ -357,13 +375,19 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			}
 		}
 		if r.hasSSL {
-			trusted := 0.0
+			trusted, nameOK := 0.0, 0.0
 			if r.trusted {
 				trusted = 1
 			}
+			if r.nameOK {
+				nameOK = 1
+			}
+			if probed[i] {
+				o.Metrics = append(o.Metrics, protocol.MetricPoint{Name: "svc." + service + ".vhost.ssl_days_left", Value: r.sslDays, Tags: tags})
+			}
 			o.Metrics = append(o.Metrics,
-				protocol.MetricPoint{Name: "svc." + service + ".vhost.ssl_days_left", Value: r.sslDays, Tags: tags},
 				protocol.MetricPoint{Name: "svc." + service + ".vhost.ssl_trusted", Value: trusted, Tags: tags},
+				protocol.MetricPoint{Name: "svc." + service + ".vhost.ssl_name_ok", Value: nameOK, Tags: tags},
 			)
 		}
 	}
@@ -793,6 +817,7 @@ type vhostResult struct {
 	sslDays float64
 	hasSSL  bool
 	trusted bool
+	nameOK  bool
 }
 
 func probeVhost(service string, h vhost, timeout time.Duration) vhostResult {
@@ -845,14 +870,10 @@ func probeVhost(service string, h vhost, timeout time.Duration) vhostResult {
 	var notes []string
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		r.hasSSL = true
-		cert := resp.TLS.PeerCertificates[0]
-		r.sslDays = time.Until(cert.NotAfter).Hours() / 24
-		r.trusted = true
-		if time.Now().After(cert.NotAfter) {
-			r.trusted = false
-			notes = append(notes, "certificate expired")
-		} else if note := verifyCert(resp.TLS.PeerCertificates, hostHeader); note != "" {
-			r.trusted = false
+		var note string
+		r.sslDays, r.trusted, note = certVerdict(resp.TLS.PeerCertificates, hostHeader)
+		r.nameOK = resp.TLS.PeerCertificates[0].VerifyHostname(hostHeader) == nil
+		if note != "" {
 			notes = append(notes, note)
 		}
 	}
@@ -866,6 +887,49 @@ func probeVhost(service string, h vhost, timeout time.Duration) vhostResult {
 		}
 	}
 	r.check.Error = strings.Join(notes, "; ")
+	return r
+}
+
+func certVerdict(chain []*x509.Certificate, host string) (float64, bool, string) {
+	days := time.Until(chain[0].NotAfter).Hours() / 24
+	if time.Now().After(chain[0].NotAfter) {
+		return days, false, "certificate expired"
+	}
+	if note := verifyCert(chain, host); note != "" {
+		return days, false, note
+	}
+	return days, true, ""
+}
+
+func vhostAliases(hosts []vhost) []int {
+	var out []int
+	for i, h := range hosts {
+		if h.Primary || vhostCatchAll(h.Name) || strings.ContainsAny(h.Name, "*~") {
+			continue
+		}
+		out = append(out, i)
+	}
+	return out
+}
+
+func probeVhostCert(h vhost, timeout time.Duration) vhostResult {
+	var r vhostResult
+	d := &net.Dialer{Timeout: timeout}
+	conn, err := tls.DialWithDialer(d, "tcp", fmt.Sprintf("127.0.0.1:%d", h.Port), &tls.Config{
+		InsecureSkipVerify: true,
+		ServerName:         h.Name,
+	})
+	if err != nil {
+		return r
+	}
+	defer conn.Close()
+	chain := conn.ConnectionState().PeerCertificates
+	if len(chain) == 0 {
+		return r
+	}
+	r.hasSSL = true
+	r.sslDays, r.trusted, _ = certVerdict(chain, h.Name)
+	r.nameOK = chain[0].VerifyHostname(h.Name) == nil
 	return r
 }
 
