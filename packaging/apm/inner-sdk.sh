@@ -11,8 +11,8 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q >/dev/null
 apt-get install -y -q git unzip >/dev/null
-php -r "copy('https://getcomposer.org/installer', '/tmp/composer-setup.php');"
-php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer --quiet
+. /in/install-tools.sh
+install_pinned composer "https://getcomposer.org/download/@VERSION@/composer.phar" /usr/local/bin/composer
 mkdir /build
 cd /build
 if [ -f /pub/composer.lock ]; then

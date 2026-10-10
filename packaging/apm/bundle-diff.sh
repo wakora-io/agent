@@ -21,7 +21,7 @@ for f in "$@"; do
   echo "$name differs from the published copy in:"
   echo "${changed:-  nothing}"
   diff "$WORK/old/wakora-otel.php" "$WORK/new/wakora-otel.php" || true
-  if [ -n "$(grep -v 'wakora-otel.php' <<<"$changed" || true)" ]; then
+  if [ -n "$(grep -vxF 'Files wakora-otel.php and wakora-otel.php differ' <<<"$changed" || true)" ]; then
     echo "$name: only wakora-otel.php may change in a republished bundle"
     fail=1
   fi
