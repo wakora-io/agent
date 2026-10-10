@@ -249,6 +249,18 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		backends = vhostBackendStates(service)
 	}
 	beEmitted := map[string]bool{}
+	siteRoots := vhostSiteRoots(service, p.Command)
+	rootMissing := map[string]string{}
+	rootKnown := map[string]bool{}
+	for name, root := range siteRoots {
+		if missing, known := docrootMissing(root); known {
+			rootKnown[name] = true
+			if missing {
+				rootMissing[name] = root
+			}
+		}
+	}
+	rootEmitted := map[string]bool{}
 	apacheRoots := map[string]string{}
 	if p.Command != "nginx" {
 		if v, ok := apacheRootsCache.Load(service); ok {
@@ -291,6 +303,9 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		if beKnown && be.gone {
 			pm["backendDown"] = be.down
 		}
+		if r, ok := rootMissing[h.Name]; ok && h.Redirect == "" {
+			pm["docrootMissing"] = r
+		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
 		if beKnown && !beEmitted[h.Name] && !vhostCatchAll(h.Name) {
@@ -301,6 +316,17 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 			}
 			o.Metrics = append(o.Metrics, protocol.MetricPoint{
 				Name: "svc." + service + ".vhost.backend_missing", Value: v,
+				Tags: map[string]string{"vhost": h.Name},
+			})
+		}
+		if rootKnown[h.Name] && h.Redirect == "" && !rootEmitted[h.Name] && !vhostCatchAll(h.Name) {
+			rootEmitted[h.Name] = true
+			v := 0.0
+			if _, missing := rootMissing[h.Name]; missing {
+				v = 1
+			}
+			o.Metrics = append(o.Metrics, protocol.MetricPoint{
+				Name: "svc." + service + ".vhost.docroot_missing", Value: v,
 				Tags: map[string]string{"vhost": h.Name},
 			})
 		}
@@ -1048,9 +1074,10 @@ var stickyPoolsCache sync.Map
 var vhostPoolsCache sync.Map
 
 type vhostScanInfo struct {
-	pass   string
-	root   string
-	passes [][2]string
+	pass     string
+	root     string
+	passes   [][2]string
+	siteRoot string
 }
 
 func scanVhostPools(out []byte) map[string]vhostScanInfo {
@@ -1062,6 +1089,7 @@ func scanVhostPools(out []byte) map[string]vhostScanInfo {
 	var names []string
 	pass := ""
 	root := ""
+	siteRoot := ""
 	var passes [][2]string
 
 	flush := func() {
@@ -1069,7 +1097,7 @@ func scanVhostPools(out []byte) map[string]vhostScanInfo {
 			for _, n := range names {
 				prev, ok := byName[n]
 				if !ok {
-					byName[n] = vhostScanInfo{pass: pass, root: root, passes: passes}
+					byName[n] = vhostScanInfo{pass: pass, root: root, passes: passes, siteRoot: siteRoot}
 					continue
 				}
 				if prev.pass == "" {
@@ -1078,11 +1106,14 @@ func scanVhostPools(out []byte) map[string]vhostScanInfo {
 				if prev.root == "" {
 					prev.root = root
 				}
+				if prev.siteRoot == "" {
+					prev.siteRoot = siteRoot
+				}
 				prev.passes = append(append([][2]string{}, prev.passes...), passes...)
 				byName[n] = prev
 			}
 		}
-		names, pass, root, passes = nil, "", "", nil
+		names, pass, root, passes, siteRoot = nil, "", "", nil, ""
 	}
 
 	for _, raw := range strings.Split(string(out), "\n") {
@@ -1117,6 +1148,9 @@ func scanVhostPools(out []byte) map[string]vhostScanInfo {
 				case "root":
 					if root == "" {
 						root = strings.TrimSuffix(f[1], ";")
+					}
+					if siteRoot == "" && depth == entryDepth+1 && !strings.ContainsAny(trimmed, "{}") {
+						siteRoot = f[1]
 					}
 				}
 			}

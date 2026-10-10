@@ -270,6 +270,43 @@ func pidUnit(pid int) string {
 	return unit
 }
 
+func docrootMissing(root string) (bool, bool) {
+	root = strings.Trim(strings.TrimSpace(root), `"'`)
+	if root == "" || !strings.HasPrefix(root, "/") || strings.ContainsRune(root, '$') {
+		return false, false
+	}
+	fi, err := os.Stat(root)
+	if err == nil {
+		return !fi.IsDir(), true
+	}
+	if os.IsNotExist(err) {
+		return true, true
+	}
+	return false, false
+}
+
+func vhostSiteRoots(service, command string) map[string]string {
+	out := map[string]string{}
+	if command == "nginx" {
+		if v, ok := vhostPoolsCache.Load(service); ok {
+			scan, _ := v.(map[string]vhostScanInfo)
+			for name, s := range scan {
+				if s.siteRoot != "" {
+					out[name] = s.siteRoot
+				}
+			}
+		}
+		return out
+	}
+	if v, ok := apacheRootsCache.Load(service); ok {
+		roots, _ := v.(map[string]string)
+		for name, r := range roots {
+			out[name] = r
+		}
+	}
+	return out
+}
+
 func vhostBackendStates(service string) map[string]backendState {
 	v, ok := vhostPoolsCache.Load(service)
 	if !ok {
