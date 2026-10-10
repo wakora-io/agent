@@ -54,6 +54,37 @@ func TestVhostAliasesFromNginxBlocks(t *testing.T) {
 	}
 }
 
+func TestAliasOfOwnDomain(t *testing.T) {
+	dump := []byte(`server {
+    listen 443 ssl;
+    server_name pmax.example.com www.pmax.example.com shop.example.net;
+}
+server {
+    listen 80;
+    server_name _ www.example.org;
+}
+`)
+	got := map[string]bool{}
+	for _, h := range parseNginxVhosts(dump) {
+		got[h.Name] = aliasOfOwnDomain(h)
+	}
+	want := map[string]bool{
+		"pmax.example.com":     false,
+		"www.pmax.example.com": true,
+		"shop.example.net":     false,
+		"_":                    false,
+		"www.example.org":      false,
+	}
+	for name, w := range want {
+		if g, ok := got[name]; !ok || g != w {
+			t.Errorf("%s: own-domain alias %v, want %v (parsed %v)", name, g, w, got)
+		}
+	}
+	if aliasOfOwnDomain(vhost{Name: "www.a.example.com", Port: 443}) {
+		t.Error("a name without a known block is never treated as an alias")
+	}
+}
+
 func TestProbeVhostCertReadsTheAliasCertificate(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("certificate probe sent an HTTP request: %s %s", r.Method, r.URL)

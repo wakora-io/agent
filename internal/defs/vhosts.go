@@ -36,6 +36,15 @@ type vhost struct {
 	SSL      bool
 	Primary  bool
 	Redirect string
+	Block    string
+}
+
+func aliasOfOwnDomain(h vhost) bool {
+	if h.Primary || h.Block == "" || h.Block == h.Name {
+		return false
+	}
+	reg := vhostRegistrable(h.Name)
+	return reg != "" && reg == vhostRegistrable(h.Block)
 }
 
 func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Duration) {
@@ -308,7 +317,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
-		if beKnown && !beEmitted[h.Name] && !vhostCatchAll(h.Name) {
+		if beKnown && h.Primary && h.Redirect == "" && !beEmitted[h.Name] && !vhostCatchAll(h.Name) {
 			beEmitted[h.Name] = true
 			v := 0.0
 			if be.gone {
@@ -319,7 +328,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 				Tags: map[string]string{"vhost": h.Name},
 			})
 		}
-		if rootKnown[h.Name] && h.Redirect == "" && !rootEmitted[h.Name] && !vhostCatchAll(h.Name) {
+		if rootKnown[h.Name] && h.Primary && h.Redirect == "" && !rootEmitted[h.Name] && !vhostCatchAll(h.Name) {
 			rootEmitted[h.Name] = true
 			v := 0.0
 			if _, missing := rootMissing[h.Name]; missing {
@@ -335,7 +344,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 
 		tags := map[string]string{"vhost": h.Name, "port": strconv.Itoa(h.Port)}
-		if res, known := dnsAlive[dnsProbeName(h.Name)]; known {
+		if res, known := dnsAlive[dnsProbeName(h.Name)]; known && (res.alive || !aliasOfOwnDomain(h)) {
 			confirmedDead := deadConfirmed[dnsProbeName(h.Name)]
 			if !res.alive && confirmedDead {
 				if r.check.Error != "" {
@@ -1439,7 +1448,7 @@ func parseNginxVhosts(out []byte) []vhost {
 		for i, n := range names {
 			r := strings.ReplaceAll(target, nginxRedirSelf, n)
 			for _, l := range listens {
-				hosts = append(hosts, vhost{Name: n, Port: l.Port, SSL: l.SSL, Primary: i == 0, Redirect: r})
+				hosts = append(hosts, vhost{Name: n, Port: l.Port, SSL: l.SSL, Primary: i == 0, Redirect: r, Block: names[0]})
 			}
 		}
 		names, listens = nil, nil
