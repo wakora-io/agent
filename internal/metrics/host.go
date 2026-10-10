@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"runtime"
 	"sync"
 	"time"
 )
@@ -45,7 +44,7 @@ func (c *Collector) Collect() (int64, []Point) {
 	pts = append(pts, c.cpuPoints()...)
 	pts = append(pts, c.netPoints(now)...)
 	pts = append(pts, c.topPoints(now)...)
-	cores := float64(runtime.NumCPU())
+	cores := float64(coreCount())
 	pts = append(pts, Point{Name: "host.cpu.cores", Value: cores})
 	for _, p := range pts {
 		if p.Name == "host.load1" {
