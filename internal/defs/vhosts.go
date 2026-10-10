@@ -287,7 +287,23 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		if v, ok := vhostSniffedSSL.Load(sniffKey); ok {
 			sniffed, _ = v.(bool)
 		}
+		dnsRes, dnsKnown := dnsAlive[dnsProbeName(h.Name)]
+		unmade := dnsKnown && !dnsRes.alive && aliasOfOwnDomain(h)
+		if probed[i] || certOnly[i] {
+			off := false
+			if dnsKnown {
+				o2, k2 := vhostOffloaded(dnsRes, localAddrs, cdn)
+				if !k2 && cnameCDN[dnsProbeName(h.Name)] {
+					o2, k2 = true, true
+				}
+				off = k2 && o2
+			}
+			vhostNameMissing.Store(sniffKey, r.hasSSL && !r.nameOK && !unmade && !off)
+		}
 		pm := map[string]any{"service": service, "port": h.Port, "ssl": h.SSL || sniffed}
+		if v, ok := vhostNameMissing.Load(sniffKey); ok && v.(bool) {
+			pm["certNameMissing"] = 1
+		}
 		if info, ok := poolMinor[h.Name]; ok {
 			if info.Minor != "" {
 				pm["php"] = info.Minor
@@ -417,7 +433,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 				})
 			}
 		}
-		if r.hasSSL {
+		if r.hasSSL && !unmade {
 			trusted, nameOK := 0.0, 0.0
 			if r.trusted {
 				trusted = 1
@@ -740,6 +756,8 @@ const (
 )
 
 var vhostSniffedSSL sync.Map
+
+var vhostNameMissing sync.Map
 
 type vhostParseEntry struct {
 	sig   string
