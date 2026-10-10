@@ -44,6 +44,7 @@ type Agent struct {
 	seq          atomic.Uint64
 	noteErrAt    atomic.Int64
 	connected    atomic.Bool
+	dropped      chan struct{}
 
 	mu           sync.Mutex
 	facts        []discovery.Fact
@@ -247,6 +248,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 		cfgSha:            map[string]string{},
 		listenerPrev:      map[string]listenerCounts{},
 		warnedUnsupported: map[string]bool{},
+		dropped:           make(chan struct{}, 1),
 		custom:            make(chan []protocol.MetricPoint, 256),
 		spans:             make(chan []protocol.Span, 64),
 		rum:               make(chan []protocol.RumItem, 256),
@@ -327,7 +329,7 @@ func (a *Agent) collect() protocol.MetricsBatch {
 }
 
 func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery, discoveryCheck time.Duration) error {
-	go a.offlineLoop(ctx, interval)
+	go a.offlineLoop(ctx, interval, heartbeatEvery)
 	if a.cfg.CustomMetricsPort > 0 {
 		go a.serveCustomMetrics(ctx, a.cfg.CustomMetricsPort)
 	}
@@ -342,7 +344,14 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		a.lastConnect.Store(time.Now().Unix())
 		a.lastError.Store("")
 		a.writeStatus()
-		defer func() { a.connected.Store(false); a.writeStatus() }()
+		defer func() {
+			a.connected.Store(false)
+			a.writeStatus()
+			select {
+			case a.dropped <- struct{}{}:
+			default:
+			}
+		}()
 		conn = &trackedConn{inner: conn, a: a}
 		defer a.spoolPending()
 		defs.SetLookupRelay(func(req protocol.Lookup) (protocol.LookupResult, error) { return a.relayLookup(conn, req) })
@@ -587,28 +596,30 @@ func anomalyDetail(an *anomaly.Anomaly) ([]byte, error) {
 	})
 }
 
-func (a *Agent) offlineLoop(ctx context.Context, interval time.Duration) {
+func (a *Agent) offlineLoop(ctx context.Context, interval, heartbeatEvery time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	ht := time.NewTicker(heartbeatEvery)
+	defer ht.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-a.dropped:
+			ht.Reset(heartbeatEvery)
+			if !a.connected.Load() {
+				a.spoolHeartbeat()
+			}
+			continue
+		case <-ht.C:
+			if !a.connected.Load() {
+				a.spoolHeartbeat()
+			}
+			continue
 		case <-t.C:
 		}
 		if a.connected.Load() {
 			continue
-		}
-		if msg, err := protocol.Encode(protocol.TypeHeartbeat, 0, protocol.Heartbeat{
-			ServerID:  a.cfg.ServerID,
-			Hostname:  a.cfg.Hostname,
-			Version:   buildinfo.Version,
-			Pin:       a.EffectivePin(),
-			Timestamp: time.Now().Unix(),
-		}); err == nil {
-			if raw, err := json.Marshal(msg); err == nil {
-				_ = a.ring.Append(raw)
-			}
 		}
 		batch := a.collect()
 		if msg, err := protocol.Encode(protocol.TypeMetrics, 0, batch); err == nil {
@@ -641,6 +652,22 @@ func (a *Agent) offlineLoop(ctx context.Context, interval time.Duration) {
 				_ = a.ring.Append(raw)
 			}
 		}
+	}
+}
+
+func (a *Agent) spoolHeartbeat() {
+	msg, err := protocol.Encode(protocol.TypeHeartbeat, 0, protocol.Heartbeat{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		Version:   buildinfo.Version,
+		Pin:       a.EffectivePin(),
+		Timestamp: time.Now().Unix(),
+	})
+	if err != nil {
+		return
+	}
+	if raw, err := json.Marshal(msg); err == nil {
+		_ = a.ring.Append(raw)
 	}
 }
 
