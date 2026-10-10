@@ -23,7 +23,7 @@ type ioState struct {
 
 func (c *Collector) ioPoints(now time.Time) []Point {
 	prev := c.io
-	cur := ioState{at: now, inContainer: ioInContainer("/")}
+	cur := ioState{at: now, inContainer: inContainer("/")}
 	if cur.inContainer {
 		if b, err := os.ReadFile("/sys/fs/cgroup/io.pressure"); err == nil {
 			cur.psi, cur.hasPSI = parsePSITotal(string(b))
@@ -178,7 +178,7 @@ func blockDevicePhysical(majmin string) bool {
 	return err == nil
 }
 
-func ioInContainer(root string) bool {
+func inContainer(root string) bool {
 	if b, err := os.ReadFile(filepath.Join(root, "run/systemd/container")); err == nil && strings.TrimSpace(string(b)) != "" {
 		return true
 	}
@@ -189,6 +189,5 @@ func ioInContainer(root string) bool {
 			}
 		}
 	}
-	_, err := os.Stat(filepath.Join(root, ".dockerenv"))
-	return err == nil
+	return false
 }

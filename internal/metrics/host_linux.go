@@ -11,6 +11,9 @@ import (
 )
 
 func loadPoints() []Point {
+	if inContainer("/") {
+		return containerLoadPoints()
+	}
 	b, err := os.ReadFile("/proc/loadavg")
 	if err != nil {
 		return nil

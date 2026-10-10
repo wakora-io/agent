@@ -70,7 +70,7 @@ func TestDiskBusyPctTakesTheBusiestDisk(t *testing.T) {
 
 func TestIOInContainer(t *testing.T) {
 	host := t.TempDir()
-	if ioInContainer(host) {
+	if inContainer(host) {
 		t.Fatal("a bare root read as a container")
 	}
 	lxc := t.TempDir()
@@ -80,7 +80,7 @@ func TestIOInContainer(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lxc, "run/systemd/container"), []byte("lxc\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !ioInContainer(lxc) {
+	if !inContainer(lxc) {
 		t.Fatal("the systemd container marker was ignored")
 	}
 }
