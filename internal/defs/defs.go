@@ -95,6 +95,53 @@ func TenantDefsKey(stateDir string, set protocol.DefinitionSet) ed25519.PublicKe
 	return ed25519.PublicKey(cand)
 }
 
+func TenantPinRefusal(stateDir string, set protocol.DefinitionSet) string {
+	if set.TenantKey == "" {
+		return ""
+	}
+	cand, err := base64.StdEncoding.DecodeString(set.TenantKey)
+	if err != nil || len(cand) != ed25519.PublicKeySize {
+		return ""
+	}
+	pinPath := TenantPinPath(stateDir)
+	raw, err := os.ReadFile(pinPath)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	pinned, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil || len(pinned) != ed25519.PublicKeySize || bytes.Equal(pinned, cand) {
+		return ""
+	}
+	return "definition refused: this host pinned a different workspace template key - if the key changed on purpose, reset the pin with: rm " + pinPath
+}
+
+func RefusedTenant(set protocol.DefinitionSet, why string) []protocol.Definition {
+	var out []protocol.Definition
+	for _, sd := range set.Definitions {
+		if sd.Tier != "tenant" {
+			continue
+		}
+		var d protocol.Definition
+		if err := json.Unmarshal(sd.Def, &d); err != nil || d.Service == "" {
+			continue
+		}
+		if !strings.HasPrefix(d.Service, "community_") && !strings.HasPrefix(d.Service, "device_") {
+			continue
+		}
+		r := protocol.Definition{Service: d.Service, Match: d.Match, Hosts: d.Hosts, RunOn: d.RunOn, IntervalSec: d.IntervalSec}
+		for _, p := range d.Probes {
+			if p.Name == "" {
+				continue
+			}
+			r.Probes = append(r.Probes, protocol.Probe{Name: p.Name, Type: p.Type, IntervalSec: p.IntervalSec, Denied: why})
+		}
+		if len(r.Probes) > 0 {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 const uninstallOrderTTL = 24 * time.Hour
 
 func VerifyUninstallOrder(envelope, publisherKey, wantUUID, stateDir string) bool {

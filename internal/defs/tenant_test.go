@@ -88,3 +88,42 @@ func TestTenantDefsKeyPinsOnFirstUse(t *testing.T) {
 		t.Fatal("a DIFFERENT key after the pin must be rejected - that is the whole TOFU point")
 	}
 }
+
+func TestPinnedKeyMismatchReportsInsteadOfSilence(t *testing.T) {
+	dir := t.TempDir()
+	pinPub, pinPriv, _ := ed25519.GenerateKey(rand.Reader)
+	first := protocol.DefinitionSet{TenantKey: base64.StdEncoding.EncodeToString(pinPub), Definitions: []protocol.SignedDefinition{tenantSigned(t, pinPriv, `{"service":"community_x","match":{"process":"x"},"probes":[]}`)}}
+	if TenantDefsKey(dir, first) == nil {
+		t.Fatal("first use must pin")
+	}
+	if why := TenantPinRefusal(dir, first); why != "" {
+		t.Fatalf("the pinned key itself is no refusal, got %q", why)
+	}
+
+	newPub, newPriv, _ := ed25519.GenerateKey(rand.Reader)
+	device := tenantSigned(t, newPriv, `{"service":"device_192_0_2_10","hosts":["collector-a"],"intervalSec":60,"probes":[{"name":"snmp","type":"snmp","target":"192.0.2.10","secret":"snmp-device"}]}`)
+	shadow := tenantSigned(t, newPriv, `{"service":"nginx","probes":[{"name":"x","type":"exec","command":"systemctl"}]}`)
+	moved := protocol.DefinitionSet{TenantKey: base64.StdEncoding.EncodeToString(newPub), Definitions: []protocol.SignedDefinition{device, shadow}}
+	if TenantDefsKey(dir, moved) != nil {
+		t.Fatal("a different key must stay refused")
+	}
+	why := TenantPinRefusal(dir, moved)
+	if why == "" {
+		t.Fatal("a refused key must come with a reason")
+	}
+	got := RefusedTenant(moved, why)
+	if len(got) != 1 || got[0].Service != "device_192_0_2_10" {
+		t.Fatalf("only names inside the tenant namespaces may be reported, got %+v", got)
+	}
+	if len(got[0].Hosts) != 1 || got[0].Hosts[0] != "collector-a" || got[0].IntervalSec != 60 {
+		t.Fatalf("the collector role and cadence must survive, got %+v", got[0])
+	}
+	p := got[0].Probes[0]
+	if p.Denied != why || p.Secret != "" || p.Target != "" {
+		t.Fatalf("a refused probe must carry the reason and nothing it could act on, got %+v", p)
+	}
+	o := DeniedOutcome(got[0].Service, p)
+	if o.Check.Status != "fail" || o.Check.CheckID != "device_192_0_2_10/snmp" || o.Check.Target != "" {
+		t.Fatalf("the refusal must reach the platform as a failing check without a target, got %+v", o.Check)
+	}
+}

@@ -2555,7 +2555,13 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 			}
 			a.cfgGen.Store(set.Gen)
 		}
-		verified := defs.Verify(set, a.publisherKey, defs.TenantDefsKey(a.cfg.StateDir(), set))
+		tenantKey := defs.TenantDefsKey(a.cfg.StateDir(), set)
+		verified := defs.Verify(set, a.publisherKey, tenantKey)
+		if tenantKey == nil {
+			if why := defs.TenantPinRefusal(a.cfg.StateDir(), set); why != "" {
+				verified = append(verified, defs.RefusedTenant(set, why)...)
+			}
+		}
 		deny := map[string]bool{}
 		for _, d := range set.Deny {
 			deny[d] = true
