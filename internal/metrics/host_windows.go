@@ -131,8 +131,25 @@ func diskPoints() []Point {
 			Point{Name: "host.disk.used_bytes", Value: float64(used), Tags: tags},
 			Point{Name: "host.disk.used_pct", Value: float64(total-freeAvail) / float64(total) * 100, Tags: tags},
 		)
+		if ro, ok := volumeReadOnly(rootPtr); ok {
+			v := 0.0
+			if ro {
+				v = 1
+			}
+			pts = append(pts, Point{Name: "host.disk.readonly", Value: v, Tags: tags})
+		}
 	}
 	return pts
+}
+
+const fileReadOnlyVolume = 0x00080000
+
+func volumeReadOnly(root *uint16) (bool, bool) {
+	var flags uint32
+	if err := windows.GetVolumeInformation(root, nil, 0, nil, nil, &flags, nil, 0); err != nil {
+		return false, false
+	}
+	return flags&fileReadOnlyVolume != 0, true
 }
 
 type mibIfRow2 struct {
