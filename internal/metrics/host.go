@@ -21,6 +21,7 @@ type Collector struct {
 	hasPrev      bool
 	prevTop      map[string]topSample
 	prevTopAt    time.Time
+	io           ioState
 }
 
 type topSample struct {
@@ -44,6 +45,7 @@ func (c *Collector) Collect() (int64, []Point) {
 	pts = append(pts, c.cpuPoints()...)
 	pts = append(pts, c.netPoints(now)...)
 	pts = append(pts, c.topPoints(now)...)
+	pts = append(pts, c.ioPoints(now)...)
 	cores := float64(coreCount())
 	pts = append(pts, Point{Name: "host.cpu.cores", Value: cores})
 	for _, p := range pts {
