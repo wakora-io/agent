@@ -81,3 +81,40 @@ jobs:
             exit 1
           fi
           echo "release $ver rebuilds from this source byte for byte"
+
+  release:
+    name: publish the release on GitHub
+    needs: [test, reproduce]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: write the notes from the tagged commit and the signed manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          curl -fsSL https://get.wakora.io/bin/manifest.json -o manifest.json
+          ver=$(jq -r '.version' manifest.json)
+          if [ "$ver" != "$GITHUB_REF_NAME" ]; then
+            echo "the channel publishes $ver, not $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          {
+            git log -1 --format=%B HEAD
+            echo
+            echo "## Binaries"
+            echo
+            echo "The binaries are served from the signed release channel at https://get.wakora.io/bin/. The manifest that lists them is signed with the publisher key in the trust pack (https://www.wakora.io/trust), and the linux-amd64 binary was rebuilt from this tag by the reproduce job of this workflow and matched byte for byte."
+            echo
+            echo "| file | sha256 |"
+            echo "|---|---|"
+            jq -r '.assets | to_entries[] | "| `\(.key)` | `\(.value)` |"' manifest.json
+          } > notes.md
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          fi
