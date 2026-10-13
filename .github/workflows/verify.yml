@@ -91,7 +91,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: write the notes from the tagged commit and the signed manifest
+        with:
+          fetch-depth: 0
+      - name: write the notes from the commits since the previous tag and the signed manifest
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -102,9 +104,18 @@ jobs:
             echo "the channel publishes $ver, not $GITHUB_REF_NAME" >&2
             exit 1
           fi
+          prev=$(git describe --tags --abbrev=0 --match 'r[0-9]*' HEAD^ 2>/dev/null || true)
+          range=HEAD
+          if [ -n "$prev" ]; then range="$prev..HEAD"; fi
           {
-            git log -1 --format=%B HEAD
-            echo
+            for c in $(git rev-list --reverse "$range"); do
+              if git diff-tree --no-commit-id --name-only -r "$c" | grep -qv '^\.github/'; then
+                echo "### $(git log -1 --format=%s "$c")"
+                echo
+                git log -1 --format=%b "$c"
+                echo
+              fi
+            done
             echo "## Binaries"
             echo
             echo "The binaries are served from the signed release channel at https://get.wakora.io/bin/. The manifest that lists them is signed with the publisher key in the trust pack (https://www.wakora.io/trust), and the linux-amd64 binary was rebuilt from this tag by the reproduce job of this workflow and matched byte for byte."
