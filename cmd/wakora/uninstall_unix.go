@@ -15,6 +15,8 @@ func removePlatformService() {
 		_ = exec.Command("systemctl", "stop", "wakora-agent").Run()
 		_ = exec.Command("systemctl", "disable", "wakora-agent").Run()
 		_ = os.Remove("/etc/systemd/system/wakora-agent.service")
+		_ = os.Remove("/etc/systemd/system/wakora-agent.service.d/40-wakora-hardening.conf")
+		_ = os.Remove("/etc/systemd/system/wakora-agent.service.d")
 		_ = exec.Command("systemctl", "daemon-reload").Run()
 	case "openrc":
 		_ = exec.Command("rc-service", "wakora-agent", "stop").Run()

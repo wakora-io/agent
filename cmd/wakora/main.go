@@ -254,7 +254,7 @@ func main() {
 		runtime.GOMAXPROCS(2)
 	}
 	agent.EnsureCgroupHeadroom()
-	if agent.EnsureSandboxHeadroom() {
+	if agent.EnsureUnitHardening(cfg.StateDir()) || agent.EnsureSandboxHeadroom() {
 		exitForRestart()
 	}
 	agent.PinOwnMappings()

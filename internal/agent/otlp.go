@@ -86,7 +86,7 @@ func (a *Agent) serveOTLP(ctx context.Context, port int, binds []string) {
 	mux.HandleFunc("/v1/traces", a.handleOTLPTraces)
 	mux.HandleFunc("/v1/metrics", a.handleOTLPMetrics)
 	mux.HandleFunc("/v1/rum", a.handleRumBeacon)
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 64 << 10}
+	srv := &http.Server{Handler: otlpGuard(mux), ConnContext: a.otlpConnContext, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 64 << 10}
 
 	hosts := []string{"127.0.0.1"}
 	for _, b := range binds {

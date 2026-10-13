@@ -45,6 +45,7 @@ type Agent struct {
 	noteErrAt    atomic.Int64
 	connected    atomic.Bool
 	dropped      chan struct{}
+	senders      otlpSenders
 
 	mu           sync.Mutex
 	facts        []discovery.Fact
