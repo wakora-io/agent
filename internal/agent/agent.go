@@ -422,8 +422,34 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			}
 		}()
 
-		mt := time.NewTicker(interval)
-		defer mt.Stop()
+		mErr := make(chan error, 1)
+		mStop := make(chan struct{})
+		defer close(mStop)
+		go func() {
+			mt := time.NewTicker(interval)
+			defer mt.Stop()
+			for {
+				var err error
+				select {
+				case <-mStop:
+					return
+				case <-mt.C:
+					err = a.sendMetrics(conn)
+				case <-kick:
+					err = a.sendMetrics(conn)
+				case pts := <-a.custom:
+					err = a.sendCustom(conn, pts)
+				}
+				if err != nil {
+					select {
+					case mErr <- err:
+					default:
+					}
+					return
+				}
+			}
+		}()
+
 		dt := time.NewTicker(discoveryEvery)
 		defer dt.Stop()
 		dc := time.NewTicker(discoveryCheck)
@@ -436,10 +462,8 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				return ctx.Err()
 			case err := <-readErr:
 				return err
-			case <-kick:
-				if err := a.sendMetrics(conn); err != nil {
-					return err
-				}
+			case err := <-mErr:
+				return err
 			case <-dkick:
 				if err := a.sendDiscovery(conn); err != nil {
 					return err
@@ -454,10 +478,6 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				}
 			case err := <-hbErr:
 				return err
-			case <-mt.C:
-				if err := a.sendMetrics(conn); err != nil {
-					return err
-				}
 			case <-dt.C:
 				if err := a.sendDiscovery(conn); err != nil {
 					return err
@@ -473,21 +493,6 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				a.drainSpans(conn)
 				if err := a.runDueProbes(conn); err != nil {
 					return err
-				}
-			case pts := <-a.custom:
-				msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
-					ServerID:  a.cfg.ServerID,
-					Hostname:  a.cfg.Hostname,
-					Timestamp: time.Now().Unix(),
-					Points:    pts,
-				})
-				if err == nil {
-					if err := conn.Send(msg); err != nil {
-						return err
-					}
-					if err := a.observePoints(conn, pts); err != nil {
-						return err
-					}
 				}
 			case sp := <-a.spans:
 				msg, err := protocol.Encode(protocol.TypeSpans, a.seq.Add(1), protocol.SpanBatch{
@@ -541,6 +546,22 @@ func (a *Agent) sendMetrics(conn transport.Conn) error {
 		return err
 	}
 	return a.observePoints(conn, batch.Points)
+}
+
+func (a *Agent) sendCustom(conn transport.Conn, pts []protocol.MetricPoint) error {
+	msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
+		ServerID:  a.cfg.ServerID,
+		Hostname:  a.cfg.Hostname,
+		Timestamp: time.Now().Unix(),
+		Points:    pts,
+	})
+	if err != nil {
+		return nil
+	}
+	if err := conn.Send(msg); err != nil {
+		return err
+	}
+	return a.observePoints(conn, pts)
 }
 
 func (a *Agent) observePoints(conn transport.Conn, points []protocol.MetricPoint) error {
