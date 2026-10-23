@@ -118,7 +118,7 @@ jobs:
             done
             echo "## Binaries"
             echo
-            echo "The binaries are served from the signed release channel at https://get.wakora.io/bin/. The manifest that lists them is signed with the publisher key in the trust pack (https://www.wakora.io/trust), and the linux-amd64 binary was rebuilt from this tag by the reproduce job of this workflow and matched byte for byte."
+            echo "The binaries are listed in the signed manifest https://get.wakora.io/bin/manifest.json (signature: https://get.wakora.io/bin/manifest.json.sig) and are downloaded by their file names from the same place. The manifest is signed with the publisher key in the trust pack (https://www.wakora.io/trust), and the linux-amd64 binary was rebuilt from this tag by the reproduce job of this workflow and matched byte for byte."
             echo
             echo "| file | sha256 |"
             echo "|---|---|"
