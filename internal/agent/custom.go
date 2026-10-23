@@ -81,6 +81,10 @@ func (a *Agent) handleCustomIngest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no valid metrics (names must start with app.)", http.StatusBadRequest)
 		return
 	}
+	if a.Paused() != "" {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	select {
 	case a.custom <- pts:
 		w.WriteHeader(http.StatusAccepted)

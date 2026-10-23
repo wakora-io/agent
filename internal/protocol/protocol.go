@@ -207,6 +207,7 @@ type DefinitionSet struct {
 	TenantKey    string             `json:"tenantKey,omitempty"`
 	Anomaly      *AnomalyConfig     `json:"anomaly,omitempty"`
 	Gen          uint64             `json:"gen,omitempty"`
+	Paused       string             `json:"paused,omitempty"`
 }
 
 type AnomalyClass struct {

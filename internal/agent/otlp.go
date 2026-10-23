@@ -156,6 +156,9 @@ func (a *Agent) handleOTLPTraces(w http.ResponseWriter, r *http.Request) {
 		spans = convertOTLP(exp)
 	}
 	spans = dropNoiseSpans(spans)
+	if a.Paused() != "" {
+		spans = nil
+	}
 	if len(spans) == 0 {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -217,7 +220,7 @@ func (a *Agent) handleOTLPMetrics(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{}"))
 	}
-	if len(pts) == 0 {
+	if len(pts) == 0 || a.Paused() != "" {
 		writeOK()
 		return
 	}

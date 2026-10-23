@@ -28,6 +28,7 @@ import (
 	"wakora.io/agent/internal/config"
 	"wakora.io/agent/internal/defs"
 	"wakora.io/agent/internal/logfile"
+	"wakora.io/agent/internal/pause"
 	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
 	"wakora.io/agent/internal/update"
@@ -490,7 +491,7 @@ func forgetServerState(cfg *config.Config, prevID, newID string) {
 	if prevID == newID {
 		return
 	}
-	for _, p := range []string{cfg.RingPath(), cfg.SpanRingPath(), defs.TenantPinPath(cfg.StateDir())} {
+	for _, p := range []string{cfg.RingPath(), cfg.SpanRingPath(), defs.TenantPinPath(cfg.StateDir()), pause.Path(cfg.StateDir())} {
 		if err := os.Remove(p); err == nil {
 			log.Printf("new server uuid %s - removed %s left by the previous identity", newID, p)
 		}

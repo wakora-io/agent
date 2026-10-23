@@ -7,6 +7,7 @@ import (
 	"wakora.io/agent/internal/buildinfo"
 	"wakora.io/agent/internal/config"
 	"wakora.io/agent/internal/doctor"
+	"wakora.io/agent/internal/pause"
 	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
 )
@@ -39,6 +40,9 @@ func runDoctor(configDir string, args []string) {
 	in.SecretsStored, in.SecretsSealed = secret.SealedNames(cfg.Dir())
 
 	checks := doctor.Run(in)
+	if msg := pause.Message(pause.Read(cfg.StateDir())); msg != "" {
+		fmt.Println(msg)
+	}
 	fmt.Println("Wakora agent " + buildinfo.Version)
 	fmt.Print(doctor.Render(checks))
 

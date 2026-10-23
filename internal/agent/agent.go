@@ -27,6 +27,7 @@ import (
 	"wakora.io/agent/internal/defs"
 	"wakora.io/agent/internal/discovery"
 	"wakora.io/agent/internal/metrics"
+	"wakora.io/agent/internal/pause"
 	"wakora.io/agent/internal/protocol"
 	"wakora.io/agent/internal/secret"
 	"wakora.io/agent/internal/transport"
@@ -92,6 +93,7 @@ type Agent struct {
 	rumAllowed        atomic.Value
 	rumLimit          rumLimiter
 	cfgGen            atomic.Uint64
+	paused            atomic.Value
 	profiles          chan defs.Outcome
 	profiling         map[string]bool
 	vhostDone         chan probeDone
@@ -264,6 +266,7 @@ func New(cfg *config.Config, ring *buffer.Ring, publisherKey string) *Agent {
 	}
 	a.key.Store(cfg.Key)
 	a.pin.Store(cfg.Pin)
+	a.paused.Store(pause.Read(pauseStateDir(cfg)))
 	return a
 }
 
@@ -331,6 +334,7 @@ func (a *Agent) collect() protocol.MetricsBatch {
 
 func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery, discoveryCheck time.Duration) error {
 	go a.offlineLoop(ctx, interval, heartbeatEvery)
+	go a.pauseLog(ctx)
 	if a.cfg.CustomMetricsPort > 0 {
 		go a.serveCustomMetrics(ctx, a.cfg.CustomMetricsPort)
 	}
@@ -379,11 +383,13 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 		}
 		a.drainSpool(conn)
 		a.drainSpans(conn)
-		if err := a.sendMetrics(conn); err != nil {
-			return err
-		}
-		if err := a.sendDiscovery(conn); err != nil {
-			return err
+		if a.Paused() == "" {
+			if err := a.sendMetrics(conn); err != nil {
+				return err
+			}
+			if err := a.sendDiscovery(conn); err != nil {
+				return err
+			}
 		}
 
 		hbErr := make(chan error, 1)
@@ -434,11 +440,17 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				case <-mStop:
 					return
 				case <-mt.C:
-					err = a.sendMetrics(conn)
+					if a.Paused() == "" {
+						err = a.sendMetrics(conn)
+					}
 				case <-kick:
-					err = a.sendMetrics(conn)
+					if a.Paused() == "" {
+						err = a.sendMetrics(conn)
+					}
 				case pts := <-a.custom:
-					err = a.sendCustom(conn, pts)
+					if a.Paused() == "" {
+						err = a.sendCustom(conn, pts)
+					}
 				}
 				if err != nil {
 					select {
@@ -465,6 +477,9 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			case err := <-mErr:
 				return err
 			case <-dkick:
+				if a.Paused() != "" {
+					continue
+				}
 				if err := a.sendDiscovery(conn); err != nil {
 					return err
 				}
@@ -479,10 +494,16 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 			case err := <-hbErr:
 				return err
 			case <-dt.C:
+				if a.Paused() != "" {
+					continue
+				}
 				if err := a.sendDiscovery(conn); err != nil {
 					return err
 				}
 			case <-dc.C:
+				if a.Paused() != "" {
+					continue
+				}
 				if s := discovery.ChangeSignal(); s != a.lastSignal {
 					log.Print("host change detected, refreshing discovery")
 					if err := a.sendDiscovery(conn); err != nil {
@@ -491,10 +512,17 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 				}
 			case <-pt.C:
 				a.drainSpans(conn)
+				if a.Paused() != "" {
+					a.quietWhilePaused()
+					continue
+				}
 				if err := a.runDueProbes(conn); err != nil {
 					return err
 				}
 			case sp := <-a.spans:
+				if a.Paused() != "" {
+					continue
+				}
 				msg, err := protocol.Encode(protocol.TypeSpans, a.seq.Add(1), protocol.SpanBatch{
 					ServerID: a.cfg.ServerID,
 					Hostname: a.cfg.Hostname,
@@ -506,6 +534,9 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					}
 				}
 			case ri := <-a.rum:
+				if a.Paused() != "" {
+					continue
+				}
 				msg, err := protocol.Encode(protocol.TypeRum, a.seq.Add(1), protocol.RumBatch{
 					ServerID: a.cfg.ServerID,
 					Hostname: a.cfg.Hostname,
@@ -517,10 +548,16 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 					}
 				}
 			case o := <-a.profiles:
+				if a.Paused() != "" {
+					continue
+				}
 				if err := a.emitProfile(conn, o); err != nil {
 					return err
 				}
 			case d := <-a.vhostDone:
+				if a.Paused() != "" {
+					continue
+				}
 				ch, err := a.emitOutcome(conn, d.service, d.service+"/"+d.probe.Name, d.o)
 				if err != nil {
 					return err
@@ -640,7 +677,7 @@ func (a *Agent) offlineLoop(ctx context.Context, interval, heartbeatEvery time.D
 			continue
 		case <-t.C:
 		}
-		if a.connected.Load() {
+		if a.connected.Load() || a.Paused() != "" {
 			continue
 		}
 		batch := a.collect()
@@ -1127,7 +1164,7 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			}
 			if p.Type == "ebpfhttp" {
 				if a.denied("ebpf") {
-					a.stopEBPF()
+					a.stopEBPF("denied from the console")
 					continue
 				}
 				if err := a.runEBPFHTTP(conn, d.Service, p); err != nil {
@@ -1458,6 +1495,9 @@ func (a *Agent) setProbeFacts(key string, facts []protocol.Fact) bool {
 }
 
 func (a *Agent) deviceTest(t protocol.DevTest) protocol.DevTestResult {
+	if a.Paused() != "" {
+		return protocol.DevTestResult{Nonce: t.Nonce, Error: "this collector is not monitored on its workspace plan and polls no device"}
+	}
 	a.mu.Lock()
 	taken := defs.ServiceSecret(a.defs, t.Secret)
 	a.mu.Unlock()
@@ -2375,7 +2415,7 @@ func (a *Agent) serviceDenied(svc string) bool {
 	return a.denySvc[svc]
 }
 
-func (a *Agent) stopEBPF() {
+func (a *Agent) stopEBPF(why string) {
 	a.apmWant = nil
 	a.apmCurPorts = nil
 	a.apmCurDown = nil
@@ -2386,7 +2426,7 @@ func (a *Agent) stopEBPF() {
 	a.apmEngine.Close()
 	a.apmEngine = nil
 	a.apmErr = nil
-	log.Print("ebpf http engine stopped: denied from the console")
+	log.Print("ebpf http engine stopped: " + why)
 }
 
 func (a *Agent) runEBPFHTTP(conn transport.Conn, service string, p protocol.Probe) error {
@@ -2637,6 +2677,12 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 				verified = append(verified, defs.RefusedTenant(set, why)...)
 			}
 		}
+		paused := pause.Normalize(set.Paused)
+		if paused != "" {
+			verified = nil
+			set.Roles = nil
+			set.RumSites = nil
+		}
 		deny := map[string]bool{}
 		for _, d := range set.Deny {
 			deny[d] = true
@@ -2698,6 +2744,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 			a.dropTailFDs.Store(true)
 		}
 		a.applyPushedPin(set.Pin)
+		a.setPaused(paused, dkick)
 		a.refreshActive()
 	case protocol.TypeCommand:
 		var c protocol.Command
