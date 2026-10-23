@@ -39,6 +39,17 @@ func TestOtelArtifactLineKeepsWhatAHostAlreadyRuns(t *testing.T) {
 	}
 }
 
+func TestOtelOffCommandRemovesBothInis(t *testing.T) {
+	st := &sapiTarget{iniDir: "/etc/php/8.3/fpm/conf.d", testCmd: "php-fpm8.3 -t", reloadCmd: "systemctl reload php8.3-fpm"}
+	want := "rm -f /etc/php/8.3/fpm/conf.d/90-wakora-otel.ini /etc/php/8.3/fpm/conf.d/99-wakora-deep.ini && php-fpm8.3 -t && systemctl reload php8.3-fpm"
+	if got := otelOffCommand(st); got != want {
+		t.Fatalf("got %q", got)
+	}
+	if got := otelOffCommand(&sapiTarget{reloadCmd: "systemctl reload php8.3-fpm"}); got != "" {
+		t.Fatalf("no ini dir must yield no command, got %q", got)
+	}
+}
+
 func TestParseModPhpMinor(t *testing.T) {
 	load := []byte("# apache2 php module\nLoadModule php_module /usr/lib/apache2/modules/libphp8.3.so\n")
 	if got := parseModPhpMinor(load); got != "8.3" {

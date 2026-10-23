@@ -188,7 +188,13 @@ func runPHPTargets(o *Outcome, service string, p protocol.Probe, stateDir string
 			stageKey = "stage." + minor
 			o.Facts["artifact."+minor] = otelArtifactFor(stateDir, st.rt)
 		}
+		offKey := "otelOff"
+		if len(targets) > 1 {
+			offKey += "." + minor
+		}
+		o.Facts[offKey] = ""
 		if st.loaded {
+			o.Facts[offKey] = otelOffCommand(st)
 			o.Facts[stageKey] = "active"
 			_ = apm.ResetStaged(stateDir, stageID+"-cleanup")
 			if apm.StagedState(stateDir, stageID) == "pending_activation" {
@@ -563,6 +569,18 @@ func dirExists(p string) bool {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+func otelOffCommand(st *sapiTarget) string {
+	if st.iniDir == "" || st.reloadCmd == "" {
+		return ""
+	}
+	parts := []string{"rm -f " + filepath.Join(st.iniDir, "90-wakora-otel.ini") + " " + filepath.Join(st.iniDir, "99-wakora-deep.ini")}
+	if st.testCmd != "" {
+		parts = append(parts, st.testCmd)
+	}
+	parts = append(parts, st.reloadCmd)
+	return strings.Join(parts, " && ")
 }
 
 func stageOtel(o *Outcome, service string, p protocol.Probe, stateDir string, st *sapiTarget, stageID, stageKey string) {
