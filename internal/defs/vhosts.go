@@ -158,7 +158,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 
 	var primaries []int
 	for i, h := range hosts {
-		if h.Primary && !vhostCatchAll(h.Name) {
+		if h.Primary && !vhostCatchAll(h.Name) && !siteOff(h.Name) {
 			primaries = append(primaries, i)
 		}
 	}
@@ -333,7 +333,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}
 		payload, _ := json.Marshal(pm)
 		o.InvFacts = append(o.InvFacts, protocol.Fact{Kind: "vhost", Key: key, Payload: string(payload)})
-		if beKnown && h.Primary && h.Redirect == "" && !beEmitted[h.Name] && !vhostCatchAll(h.Name) {
+		if beKnown && h.Primary && h.Redirect == "" && !beEmitted[h.Name] && !vhostCatchAll(h.Name) && !siteOff(h.Name) {
 			beEmitted[h.Name] = true
 			v := 0.0
 			if be.gone {
@@ -344,7 +344,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 				Tags: map[string]string{"vhost": h.Name},
 			})
 		}
-		if rootKnown[h.Name] && h.Primary && h.Redirect == "" && !rootEmitted[h.Name] && !vhostCatchAll(h.Name) {
+		if rootKnown[h.Name] && h.Primary && h.Redirect == "" && !rootEmitted[h.Name] && !vhostCatchAll(h.Name) && !siteOff(h.Name) {
 			rootEmitted[h.Name] = true
 			v := 0.0
 			if _, missing := rootMissing[h.Name]; missing {
@@ -965,7 +965,7 @@ func certVerdict(chain []*x509.Certificate, host string) (float64, bool, string)
 func vhostAliases(hosts []vhost) []int {
 	var out []int
 	for i, h := range hosts {
-		if h.Primary || vhostCatchAll(h.Name) || strings.ContainsAny(h.Name, "*~") {
+		if h.Primary || vhostCatchAll(h.Name) || strings.ContainsAny(h.Name, "*~") || siteOff(h.Name) {
 			continue
 		}
 		out = append(out, i)

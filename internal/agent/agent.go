@@ -2692,6 +2692,7 @@ func (a *Agent) handleDownstream(m protocol.Message, kick, dkick chan struct{}, 
 			allow[al] = true
 		}
 		defs.SetStagingDenied(deny["staged"])
+		defs.SetSitesOff(set.SiteOff)
 		defs.SetDeepTraceAllowed(allow["deeptrace"])
 		defs.SetNodeProfileAllowed(allow["nodeprofile"])
 		a.detector.SetConfig(anomalyConfig(set.Anomaly))
