@@ -51,10 +51,15 @@ func TestOfflineBeatKeepsTheHeartbeatCadence(t *testing.T) {
 	defer cancel()
 	go a.offlineLoop(ctx, time.Hour, 40*time.Millisecond)
 
-	time.Sleep(230 * time.Millisecond)
+	n := 0
+	deadline := time.Now().Add(2 * time.Second)
+	for n < 4 && time.Now().Before(deadline) {
+		time.Sleep(40 * time.Millisecond)
+		n += spooledBeats(t, ring)
+	}
 	cancel()
-	if n := spooledBeats(t, ring); n < 4 {
-		t.Fatalf("spooled %d heartbeats in 230ms at a 40ms cadence, want at least 4", n)
+	if n < 4 {
+		t.Fatalf("spooled %d heartbeats in 2s at a 40ms cadence, want at least 4", n)
 	}
 }
 

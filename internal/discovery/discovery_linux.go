@@ -37,6 +37,7 @@ func collect(pkgs []Fact) []Fact {
 	facts = append(facts, units()...)
 	facts = append(facts, netFacts()...)
 	facts = append(facts, hostFact())
+	facts = append(facts, kernelFact(pkgs))
 	facts = append(facts, initFact())
 	facts = append(facts, capFacts()...)
 	facts = append(facts, cronJobs()...)
@@ -332,16 +333,27 @@ func dpkgPackages() []Fact {
 		return nil
 	}
 	defer f.Close()
+	return parseDpkgStatus(f)
+}
+
+func parseDpkgStatus(r io.Reader) []Fact {
 	agg := map[string]*packageInfo{}
-	var name, version string
+	var name, version, source string
 	installed := false
 	commit := func() {
 		if name != "" && installed {
-			agg[name] = &packageInfo{Version: version}
+			p := &packageInfo{Version: version}
+			if src, srcVer := splitSource(source); src != "" && src != name {
+				p.Source = src
+				if srcVer != version {
+					p.SourceVersion = srcVer
+				}
+			}
+			agg[name] = p
 		}
-		name, version, installed = "", "", false
+		name, version, source, installed = "", "", "", false
 	}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
 	for sc.Scan() {
 		line := sc.Text()
@@ -352,6 +364,8 @@ func dpkgPackages() []Fact {
 			name = line[9:]
 		case strings.HasPrefix(line, "Version: "):
 			version = line[9:]
+		case strings.HasPrefix(line, "Source: "):
+			source = line[8:]
 		case strings.HasPrefix(line, "Status: "):
 			installed = strings.HasSuffix(line, " installed")
 		}
@@ -364,19 +378,44 @@ func rpmPackages() []Fact {
 	if _, err := os.Stat("/var/lib/rpm"); err != nil {
 		return nil
 	}
-	out, err := exec.Command("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\n").Output()
+	out, err := exec.Command("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{SOURCERPM}\n").Output()
 	if err != nil {
 		return nil
 	}
+	return parseRpmList(string(out))
+}
+
+func parseRpmList(out string) []Fact {
 	agg := map[string]*packageInfo{}
-	for _, line := range strings.Split(string(out), "\n") {
-		name, version, ok := strings.Cut(line, "\t")
-		if !ok || name == "" {
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) < 2 || parts[0] == "" {
 			continue
 		}
-		agg[name] = &packageInfo{Version: version}
+		p := &packageInfo{Version: parts[1]}
+		if len(parts) > 2 {
+			if src := rpmSourceName(parts[2]); src != "" && src != parts[0] {
+				p.Source = src
+			}
+		}
+		agg[parts[0]] = p
 	}
 	return sortedFacts("package", agg)
+}
+
+func rpmSourceName(srpm string) string {
+	s := strings.TrimSuffix(strings.TrimSpace(srpm), ".src.rpm")
+	if s == "" || s == "(none)" {
+		return ""
+	}
+	for i := 0; i < 2; i++ {
+		j := strings.LastIndex(s, "-")
+		if j <= 0 {
+			return ""
+		}
+		s = s[:j]
+	}
+	return s
 }
 
 func apkPackages() []Fact {
@@ -389,12 +428,16 @@ func apkPackages() []Fact {
 
 func parseApkDB(data string) []Fact {
 	agg := map[string]*packageInfo{}
-	var name, version string
+	var name, version, origin string
 	commit := func() {
 		if name != "" {
-			agg[name] = &packageInfo{Version: version}
+			p := &packageInfo{Version: version}
+			if origin != "" && origin != name {
+				p.Source = origin
+			}
+			agg[name] = p
 		}
-		name, version = "", ""
+		name, version, origin = "", "", ""
 	}
 	for _, line := range strings.Split(data, "\n") {
 		switch {
@@ -404,6 +447,8 @@ func parseApkDB(data string) []Fact {
 			name = line[2:]
 		case strings.HasPrefix(line, "V:"):
 			version = line[2:]
+		case strings.HasPrefix(line, "o:"):
+			origin = line[2:]
 		}
 	}
 	commit()

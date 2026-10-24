@@ -42,7 +42,21 @@ type procInfo struct {
 }
 
 type packageInfo struct {
-	Version string `json:"version,omitempty"`
+	Version       string `json:"version,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SourceVersion string `json:"sourceVersion,omitempty"`
+}
+
+func splitSource(field string) (string, string) {
+	name, rest, ok := strings.Cut(strings.TrimSpace(field), " ")
+	if !ok {
+		return name, ""
+	}
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, "(") && strings.HasSuffix(rest, ")") {
+		return name, strings.TrimSpace(rest[1 : len(rest)-1])
+	}
+	return name, ""
 }
 
 func netFacts() []Fact {
