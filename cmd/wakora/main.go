@@ -300,12 +300,14 @@ func main() {
 		if err := runUnderServiceManager(ctx, run); err != nil {
 			log.Fatal(err)
 		}
+		agent.MarkCleanStop()
 		return
 	}
 
 	if err := run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}
+	agent.MarkCleanStop()
 }
 
 func usage() {

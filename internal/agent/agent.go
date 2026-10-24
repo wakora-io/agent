@@ -102,6 +102,11 @@ type Agent struct {
 	restart           func()
 	instance          string
 	otlpAuto          atomic.Bool
+	oom               *defs.OOMWatch
+	restartEv         *protocol.AgentEvent
+	restartPend       *pendingRestart
+	svcWatchAt        time.Time
+	unitSeen          map[string]unitState
 
 	lookupMu   sync.Mutex
 	lookupWait map[string]chan protocol.LookupResult
@@ -333,6 +338,19 @@ func (a *Agent) collect() protocol.MetricsBatch {
 }
 
 func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, heartbeatEvery, discoveryEvery, discoveryCheck time.Duration) error {
+	a.restartEv, a.restartPend = startRunMark(a.cfg.StateDir(), buildinfo.Version)
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				touchRunMark()
+			}
+		}
+	}()
 	go a.offlineLoop(ctx, interval, heartbeatEvery)
 	go a.pauseLog(ctx)
 	if a.cfg.CustomMetricsPort > 0 {
@@ -344,6 +362,10 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 	defs.OTLPEnsure = func(port int) { a.ensureOTLP(ctx, port) }
 	defs.SetExecTmpDir(filepath.Join(a.cfg.StateDir(), "tmp"))
 	defs.SetDomainStore(filepath.Join(a.cfg.StateDir(), "domains.json"))
+	defs.SetJournalState(filepath.Join(a.cfg.StateDir(), "journal-cursor.json"))
+	a.oom = defs.NewOOMWatch(filepath.Join(a.cfg.StateDir(), "oom-state.json"))
+	a.oom.GuestName = a.guestName
+	a.oom.Image = defs.DockerImageOf
 	return client.Run(ctx, func(conn transport.Conn) error {
 		a.connected.Store(true)
 		a.lastConnect.Store(time.Now().Unix())
@@ -380,6 +402,23 @@ func (a *Agent) Run(ctx context.Context, client *transport.Client, interval, hea
 
 		if err := a.sendHeartbeat(conn); err != nil {
 			return err
+		}
+		if ev := a.restartEv; ev != nil {
+			ev.ServerID = a.cfg.ServerID
+			ev.Hostname = a.cfg.Hostname
+			log.Printf("%s: %s", ev.Kind, ev.Detail)
+			if msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), *ev); err == nil {
+				if err := conn.Send(msg); err != nil {
+					return err
+				}
+			}
+			a.restartEv = nil
+		}
+		if a.restartPend != nil {
+			defs.JournalCycle()
+			if err := a.runOOMWatch(conn); err != nil {
+				return err
+			}
 		}
 		a.drainSpool(conn)
 		a.drainSpans(conn)
@@ -752,7 +791,10 @@ func (a *Agent) sendHeartbeat(conn transport.Conn) error {
 }
 
 func (a *Agent) sendDiscovery(conn transport.Conn) error {
-	facts := discovery.Collect()
+	return a.applyFacts(conn, discovery.Collect())
+}
+
+func (a *Agent) applyFacts(conn transport.Conn, facts []discovery.Fact) error {
 	a.lastSignal = discovery.ChangeSignal()
 	a.mu.Lock()
 	a.facts = facts
@@ -1239,10 +1281,75 @@ func (a *Agent) runDueProbes(conn transport.Conn) error {
 			}
 		}
 	}
-	if factsChanged {
+	if err := a.runOOMWatch(conn); err != nil {
+		return err
+	}
+	refreshed, err := a.runServiceWatch(conn)
+	if err != nil {
+		return err
+	}
+	if factsChanged && !refreshed {
 		return a.sendFacts(conn)
 	}
 	return nil
+}
+
+func (a *Agent) runOOMWatch(conn transport.Conn) error {
+	if a.oom == nil {
+		return nil
+	}
+	points, events := a.oom.Run(time.Now())
+	if p := a.restartPend; p != nil {
+		if ev, ok := p.decide(a.oom.Lines(), time.Now()); ok {
+			a.restartPend = nil
+			events = append([]protocol.AgentEvent{ev}, events...)
+		}
+	}
+	if len(points) > 0 {
+		msg, err := protocol.Encode(protocol.TypeMetrics, a.seq.Add(1), protocol.MetricsBatch{
+			ServerID:  a.cfg.ServerID,
+			Hostname:  a.cfg.Hostname,
+			Timestamp: time.Now().Unix(),
+			Points:    points,
+		})
+		if err == nil {
+			if err := conn.Send(msg); err != nil {
+				return err
+			}
+		}
+	}
+	for _, ev := range events {
+		ev.ServerID = a.cfg.ServerID
+		ev.Hostname = a.cfg.Hostname
+		log.Printf("%s: %s", ev.Kind, ev.Detail)
+		msg, err := protocol.Encode(protocol.TypeEvent, a.seq.Add(1), ev)
+		if err != nil {
+			continue
+		}
+		if err := conn.Send(msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *Agent) guestName(id string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, facts := range a.probeFacts {
+		for _, f := range facts {
+			if f.Kind != "guest" || f.Key != id {
+				continue
+			}
+			var p struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal([]byte(f.Payload), &p) == nil && p.Name != "" {
+				return p.Name
+			}
+		}
+	}
+	return ""
 }
 
 type probeDone struct {

@@ -17,6 +17,23 @@ type Fact struct {
 	Payload string
 }
 
+func Refresh(prev []Fact) []Fact {
+	pkgs := []Fact{}
+	for _, f := range prev {
+		if f.Kind == "package" {
+			pkgs = append(pkgs, f)
+		}
+	}
+	if len(pkgs) == 0 {
+		return Collect()
+	}
+	return collect(pkgs)
+}
+
+func Processes() []Fact {
+	return processes()
+}
+
 type procInfo struct {
 	Count   int    `json:"count"`
 	Pid     int    `json:"pid"`

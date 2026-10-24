@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+
+	"wakora.io/agent/internal/agent"
 )
 
 func detectInit() string {
@@ -30,7 +32,7 @@ func restartService() {
 }
 
 func exitForRestart() {
-
+	agent.MarkCleanStop()
 	if detectInit() == "sysvinit" {
 		cmd := exec.Command("sh", "-c",
 			"sleep 1; /etc/init.d/wakora-agent restart 2>/dev/null || service wakora-agent restart")

@@ -7,17 +7,22 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"wakora.io/agent/internal/atomicfile"
 )
 
 const (
 	journalUnionCap = 20000
 	journalQueueCap = 5000
+	journalBacklog  = 15 * time.Minute
+	journalHoldFor  = 2 * time.Minute
 )
 
 type journalEntry struct {
@@ -34,16 +39,80 @@ type journalSub struct {
 }
 
 type journalHub struct {
-	mu      sync.Mutex
-	subs    map[string]*journalSub
-	cursor  string
-	gen     uint64
-	done    uint64
-	lastErr error
-	empty   bool
+	mu        sync.Mutex
+	subs      map[string]*journalSub
+	cursor    string
+	gen       uint64
+	done      uint64
+	lastErr   error
+	empty     bool
+	statePath string
+	saved     string
+	restored  time.Time
+	idents    map[string]bool
+	hold      map[string][]journalEntry
+	since     int64
 }
 
 var journals = &journalHub{subs: map[string]*journalSub{}}
+
+type journalState struct {
+	Cursor string   `json:"cursor"`
+	Idents []string `json:"idents"`
+}
+
+func SetJournalState(path string) {
+	journals.load(path, time.Now())
+}
+
+func (h *journalHub) load(path string, now time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.statePath = path
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var st journalState
+	if json.Unmarshal(raw, &st) != nil || st.Cursor == "" {
+		return
+	}
+	h.cursor = st.Cursor
+	h.saved = st.Cursor
+	h.restored = now
+	h.idents = identSet(st.Idents)
+	h.hold = map[string][]journalEntry{}
+	h.since = now.Add(-journalBacklog).Unix()
+}
+
+func (h *journalHub) restoring(now time.Time) bool {
+	if h.restored.IsZero() {
+		return false
+	}
+	if now.Sub(h.restored) < journalHoldFor {
+		return true
+	}
+	h.restored = time.Time{}
+	h.idents = nil
+	h.hold = nil
+	h.since = 0
+	return false
+}
+
+func (h *journalHub) save() {
+	if h.statePath == "" || h.cursor == h.saved {
+		return
+	}
+	data, err := json.Marshal(journalState{Cursor: h.cursor, Idents: h.union()})
+	if err != nil {
+		return
+	}
+	if err := atomicfile.Write(h.statePath, data, 0o600); err != nil {
+		log.Printf("journal: cursor not saved: %v", err)
+		return
+	}
+	h.saved = h.cursor
+}
 
 func JournalCycle() {
 	journals.mu.Lock()
@@ -81,6 +150,13 @@ func (h *journalHub) drain(key string, idents []string) ([]journalEntry, error) 
 	if sub == nil || !sameIdentSet(sub.set, set) {
 		sub = &journalSub{key: key, set: set}
 		h.subs[key] = sub
+		if h.restoring(time.Now()) {
+			sub.seeded = true
+			for id := range set {
+				sub.queue = append(sub.queue, h.hold[id]...)
+			}
+			sort.SliceStable(sub.queue, func(i, j int) bool { return sub.queue[i].ts < sub.queue[j].ts })
+		}
 	}
 	if len(set) == 0 {
 		return nil, nil
@@ -102,6 +178,9 @@ func (h *journalHub) union() []string {
 			seen[id] = true
 		}
 	}
+	for id := range h.idents {
+		seen[id] = true
+	}
 	ids := make([]string, 0, len(seen))
 	for id := range seen {
 		ids = append(ids, id)
@@ -115,6 +194,7 @@ func (h *journalHub) fetch() {
 		return
 	}
 	h.done = h.gen
+	h.restoring(time.Now())
 	ids := h.union()
 	if len(ids) == 0 {
 		return
@@ -143,11 +223,13 @@ func (h *journalHub) fetch() {
 		}
 		h.cursor = ""
 		h.lastErr = journalErr(err, out, len(ids), !first)
+		h.save()
 		return
 	}
 	h.lastErr = nil
 	h.empty = false
 	h.consume(out, first, time.Now().Unix())
+	h.save()
 }
 
 func journalNoEntries(err error, out []byte) bool {
@@ -220,12 +302,22 @@ func (h *journalHub) consume(out []byte, first bool, now int64) {
 		if us, ok := parseMicros(e.Realtime); ok {
 			ts = us / 1e6
 		}
+		if h.since > 0 && ts < h.since {
+			continue
+		}
 		ent := journalEntry{ts: ts, level: logPriorityLevel(e.Priority), msg: msg}
+		taken := false
 		for _, s := range h.subs {
-			if !s.set[ident] || len(s.queue) >= journalQueueCap {
+			if !s.set[ident] {
 				continue
 			}
-			s.queue = append(s.queue, ent)
+			taken = true
+			if len(s.queue) < journalQueueCap {
+				s.queue = append(s.queue, ent)
+			}
+		}
+		if !taken && h.hold != nil && h.idents[ident] && len(h.hold[ident]) < journalQueueCap {
+			h.hold[ident] = append(h.hold[ident], ent)
 		}
 	}
 }

@@ -16,10 +16,17 @@ import (
 var brewCellars = []string{"/usr/local/Cellar", "/opt/homebrew/Cellar"}
 
 func Collect() []Fact {
+	return collect(nil)
+}
+
+func collect(pkgs []Fact) []Fact {
+	if pkgs == nil {
+		pkgs = packages()
+	}
 	var facts []Fact
 	facts = append(facts, processes()...)
 	facts = append(facts, ports()...)
-	facts = append(facts, packages()...)
+	facts = append(facts, pkgs...)
 	facts = append(facts, units()...)
 	facts = append(facts, netFacts()...)
 	facts = append(facts, hostFact())
