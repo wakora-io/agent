@@ -56,9 +56,10 @@ redacted on the host before anything is sent.
 with the exact command and its impact. A human runs it. The agent then notices the change
 took effect. The only service it ever restarts is its own, during a self-update.
 
-**It stays small.** Measured on a production cadence: about 0.1% of one core and 5 MB
-resident. The heap is capped in-process and the service is configured so that under memory
-pressure the kernel kills the agent before it kills anything of yours.
+**It stays small.** Measured across a production fleet at a 60-second interval: under 1% of
+one core and 15 to 80 MB resident, depending on how much the host runs. The heap is capped
+in-process and the service is configured so that under memory pressure the kernel kills the
+agent before it kills anything of yours.
 
 **Updates are signed and cannot go backwards.** The agent fetches a manifest, verifies its
 signature, verifies the binary's own signature, refuses anything older than what it is
