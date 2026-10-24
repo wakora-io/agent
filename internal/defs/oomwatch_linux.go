@@ -4,9 +4,12 @@ package defs
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -61,10 +64,17 @@ func DockerImageOf(id string) string {
 			Image string `json:"Image"`
 		} `json:"Config"`
 	}
-	if dockerGet(client, "/containers/"+id+"/json", &c) != nil || c.Config.Image == "" {
+	raw := ""
+	if dockerGet(client, "/containers/"+id+"/json", &c) == nil {
+		raw = c.Config.Image
+	}
+	if raw == "" {
+		raw = dockerEventImage(client, id, time.Now())
+	}
+	if raw == "" {
 		return ""
 	}
-	img = imageKey(c.Config.Image)
+	img = imageKey(raw)
 	dockerImagesMu.Lock()
 	if len(dockerImages) > 512 {
 		dockerImages = map[string]string{}
@@ -72,4 +82,21 @@ func DockerImageOf(id string) string {
 	dockerImages[id] = img
 	dockerImagesMu.Unlock()
 	return img
+}
+
+func dockerEventImage(client *http.Client, id string, now time.Time) string {
+	filters, _ := json.Marshal(map[string][]string{"type": {"container"}, "container": {id}})
+	q := url.Values{}
+	q.Set("since", strconv.FormatInt(now.Add(-oomWindow).Unix(), 10))
+	q.Set("until", strconv.FormatInt(now.Unix(), 10))
+	q.Set("filters", string(filters))
+	resp, err := client.Get("http://docker/events?" + q.Encode())
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	return eventImage(resp.Body, id)
 }

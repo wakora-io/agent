@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -104,6 +105,80 @@ func TestOOMContainerCounterSurvivesARestart(t *testing.T) {
 	points, _ = r.collect(now.Add(20*time.Minute), true, nil)
 	if points[0].Value != 0 {
 		t.Fatalf("a kill leaves the 15-minute window, got %v", points)
+	}
+}
+
+func TestOOMDockerInsideAGuestBelongsToTheGuest(t *testing.T) {
+	w := NewOOMWatch(filepath.Join(t.TempDir(), "oom-state.json"))
+	w.Image = func(string) string { return "" }
+	w.GuestName = func(id string) string {
+		if id == "186" {
+			return "web-2"
+		}
+		return ""
+	}
+	entries := []journalEntry{
+		{ts: 1749999991, msg: "oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=ns,mems_allowed=0,oom_memcg=/lxc/186/ns/system.slice/docker-fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210.scope,task_memcg=/lxc/186/ns/system.slice/docker-fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210.scope,task=tail,pid=4321,uid=0"},
+	}
+	points, events := w.collect(time.Unix(1750000000, 0), false, entries)
+	for _, p := range points {
+		if p.Value != 0 {
+			t.Fatalf("the hypervisor counts nothing of its own for a guest's container, got %+v", p)
+		}
+	}
+	var k OOMKill
+	if len(events) != 1 || json.Unmarshal([]byte(events[0].Detail), &k) != nil || k.Scope != "guest" || k.Guest != "186" || k.Name != "web-2" || k.Task != "tail" {
+		t.Fatalf("a container inside a guest is the guest's kill, got %v", events)
+	}
+}
+
+func TestOOMDockerSeenFromInsideAContainer(t *testing.T) {
+	root := t.TempDir() + string(os.PathSeparator)
+	cg := filepath.Join(root, "sys", "fs", "cgroup")
+	if err := os.MkdirAll(cg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(n string) {
+		if err := os.WriteFile(filepath.Join(cg, "memory.events"), []byte("oom_kill "+n+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := NewOOMWatch(filepath.Join(t.TempDir(), "oom-state.json"))
+	w.root = root
+	w.Image = func(id string) string {
+		if id == "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" {
+			return "alpine:latest"
+		}
+		return ""
+	}
+	now := time.Unix(1750000000, 0)
+	write("0")
+	w.collect(now, true, nil)
+	write("1")
+	entries := []journalEntry{{ts: now.Unix(), msg: "docker-fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210.scope: A process of this unit has been killed by the OOM killer."}}
+	points, events := w.collect(now.Add(time.Minute), true, entries)
+	byName := map[string]float64{}
+	for _, p := range points {
+		byName[p.Name+p.Tags["image"]] = p.Value
+	}
+	if byName["host.mem.oom_kills_15m"] != 0 || byName["svc.docker.group.oom_kills_15malpine:latest"] != 1 {
+		t.Fatalf("a container's kill lands on its image, not on the host, got %v", byName)
+	}
+	var k OOMKill
+	if len(events) != 1 || json.Unmarshal([]byte(events[0].Detail), &k) != nil || k.Scope != "docker" || k.Image != "alpine:latest" || k.Unit != "" {
+		t.Fatalf("got %v", events)
+	}
+}
+
+func TestOOMImageOfARemovedContainerFromDockerEvents(t *testing.T) {
+	stream := `{"status":"start","id":"aaaa","from":"redis:7","Type":"container","Action":"start","Actor":{"ID":"aaaa","Attributes":{"image":"redis:7"}}}
+{"status":"oom","id":"fedcba98","from":"alpine:latest","Type":"container","Action":"oom","Actor":{"ID":"fedcba98","Attributes":{"image":"alpine:latest"}}}
+`
+	if got := eventImage(strings.NewReader(stream), "fedcba98"); got != "alpine:latest" {
+		t.Fatalf("the image of a container that is already gone comes from its events, got %q", got)
+	}
+	if got := eventImage(strings.NewReader(stream), "ffff"); got != "" {
+		t.Fatalf("no event, no image, got %q", got)
 	}
 }
 

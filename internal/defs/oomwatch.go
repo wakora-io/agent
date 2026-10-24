@@ -2,6 +2,7 @@ package defs
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"regexp"
 	"slices"
@@ -88,12 +89,6 @@ func oomKernelLine(msg string) (map[string]string, bool) {
 }
 
 func oomClassify(memcg string) (scope, id string) {
-	if strings.Contains(memcg, "kubepods") {
-		return "k8s", ""
-	}
-	if m := oomDockerRe.FindStringSubmatch(memcg); m != nil {
-		return "docker", m[1]
-	}
 	if m := oomLxcRe.FindStringSubmatch(memcg); m != nil {
 		if m[1] != "" {
 			return "guest", m[1]
@@ -103,7 +98,53 @@ func oomClassify(memcg string) (scope, id string) {
 	if m := oomMachRe.FindStringSubmatch(memcg); m != nil {
 		return "guest", strings.ReplaceAll(m[1], `\x2d`, "-")
 	}
+	if strings.Contains(memcg, "kubepods") {
+		return "k8s", ""
+	}
+	if m := oomDockerRe.FindStringSubmatch(memcg); m != nil {
+		return "docker", m[1]
+	}
 	return "host", ""
+}
+
+func eventImage(r io.Reader, id string) string {
+	dec := json.NewDecoder(io.LimitReader(r, 4<<20))
+	for {
+		var e struct {
+			From  string `json:"from"`
+			Actor struct {
+				ID         string            `json:"ID"`
+				Attributes map[string]string `json:"Attributes"`
+			} `json:"Actor"`
+		}
+		if dec.Decode(&e) != nil {
+			return ""
+		}
+		if e.Actor.ID != id && !strings.HasPrefix(e.Actor.ID, id) {
+			continue
+		}
+		if img := e.Actor.Attributes["image"]; img != "" {
+			return img
+		}
+		if e.From != "" {
+			return e.From
+		}
+	}
+}
+
+func (w *OOMWatch) dockerKill(k *OOMKill) {
+	m := oomDockerRe.FindStringSubmatch(k.Unit)
+	if m == nil {
+		return
+	}
+	k.Scope = "docker"
+	k.Unit = ""
+	k.Image = "unknown"
+	if w.Image != nil {
+		if img := w.Image(m[1]); img != "" {
+			k.Image = img
+		}
+	}
 }
 
 func oomUnitOf(memcg string) string {
@@ -227,6 +268,7 @@ func (w *OOMWatch) collect(now time.Time, container bool, entries []journalEntry
 		for i := range counted {
 			if i < len(units) {
 				counted[i].Unit = units[i]
+				w.dockerKill(&counted[i])
 			}
 		}
 		kills = counted
