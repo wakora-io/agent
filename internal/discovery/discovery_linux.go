@@ -121,9 +121,7 @@ func ChangeSignal() string {
 	if fi, err := os.Stat("/var/lib/dpkg/status"); err == nil {
 		fmt.Fprintf(h, "dpkg:%d:%d;", fi.ModTime().UnixNano(), fi.Size())
 	}
-	if fi, err := os.Stat("/var/lib/rpm"); err == nil {
-		fmt.Fprintf(h, "rpm:%d;", fi.ModTime().UnixNano())
-	}
+	io.WriteString(h, rpmSignal("/var/lib/rpm"))
 	if fi, err := os.Stat("/lib/apk/db/installed"); err == nil {
 		fmt.Fprintf(h, "apk:%d:%d;", fi.ModTime().UnixNano(), fi.Size())
 	}
@@ -131,6 +129,18 @@ func ChangeSignal() string {
 		io.WriteString(h, k+";")
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+var rpmDBFiles = []string{"rpmdb.sqlite", "rpmdb.sqlite-wal", "Packages", "Packages.db"}
+
+func rpmSignal(dir string) string {
+	var b strings.Builder
+	for _, name := range rpmDBFiles {
+		if fi, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			fmt.Fprintf(&b, "rpm:%s:%d:%d;", name, fi.ModTime().UnixNano(), fi.Size())
+		}
+	}
+	return b.String()
 }
 
 func listenKeys() []string {
