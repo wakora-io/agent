@@ -102,7 +102,7 @@ func TestKernelFromHost(t *testing.T) {
 		pkgFact("proxmox-kernel-7.9", `{"version":"7.9.1-41"}`),
 		pkgFact("curl", `{"version":"8.0"}`),
 	}
-	k := kernelFrom(root, pkgs)
+	k := kernelFrom(root, pkgs, nil)
 	if k.Release != "7.9.1-30-pve" || k.Container {
 		t.Fatalf("release/container: %+v", k)
 	}
@@ -121,13 +121,86 @@ func TestKernelFromContainer(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "7.9.1-30-pve\n")
 	writeFile(t, filepath.Join(root, "run/systemd/container"), "lxc\n")
-	k := kernelFrom(root, []Fact{pkgFact("linux-image-6.1.0-90-amd64", `{"version":"6.1.300-1"}`)})
+	k := kernelFrom(root, []Fact{pkgFact("linux-image-6.1.0-90-amd64", `{"version":"6.1.300-1"}`)}, []rpmKernel{{name: "kernel-core", verRel: "5.14.0-900.el9", arch: "x86_64"}})
 	if !k.Container || k.Running != nil || len(k.Installed) != 0 {
 		t.Fatalf("container must report the host release only: %+v", k)
 	}
 	b, _ := json.Marshal(k)
 	if strings.Contains(string(b), "installed") {
 		t.Fatalf("container payload: %s", b)
+	}
+}
+
+func TestParseRpmKernelsDropsTheMetaPackage(t *testing.T) {
+	out := "kernel-core\t5.14.0-900.1.1.el9_9\tx86_64\n" +
+		"kernel\t5.14.0-900.1.1.el9_9\tx86_64\n" +
+		"kernel-core\t5.14.0-910.2.1.el9_9\tx86_64\n" +
+		"package kernel-default is not installed\n" +
+		"kernel-uek\t6.12.0-100.10.1.el9uek\tx86_64\n"
+	got := parseRpmKernels(out)
+	want := []rpmKernel{
+		{name: "kernel-core", verRel: "5.14.0-900.1.1.el9_9", arch: "x86_64"},
+		{name: "kernel-core", verRel: "5.14.0-910.2.1.el9_9", arch: "x86_64"},
+		{name: "kernel-uek", verRel: "6.12.0-100.10.1.el9uek", arch: "x86_64"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("row %d: got %+v want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestKernelFromRpmHost(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "5.14.0-900.1.1.el9_9.x86_64\n")
+	rpms := []rpmKernel{
+		{name: "kernel-core", verRel: "5.14.0-890.5.1.el9_9", arch: "x86_64"},
+		{name: "kernel-core", verRel: "5.14.0-900.1.1.el9_9", arch: "x86_64"},
+		{name: "kernel-core", verRel: "5.14.0-910.2.1.el9_9", arch: "x86_64"},
+	}
+	k := kernelFrom(root, []Fact{pkgFact("kernel-core", `{"version":"5.14.0-910.2.1.el9_9","source":"kernel"}`)}, rpms)
+	if k.Running == nil || k.Running.Package != "kernel-core" || k.Running.Version != "5.14.0-900.1.1.el9_9" {
+		t.Fatalf("running: %+v", k.Running)
+	}
+	if len(k.Installed) != 3 {
+		t.Fatalf("every installed image once, got %+v", k.Installed)
+	}
+}
+
+func TestKernelFromSuseHost(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "6.4.0-150600.40.7-default\n")
+	rpms := []rpmKernel{
+		{name: "kernel-default", verRel: "6.4.0-150600.40.7.1", arch: "x86_64"},
+		{name: "kernel-default", verRel: "6.4.0-150600.40.70.1", arch: "x86_64"},
+	}
+	k := kernelFrom(root, nil, rpms)
+	if k.Running == nil || k.Running.Version != "6.4.0-150600.40.7.1" {
+		t.Fatalf("running: %+v", k.Running)
+	}
+}
+
+func TestKernelFromAlpineHost(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "6.12.300-0-lts\n")
+	k := kernelFrom(root, []Fact{pkgFact("linux-lts", `{"version":"6.12.310-r0"}`), pkgFact("curl", `{"version":"8.0-r0"}`)}, nil)
+	if k.Running == nil || k.Running.Package != "linux-lts" || k.Running.Version != "6.12.300-r0" {
+		t.Fatalf("running is the booted build, not the upgraded package: %+v", k.Running)
+	}
+	if len(k.Installed) != 1 || k.Installed[0].Version != "6.12.310-r0" {
+		t.Fatalf("installed: %+v", k.Installed)
+	}
+}
+
+func TestKernelFromUbuntuIgnoresApkFlavours(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "6.8.0-900-generic\n")
+	k := kernelFrom(root, []Fact{pkgFact("linux-generic", `{"version":"6.8.0.900.900"}`)}, nil)
+	if k.Running != nil || len(k.Installed) != 0 {
+		t.Fatalf("an Ubuntu metapackage is not a running image: %+v", k)
 	}
 }
 
@@ -142,6 +215,9 @@ func TestKernelImageName(t *testing.T) {
 		"proxmox-kernel-helper":                  false,
 		"pve-kernel-6.2.16-20-pve":               true,
 		"kernel-core":                            true,
+		"linux-lts":                              true,
+		"linux-virt":                             true,
+		"linux-generic":                          false,
 		"linux-firmware":                         false,
 	} {
 		if kernelImageName(name) != want {

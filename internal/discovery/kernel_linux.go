@@ -5,7 +5,9 @@ package discovery
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -28,13 +30,63 @@ type kernelInfo struct {
 
 const kernelInstalledCap = 20
 
+type rpmKernel struct {
+	name, verRel, arch string
+}
+
+var apkFlavorRe = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)+)-([0-9]+)-(lts|virt|edge|rpi|stable)$`)
+
 func kernelFact(pkgs []Fact) Fact {
-	info := kernelFrom("/", pkgs)
+	info := kernelFrom("/", pkgs, rpmKernelImages())
 	payload, _ := json.Marshal(info)
 	return Fact{Kind: "host", Key: "kernel", Payload: string(payload)}
 }
 
-func kernelFrom(root string, pkgs []Fact) kernelInfo {
+func rpmKernelImages() []rpmKernel {
+	if _, err := os.Stat("/var/lib/rpm"); err != nil {
+		return nil
+	}
+	out, _ := exec.Command("rpm", "-q", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n",
+		"kernel-core", "kernel", "kernel-default", "kernel-uek-core", "kernel-uek").Output()
+	return parseRpmKernels(string(out))
+}
+
+func parseRpmKernels(out string) []rpmKernel {
+	var all []rpmKernel
+	core := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.Split(strings.TrimSpace(line), "\t")
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" {
+			continue
+		}
+		all = append(all, rpmKernel{name: parts[0], verRel: parts[1], arch: parts[2]})
+		if strings.HasSuffix(parts[0], "-core") {
+			core[strings.TrimSuffix(parts[0], "-core")+"|"+parts[1]] = true
+		}
+	}
+	var res []rpmKernel
+	for _, k := range all {
+		if core[k.name+"|"+k.verRel] {
+			continue
+		}
+		res = append(res, k)
+	}
+	return res
+}
+
+func rpmRunning(k rpmKernel, release string) bool {
+	if k.verRel+"."+k.arch == release || k.verRel == release {
+		return true
+	}
+	i := strings.LastIndex(release, "-")
+	if i <= 0 || strings.ContainsAny(release[i+1:], "0123456789") {
+		return false
+	}
+	base := release[:i]
+	return k.verRel == base || strings.HasPrefix(k.verRel, base+".")
+}
+
+func kernelFrom(root string, pkgs []Fact, rpms []rpmKernel) kernelInfo {
 	info := kernelInfo{
 		Release:     readTrim(filepath.Join(root, "proc/sys/kernel/osrelease"), 120),
 		ProcVersion: readTrim(filepath.Join(root, "proc/version"), 400),
@@ -54,8 +106,12 @@ func kernelFrom(root string, pkgs []Fact) kernelInfo {
 	} {
 		running[name] = true
 	}
+	apk := apkFlavorRe.FindStringSubmatch(info.Release)
 	for _, f := range pkgs {
 		if f.Kind != "package" || !kernelImageName(f.Key) {
+			continue
+		}
+		if len(rpms) > 0 && strings.HasPrefix(f.Key, "kernel") {
 			continue
 		}
 		var p packageInfo
@@ -64,6 +120,17 @@ func kernelFrom(root string, pkgs []Fact) kernelInfo {
 		}
 		img := kernelImage{Package: f.Key, Version: p.Version, Source: p.Source, SourceVersion: p.SourceVersion}
 		if running[f.Key] && info.Running == nil {
+			r := img
+			info.Running = &r
+		}
+		if apk != nil && f.Key == "linux-"+apk[3] && info.Running == nil {
+			info.Running = &kernelImage{Package: f.Key, Version: apk[1] + "-r" + apk[2]}
+		}
+		info.Installed = append(info.Installed, img)
+	}
+	for _, k := range rpms {
+		img := kernelImage{Package: k.name, Version: k.verRel}
+		if info.Running == nil && rpmRunning(k, info.Release) {
 			r := img
 			info.Running = &r
 		}
@@ -85,7 +152,11 @@ func kernelImageName(name string) bool {
 		rest = strings.TrimPrefix(rest, "unsigned-")
 		return rest != "" && rest[0] >= '0' && rest[0] <= '9' && strings.Contains(rest, "-")
 	}
-	return name == "kernel-core" || name == "kernel"
+	switch name {
+	case "kernel-core", "kernel", "linux-lts", "linux-virt", "linux-edge", "linux-rpi", "linux-stable":
+		return true
+	}
+	return false
 }
 
 func readTrim(path string, max int) string {
