@@ -328,13 +328,17 @@ func socketInodes() map[string]int {
 }
 
 func packages() []Fact {
-	if facts := dpkgPackages(); facts != nil {
-		return facts
+	facts := dpkgPackages()
+	if facts == nil {
+		facts = rpmPackages()
 	}
-	if facts := rpmPackages(); facts != nil {
-		return facts
+	if facts == nil {
+		facts = apkPackages()
 	}
-	return apkPackages()
+	if facts == nil {
+		return nil
+	}
+	return withPkgState(facts, currentPkgState())
 }
 
 func dpkgPackages() []Fact {

@@ -45,6 +45,8 @@ type packageInfo struct {
 	Version       string `json:"version,omitempty"`
 	Source        string `json:"source,omitempty"`
 	SourceVersion string `json:"sourceVersion,omitempty"`
+	Update        string `json:"update,omitempty"`
+	Orphan        bool   `json:"orphan,omitempty"`
 }
 
 func splitSource(field string) (string, string) {
