@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseDpkgStatusSource(t *testing.T) {
@@ -201,6 +202,90 @@ func TestKernelFromUbuntuIgnoresApkFlavours(t *testing.T) {
 	k := kernelFrom(root, []Fact{pkgFact("linux-generic", `{"version":"6.8.0.900.900"}`)}, nil)
 	if k.Running != nil || len(k.Installed) != 0 {
 		t.Fatalf("an Ubuntu metapackage is not a running image: %+v", k)
+	}
+}
+
+func TestKernelInstalledAtFromDpkgInfo(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "7.9.1-30-pve\n")
+	for pkg, at := range map[string]int64{"proxmox-kernel-7.9.1-30-pve-signed": 1900000000, "proxmox-kernel-7.9.1-41-pve-signed": 1900500000} {
+		p := filepath.Join(root, "var/lib/dpkg/info", pkg+".list")
+		writeFile(t, p, "/boot\n")
+		if err := os.Chtimes(p, time.Unix(at, 0), time.Unix(at, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pkgs := []Fact{
+		pkgFact("proxmox-kernel-7.9.1-30-pve-signed", `{"version":"7.9.1-30"}`),
+		pkgFact("proxmox-kernel-7.9.1-41-pve-signed", `{"version":"7.9.1-41"}`),
+	}
+	k := kernelFrom(root, pkgs, nil)
+	if k.Running == nil || k.Running.InstalledAt != 1900000000 {
+		t.Fatalf("running image carries its install time: %+v", k.Running)
+	}
+	got := map[string]int64{}
+	for _, img := range k.Installed {
+		got[img.Version] = img.InstalledAt
+	}
+	if got["7.9.1-41"] != 1900500000 {
+		t.Fatalf("installed images carry their install time: %+v", k.Installed)
+	}
+}
+
+func TestKernelInstalledAtFromRpmAndModules(t *testing.T) {
+	got := parseRpmKernels("kernel-core\t5.14.0-920.1.1.el9_9\tx86_64\t1900700000\nkernel-core\t5.14.0-930.1.1.el9_9\tx86_64\n")
+	if len(got) != 2 || got[0].installed != 1900700000 || got[1].installed != 0 {
+		t.Fatalf("install time is the fourth field: %+v", got)
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "5.14.0-920.1.1.el9_9.x86_64\n")
+	if err := os.MkdirAll(filepath.Join(root, "lib/modules/5.14.0-930.1.1.el9_9.x86_64"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	k := kernelFrom(root, nil, got)
+	now := time.Now().Unix()
+	for _, img := range k.Installed {
+		switch img.Version {
+		case "5.14.0-920.1.1.el9_9":
+			if img.InstalledAt != 1900700000 {
+				t.Fatalf("rpm install time: %+v", img)
+			}
+		case "5.14.0-930.1.1.el9_9":
+			if img.InstalledAt < now-60 || img.InstalledAt > now+60 {
+				t.Fatalf("without an rpm time the modules directory tells: %+v", img)
+			}
+		}
+	}
+}
+
+func TestKernelInstalledAtOnAlpine(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "6.12.300-0-lts\n")
+	if err := os.MkdirAll(filepath.Join(root, "lib/modules/6.12.310-0-lts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	k := kernelFrom(root, []Fact{pkgFact("linux-lts", `{"version":"6.12.310-r0"}`)}, nil)
+	now := time.Now().Unix()
+	if len(k.Installed) != 1 || k.Installed[0].InstalledAt < now-60 || k.Installed[0].InstalledAt > now+60 {
+		t.Fatalf("an upgraded Alpine kernel is dated by its modules directory: %+v", k.Installed)
+	}
+	if k.Running == nil || k.Running.InstalledAt != 0 {
+		t.Fatalf("the booted build is gone from disk, its time is unknown: %+v", k.Running)
+	}
+}
+
+func TestImageRelease(t *testing.T) {
+	for in, want := range map[[2]string]string{
+		{"linux-image-6.8.0-500-generic", "6.8.0-500.500"}:          "6.8.0-500-generic",
+		{"linux-image-unsigned-6.8.0-500-generic", "6.8.0-500.500"}: "6.8.0-500-generic",
+		{"proxmox-kernel-7.9.1-30-pve-signed", "7.9.1-30"}:          "7.9.1-30-pve",
+		{"pve-kernel-6.2.16-20-pve", "6.2.16-20"}:                   "6.2.16-20-pve",
+		{"linux-lts", "6.12.310-r0"}:                                "6.12.310-0-lts",
+		{"kernel-core", "5.14.0-920.el9"}:                           "",
+	} {
+		if got := imageRelease(in[0], in[1]); got != want {
+			t.Fatalf("imageRelease(%q, %q) = %q, want %q", in[0], in[1], got, want)
+		}
 	}
 }
 
