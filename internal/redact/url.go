@@ -9,6 +9,8 @@ const mask = "***"
 
 var urlInText = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s'"<>|\\]+`)
 
+var wholeURL = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*://`)
+
 var sensitiveHeader = regexp.MustCompile(`(?i)(authorization|cookie|token|api[_.\-]?key|secret|credential|password|passwd|session|signature|auth)`)
 
 var visitorKeys = map[string]bool{"client.address": true, "http.client_ip": true}
@@ -36,6 +38,9 @@ func Attr(key, value string) string {
 
 func URLish(s string) string {
 	if strings.Contains(s, "://") {
+		if wholeURL.MatchString(s) && !strings.ContainsAny(s, "\r\n") {
+			return maskURL(s)
+		}
 		return urlInText.ReplaceAllStringFunc(s, maskURL)
 	}
 	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, "?") {

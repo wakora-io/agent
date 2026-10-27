@@ -152,6 +152,23 @@ func TestScrubStopsAtTheParameterBoundary(t *testing.T) {
 	}
 }
 
+func TestAttrMasksEveryParameterPastAnUnencodedSpace(t *testing.T) {
+	got := Attr("url.full", "https://api.example.com/v3/?site=demo&from=2026-01-02 12:00:00&till=2026-01-09 12:00:00&ID=42&key=PLACEHOLDER_SECRET")
+	if strings.Contains(got, "PLACEHOLDER_SECRET") || strings.Contains(got, "2026-01-09") || strings.Contains(got, "=42") {
+		t.Fatalf("a parameter past the space leaked: %q", got)
+	}
+	if got != "https://api.example.com/v3/?site=***&from=***&till=***&ID=***&key=***" {
+		t.Fatalf("url lost its shape: %q", got)
+	}
+}
+
+func TestScrubMasksAKeyPastAnUnencodedSpace(t *testing.T) {
+	got := Scrub(`"GET /v3/?from=2026-01-02 12:00:00&key=PLACEHOLDER_SECRET HTTP/1.1" 200`)
+	if strings.Contains(got, "PLACEHOLDER_SECRET") {
+		t.Fatalf("key leaked from a log line: %q", got)
+	}
+}
+
 func TestAttrKeepsValuelessAndEmptyParameters(t *testing.T) {
 	got := Attr("url.full", "https://api.example.com/x?debug&trace=&key=PLACEHOLDER_SECRET")
 	if strings.Contains(got, "PLACEHOLDER_SECRET") {
