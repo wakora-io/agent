@@ -170,6 +170,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 	for _, wi := range window {
 		probed[primaries[wi]] = true
 	}
+	addVhostRetries(service, primaries, hosts, probed)
 	aliases := vhostAliases(hosts)
 	certOnly := map[int]bool{}
 	for _, wi := range vhostCursors.window(service+"|alias", len(aliases), vhostBudget) {
@@ -205,6 +206,7 @@ func runVhosts(o *Outcome, service string, p protocol.Probe, timeout time.Durati
 		}(i, h)
 	}
 	wg.Wait()
+	noteVhostFailures(service, probed, hosts, results)
 	for i := range certOnly {
 		if hosts[i].Port == 80 && !hosts[i].SSL {
 			continue
@@ -850,6 +852,42 @@ type vhostCursorSet struct {
 }
 
 var vhostCursors = &vhostCursorSet{cursors: map[string]int{}}
+
+var vhostRetry sync.Map
+
+const vhostRetryCap = 20
+
+func vhostRetryKey(h vhost) string {
+	return fmt.Sprintf("%s:%d", h.Name, h.Port)
+}
+
+func addVhostRetries(service string, primaries []int, hosts []vhost, probed map[int]bool) {
+	prev, ok := vhostRetry.Load(service)
+	if !ok {
+		return
+	}
+	failed, _ := prev.(map[string]bool)
+	extra := 0
+	for _, i := range primaries {
+		if extra >= vhostRetryCap {
+			return
+		}
+		if !probed[i] && failed[vhostRetryKey(hosts[i])] {
+			probed[i] = true
+			extra++
+		}
+	}
+}
+
+func noteVhostFailures(service string, probed map[int]bool, hosts []vhost, results []vhostResult) {
+	failed := map[string]bool{}
+	for i := range probed {
+		if results[i].check.Status == "fail" {
+			failed[vhostRetryKey(hosts[i])] = true
+		}
+	}
+	vhostRetry.Store(service, failed)
+}
 
 func (s *vhostCursorSet) window(service string, n, budget int) []int {
 	if n <= 0 {
